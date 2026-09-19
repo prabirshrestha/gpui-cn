@@ -1,0 +1,32 @@
+[package]
+name = "gpui-cn-story"
+description = "Component gallery for gpui-cn."
+publish = false
+default-run = "gpui-cn-story"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
+snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image"]
+# `fps`: the gpui-fps HUD, toggled with Cmd-Shift-P (Ctrl-Shift-P).
+fps = ["dep:gpui-fps"]
+
+[dependencies]
+gpui-cn = { workspace = true, features = ["jetbrains-mono"] }
+gpui-kit = { workspace = true, features = ["assets"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+gpui-fps = { version = "0.6.4", optional = true }
+
+[[bin]]
+name = "snapshot"
+required-features = ["snapshot"]
+
+[[bin]]
+name = "bench"
+required-features = ["snapshot"]

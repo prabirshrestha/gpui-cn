@@ -1,0 +1,36 @@
+[workspace]
+members = ["crates/gpui-cn", "crates/gpui-cn-story", "crates/gpui-cn-story-ios"]
+# `cargo run` at the root opens the gallery.
+default-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+repository = "https://github.com/prabirshrestha/gpui-cn"
+homepage = "https://github.com/prabirshrestha/gpui-cn"
+
+[workspace.dependencies]
+gpui-cn = { path = "crates/gpui-cn", version = "0.1.0" }
+gpui-kit = { version = "0.6.4", default-features = false }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+# The gallery is what users run; a smaller binary loads faster from the
+# Dock and one codegen unit lets the layout engine inline across crates.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev.package]
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+gpui-pre-macros = { opt-level = 3 }

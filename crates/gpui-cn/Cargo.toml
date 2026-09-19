@@ -1,0 +1,35 @@
+[package]
+name = "gpui-cn"
+description = "shadcn-style components for GPUI, built on gpui-base."
+keywords = ["gpui", "ui", "shadcn", "components", "desktop"]
+categories = ["gui"]
+readme = "../../README.md"
+documentation = "https://docs.rs/gpui-cn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+# docs.rs builds with every feature, so the font and the test helpers
+# show in the documentation.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# JetBrains Mono as the code font, registered by `init`.
+jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
+# Headless UI testing through `gpui_kit::test`.
+test-support = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["assets"] }
+damascene-fonts-jetbrains-mono = { version = "0.1", optional = true }
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

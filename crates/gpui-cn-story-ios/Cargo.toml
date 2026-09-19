@@ -1,0 +1,27 @@
+[package]
+name = "gpui-cn-story-ios"
+description = "The gpui-cn gallery as an iOS application."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "gpui-cn-story-ios"
+path = "src/main.rs"
+
+[dependencies]
+gpui-cn = { workspace = true, features = ["jetbrains-mono"] }
+gpui-cn-story = { path = "../gpui-cn-story" }
+gpui-kit = { workspace = true, features = ["assets"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# The iOS platform for GPUI, used under its Apache-2.0 option.
+gpui-mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "f706039" }
+objc2 = "0.6"
+log = "0.4"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSRunLoop"] }

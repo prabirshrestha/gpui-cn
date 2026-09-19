@@ -1,0 +1,23 @@
+name: Release
+
+# Publishes gpui-cn to crates.io when a version tag is pushed. The tag
+# must match the version in Cargo.toml, and the CARGO_REGISTRY_TOKEN
+# secret must hold a crates.io token with publish rights.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    name: Publish gpui-cn
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Check the tag against the version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gpui-cn") | .version')
+          test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} is not v$version"; exit 1; }
+      - run: cargo publish -p gpui-cn --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
