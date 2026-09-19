@@ -1,0 +1,25 @@
+[package]
+name = "gpui-cn-story"
+description = "Component gallery for gpui-cn."
+publish = false
+default-run = "gpui-cn-story"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
+snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image"]
+
+[dependencies]
+gpui-cn = { workspace = true, features = ["assets"] }
+gpui-kit = { workspace = true, features = ["assets"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
+[[bin]]
+name = "snapshot"
+required-features = ["snapshot"]

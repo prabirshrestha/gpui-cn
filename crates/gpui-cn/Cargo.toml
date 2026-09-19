@@ -1,0 +1,29 @@
+[package]
+name = "gpui-cn"
+description = "shadcn-style components for GPUI, built on gpui-base."
+keywords = ["gpui", "ui", "shadcn", "components", "desktop"]
+categories = ["gui"]
+readme = "../../README.md"
+documentation = "https://docs.rs/gpui-cn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Lucide icons through `gpui_kit::assets`.
+assets = ["gpui-kit/assets"]
+# Headless UI testing through `gpui_kit::test`.
+test-support = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
