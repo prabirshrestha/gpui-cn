@@ -19,6 +19,10 @@ impl Story for ButtonStory {
         "Button"
     }
 
+    fn icon() -> IconName {
+        IconName::SquareTerminal
+    }
+
     fn description() -> &'static str {
         "Displays a button or a component that looks like a button."
     }

@@ -1349,6 +1349,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "damascene-fonts-jetbrains-mono"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfd4c719004dc049baa73e4e869cca40c02532f5327ac118b3bb4fcc43a57cdc"
+
+[[package]]
 name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2300,6 +2306,7 @@ dependencies = [
 name = "gpui-cn"
 version = "0.1.0"
 dependencies = [
+ "damascene-fonts-jetbrains-mono",
  "gpui-kit",
 ]
 

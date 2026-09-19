@@ -3,13 +3,14 @@
 
 mod color;
 mod config;
+pub mod fonts;
 mod motion;
 mod tokens;
 
 pub use color::{hex, mix, to_hex, try_hex};
 pub use config::{SemanticColors, ThemeConfig, ThemeFonts};
 pub use motion::MotionTokens;
-pub use tokens::ThemeTokens;
+pub use tokens::{MetricTokens, ThemeTokens};
 
 use gpui_kit::{
     App, BorrowAppContext as _, Global, Pixels, Window, WindowAppearance,

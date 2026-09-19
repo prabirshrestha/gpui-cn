@@ -10,7 +10,7 @@ use gpui_kit::{
     },
     div,
     prelude::FluentBuilder as _,
-    px, relative, rems,
+    px, relative,
 };
 
 use crate::{
@@ -393,19 +393,38 @@ impl ButtonVariant {
     ///
     /// Every surface carries a border color so it can animate; only
     /// `Outline` paints a border width.
-    fn surface(self, state: PointerState, selected: bool, theme: &ThemeTokens) -> Surface {
+    ///
+    /// Inside a sidebar the soft and selected fills are the sidebar's, as
+    /// shadcn remaps its variables there, so a hover reads on the lifted
+    /// surface. A selected surface still answers the pointer: it lifts a
+    /// step on hover and another when pressed.
+    fn surface(
+        self,
+        state: PointerState,
+        selected: bool,
+        in_sidebar: bool,
+        theme: &ThemeTokens,
+    ) -> Surface {
         use PointerState::*;
         let dark = theme.is_dark();
         let ink = theme.foreground();
-        let surface = theme.background();
+        let (surface, soft, selected_rest) = if in_sidebar {
+            (theme.sidebar, theme.sidebar_accent, theme.sidebar_selected)
+        } else {
+            (theme.background(), theme.secondary(), theme.selected)
+        };
         // The soft fill steps toward the ink as the pointer presses.
-        let soft = theme.secondary();
         let soft_hover = mix(soft, ink, 0.05);
         let soft_pressed = mix(soft, ink, 0.10);
+        let selected_fill = match state {
+            Rest => selected_rest,
+            Hovered => mix(selected_rest, ink, 0.03),
+            Pressed => mix(selected_rest, ink, 0.06),
+        };
         match self {
             Self::Default => {
                 if selected {
-                    return Surface::plain(theme.selected, ink);
+                    return Surface::plain(selected_fill, ink);
                 }
                 let fill = match state {
                     Rest => soft,
@@ -436,9 +455,9 @@ impl ButtonVariant {
                 Surface::plain(fill, red)
             }
             Self::Outline => {
-                let hover = theme.accent();
+                let hover = soft;
                 let background = if selected {
-                    theme.selected
+                    selected_fill
                 } else {
                     match state {
                         Rest => hover.alpha(0.),
@@ -457,7 +476,7 @@ impl ButtonVariant {
                 // and row icons: muted text, no surface. Hover and selection
                 // bring the foreground and a fill.
                 if selected {
-                    return Surface::plain(theme.selected, ink);
+                    return Surface::plain(selected_fill, ink);
                 }
                 match state {
                     Rest => Surface::plain(soft.alpha(0.), theme.muted_foreground()),
@@ -476,8 +495,12 @@ struct Look {
     target: Surface,
     underline: bool,
     ring: Hsla,
+    ring_spread: Pixels,
     outline_focus_border: Hsla,
     radius: Pixels,
+    height: Pixels,
+    padding: Pixels,
+    text_size: Pixels,
 }
 
 impl RenderOnce for Button {
@@ -508,10 +531,11 @@ impl RenderOnce for Button {
         }
         let pointer_state = *pointer.read(cx);
 
+        let in_sidebar = crate::sidebar::in_sidebar(cx);
         let look =
             {
                 let theme = cx.theme();
-                let mut target = variant.surface(pointer_state, shows_selected, theme);
+                let mut target = variant.surface(pointer_state, shows_selected, in_sidebar, theme);
                 if disabled {
                     // The reference keeps a disabled button's fill at half
                     // strength and drops its text most of the way to the surface
@@ -537,11 +561,29 @@ impl RenderOnce for Button {
                             .opacity(if theme.is_dark() { 0.4 } else { 0.2 }),
                         _ => theme.ring().opacity(0.5),
                     },
+                    ring_spread: theme.metrics.focus_ring,
                     outline_focus_border: theme.ring(),
                     radius: if size == ButtonSize::Lg {
                         theme.radius_lg()
                     } else {
                         theme.radius_md()
+                    },
+                    height: match size {
+                        ButtonSize::Xs => theme.metrics.control_xs,
+                        ButtonSize::Sm => theme.metrics.control_sm,
+                        ButtonSize::Default => theme.metrics.control_md,
+                        ButtonSize::Lg => theme.metrics.control_lg,
+                    },
+                    padding: match size {
+                        ButtonSize::Xs => theme.metrics.control_padding_xs,
+                        ButtonSize::Sm => theme.metrics.control_padding_sm,
+                        ButtonSize::Default => theme.metrics.control_padding_md,
+                        ButtonSize::Lg => theme.metrics.control_padding_lg,
+                    },
+                    text_size: match size {
+                        ButtonSize::Xs => theme.base.typography.xs.size,
+                        ButtonSize::Sm | ButtonSize::Default => theme.text_control.size,
+                        ButtonSize::Lg => theme.base.typography.sm.size,
                     },
                 }
             };
@@ -644,26 +686,11 @@ impl RenderOnce for Button {
         self.base
             .flex_shrink_0()
             .font_medium()
-            .map(|this| match size {
-                ButtonSize::Xs => this.text_xs(),
-                ButtonSize::Sm | ButtonSize::Default => this.text_size(rems(0.8125)),
-                ButtonSize::Lg => this.text_sm(),
-            })
+            .text_size(look.text_size)
             .rounded(look.radius)
-            .map(|this| match size {
-                ButtonSize::Default => this.h_7().px_2p5(),
-                ButtonSize::Xs => this.h_5().px_1p5(),
-                ButtonSize::Sm => this.h_6().px_2(),
-                ButtonSize::Lg => this.h_8().px(rems(1.125)),
-            })
-            .when(icon_only, |this| {
-                this.px_0().map(|this| match size {
-                    ButtonSize::Default => this.w_7(),
-                    ButtonSize::Xs => this.w_5(),
-                    ButtonSize::Sm => this.w_6(),
-                    ButtonSize::Lg => this.w_8(),
-                })
-            })
+            .h(look.height)
+            .px(look.padding)
+            .when(icon_only, |this| this.px_0().w(look.height))
             .bg(surface.background)
             .text_color(surface.foreground)
             // Every variant carries the same 1px border, transparent where it
@@ -682,7 +709,7 @@ impl RenderOnce for Button {
                     color: look.ring,
                     offset: gpui_kit::point(px(0.), px(0.)),
                     blur_radius: px(0.),
-                    spread_radius: px(3.),
+                    spread_radius: look.ring_spread,
                     inset: false,
                 }])
             })
@@ -807,10 +834,10 @@ mod tests {
     #[test]
     fn primary_reads_the_theme_tokens() {
         let theme = dark();
-        let rest = ButtonVariant::Primary.surface(PointerState::Rest, false, &theme);
+        let rest = ButtonVariant::Primary.surface(PointerState::Rest, false, false, &theme);
         assert_eq!(to_hex(rest.background), "#dfdfdf");
         assert_eq!(to_hex(rest.foreground), "#2d2d2d");
-        let hovered = ButtonVariant::Primary.surface(PointerState::Hovered, false, &theme);
+        let hovered = ButtonVariant::Primary.surface(PointerState::Hovered, false, false, &theme);
         assert!(hovered.background.l < rest.background.l);
     }
 
@@ -818,8 +845,8 @@ mod tests {
     fn rest_surfaces_without_a_fill_share_the_hover_color_at_zero_alpha() {
         let theme = dark();
         for variant in [ButtonVariant::Outline, ButtonVariant::Ghost] {
-            let rest = variant.surface(PointerState::Rest, false, &theme);
-            let hovered = variant.surface(PointerState::Hovered, false, &theme);
+            let rest = variant.surface(PointerState::Rest, false, false, &theme);
+            let hovered = variant.surface(PointerState::Hovered, false, false, &theme);
             assert_eq!(rest.background.a, 0., "{variant:?} rest is clear");
             assert_eq!(
                 rest.background.l, hovered.background.l,
@@ -834,10 +861,25 @@ mod tests {
     #[test]
     fn default_soft_fill_matches_the_reference() {
         let theme = dark();
-        let rest = ButtonVariant::Default.surface(PointerState::Rest, false, &theme);
+        let rest = ButtonVariant::Default.surface(PointerState::Rest, false, false, &theme);
         assert_eq!(to_hex(rest.background), "#222222");
         assert_eq!(to_hex(rest.foreground), "#dfdfdf");
-        let ghost = ButtonVariant::Ghost.surface(PointerState::Rest, false, &theme);
+        let ghost = ButtonVariant::Ghost.surface(PointerState::Rest, false, false, &theme);
         assert_eq!(to_hex(ghost.foreground), "#969696");
+    }
+
+    #[test]
+    fn inside_a_sidebar_the_fills_are_the_sidebars() {
+        let theme = dark();
+        let hovered = ButtonVariant::Ghost.surface(PointerState::Hovered, false, true, &theme);
+        assert_eq!(hovered.background, theme.sidebar_accent);
+        let selected = ButtonVariant::Ghost.surface(PointerState::Rest, true, true, &theme);
+        assert_eq!(selected.background, theme.sidebar_selected);
+        assert!(hovered.background.l < selected.background.l);
+        let selected_hovered =
+            ButtonVariant::Ghost.surface(PointerState::Hovered, true, true, &theme);
+        assert!(selected_hovered.background.l > selected.background.l);
+        let window = ButtonVariant::Ghost.surface(PointerState::Hovered, false, false, &theme);
+        assert_eq!(window.background, theme.secondary());
     }
 }

@@ -1,0 +1,88 @@
+//! UI integration tests for `TitleBar`.
+
+use gpui_cn::{ActiveTheme as _, Button, Root, TitleBar};
+use gpui_kit::{
+    AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
+    Window, div, px, size, test::TestWindowExt as _,
+};
+
+struct Harness {
+    inset: bool,
+}
+
+impl Render for Harness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(
+            TitleBar::new()
+                .inset(self.inset)
+                .child(Button::new("action").ghost().label("Action")),
+        )
+    }
+}
+
+fn setup(cx: &mut TestAppContext, inset: bool) -> gpui_kit::WindowHandle<Root> {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let handle = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+        let harness = cx.new(|_| Harness { inset });
+        Root::new(harness, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    handle
+}
+
+#[gpui_kit::test]
+fn the_bar_spans_the_window_at_its_height_and_hosts_its_children(cx: &mut TestAppContext) {
+    let handle = setup(cx, true);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let height = cx.theme().metrics.title_bar;
+        let bar = window.find("title-bar").bounds();
+        assert_eq!(bar.size.width, px(600.));
+        assert_eq!(bar.size.height, height);
+        assert_eq!(height, px(46.));
+        let action = window.find("action").bounds();
+        // The child sits after the platform inset and is vertically centered.
+        let expected_left = if cfg!(target_os = "macos") {
+            px(88.)
+        } else {
+            px(12.)
+        };
+        assert_eq!(action.origin.x, expected_left);
+        assert_eq!(action.origin.y + action.size.height / 2., height / 2.);
+        // A press on a control is the control's, so a drag from it does not
+        // move the window; the click still lands.
+        window.click("action", cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn without_the_inset_the_children_start_at_the_edge(cx: &mut TestAppContext) {
+    let handle = setup(cx, false);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert_eq!(window.find("action").bounds().origin.x, px(12.));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn window_options_hide_the_system_title_bar(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        let options = TitleBar::window_options(cx);
+        let titlebar = options.titlebar.expect("a title bar configuration");
+        assert!(titlebar.appears_transparent);
+        assert_eq!(
+            titlebar.traffic_light_position,
+            Some(gpui_kit::point(px(16.), px(16.)))
+        );
+        assert!(options.app_owns_titlebar_drag);
+    });
+}

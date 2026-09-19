@@ -19,11 +19,14 @@ workspace = true
 default = []
 # Lucide icons through `gpui_kit::assets`.
 assets = ["gpui-kit/assets"]
+# JetBrains Mono as the code font, registered by `init`.
+jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
 # Headless UI testing through `gpui_kit::test`.
 test-support = ["gpui-kit/test-support"]
 
 [dependencies]
 gpui-kit.workspace = true
+damascene-fonts-jetbrains-mono = { version = "0.1", optional = true }
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

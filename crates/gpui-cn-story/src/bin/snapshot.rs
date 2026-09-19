@@ -1,8 +1,13 @@
-//! Renders the gallery offscreen and writes PNG files, one per theme mode.
+//! Renders the gallery offscreen and writes PNG files: the components page
+//! with the sidebar open and closed, and the settings page, per theme
+//! mode.
 //!
 //! ```bash
-//! cargo run -p gpui-cn-story --features snapshot --bin snapshot -- out-dir
+//! cargo run -p gpui-cn-story --features snapshot --bin snapshot -- out-dir [height]
 //! ```
+//!
+//! The window is 1100px wide and 760px tall unless a height is given; a
+//! taller window shows a story that scrolls.
 //!
 //! Needs GPUI's Metal headless renderer, so it runs on macOS only. On other
 //! platforms it prints that it skipped.
@@ -19,8 +24,10 @@ mod macos {
     use std::{path::PathBuf, sync::Arc};
 
     use gpui_cn::{ReduceMotion, Theme, ThemeMode};
+    use gpui_cn_story::Gallery;
     use gpui_kit::{
-        AppContext as _, HeadlessAppContext, assets::Assets, px, size, test::TestWindowExt as _,
+        AppContext as _, Entity, HeadlessAppContext, assets::Assets, px, size,
+        test::TestWindowExt as _,
     };
 
     pub fn run() {
@@ -31,6 +38,10 @@ mod macos {
         );
         std::fs::create_dir_all(&out).expect("create the output directory");
 
+        let height: f32 = std::env::args()
+            .nth(2)
+            .and_then(|height| height.parse().ok())
+            .unwrap_or_else(|| f32::from(gpui_cn_story::WINDOW_SIZE.height));
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
             Arc::new(Assets),
@@ -43,23 +54,79 @@ mod macos {
             Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
         });
 
+        let mut gallery: Option<Entity<Gallery>> = None;
         let handle = cx
-            .open_window(size(px(1100.), px(1500.)), |window, cx| {
-                let view = cx.new(|cx| gpui_cn_story::Gallery::new(window, cx));
-                cx.new(|cx| gpui_cn::Root::new(view, window, cx))
-            })
+            .open_window(
+                size(gpui_cn_story::WINDOW_SIZE.width, px(height)),
+                |window, cx| {
+                    let view = cx.new(|cx| Gallery::new(window, cx));
+                    gallery = Some(view.clone());
+                    cx.new(|cx| gpui_cn::Root::new(view, window, cx))
+                },
+            )
             .expect("open the gallery window");
+        let gallery = gallery.expect("the gallery view");
 
-        for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
-            cx.update(|cx| Theme::change(mode, cx));
-            cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
-                .expect("render");
+        let capture = |cx: &mut HeadlessAppContext, name: &str| {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("render");
             let image = cx
                 .capture_screenshot(handle.into())
                 .expect("Metal rendering must be available");
-            let path = out.join(format!("gallery-{name}.png"));
+            let path = out.join(format!("{name}.png"));
             image.save(&path).expect("write the PNG");
             println!("{}", path.display());
+        };
+
+        for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            cx.update(|cx| Theme::change(mode, cx));
+            capture(&mut cx, &format!("gallery-{name}"));
+            // Closed: the rail of icons by default, then off the canvas.
+            cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.toggle_sidebar(cx)));
+            capture(&mut cx, &format!("gallery-{name}-rail"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.sidebar().update(cx, |state, cx| {
+                        state.set_collapsible(gpui_cn::SidebarCollapsible::Offcanvas, cx)
+                    })
+                })
+            });
+            capture(&mut cx, &format!("gallery-{name}-collapsed"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.sidebar().update(cx, |state, cx| {
+                        state.set_collapsible(gpui_cn::SidebarCollapsible::Icon, cx)
+                    });
+                    gallery.toggle_sidebar(cx);
+                })
+            });
+            cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_settings(cx)));
+            capture(&mut cx, &format!("settings-{name}"));
+            cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
+            for story in ["Typography", "Spacing", "Sidebar", "Nav stack", "Title bar"] {
+                cx.update_window(handle.into(), |_, window, cx| {
+                    gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));
+                })
+                .expect("select the story");
+                if story == "Sidebar" {
+                    // Hover the row under the selected one, so the two
+                    // fills can be compared.
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.hover("starred", cx);
+                    })
+                    .expect("hover a row");
+                }
+                let slug = story.to_lowercase().replace(' ', "-");
+                capture(&mut cx, &format!("story-{slug}-{name}"));
+            }
+            cx.update_window(handle.into(), |_, window, cx| {
+                gallery.update(cx, |gallery, cx| gallery.select_story("Button", window, cx));
+            })
+            .expect("select the story");
         }
     }
 }

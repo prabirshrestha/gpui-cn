@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use gpui_kit::{
-    Hsla, Pixels, SharedString,
+    FontWeight, Hsla, Pixels, SharedString,
     base::{
         ColorTokens, RadiusTokens, SemanticThemeTokens, ShadowTokens, SpacingTokens,
         TextStyleToken, ThemeAppearance, TypographyTokens,
@@ -14,7 +16,7 @@ const BASE_FONT_SIZE: f32 = 16.;
 
 /// Everything a component reads: base's semantic tokens plus the few
 /// roles gpui-cn components need that base does not define. Derived from a
-/// [`ThemeConfig`] through [`ThemeTokens::derive`]; never edited by hand
+/// [`ThemeConfig`] when the theme resolves; never edited by hand
 /// except through [`Theme::update`](super::Theme::update).
 ///
 /// Roles are added here only when a component reads them. Semantic colors
@@ -37,6 +39,113 @@ pub struct ThemeTokens {
     pub tooltip: Hsla,
     /// Text on a tooltip.
     pub tooltip_foreground: Hsla,
+    /// The sidebar surface: a step above the window on dark, a hair below
+    /// it on light, so the rail reads as a different plane.
+    pub sidebar: Hsla,
+    /// The hairline between the sidebar and the content beside it.
+    pub sidebar_border: Hsla,
+    /// The hover surface of a row on the sidebar: a step above the
+    /// sidebar, short of the selected row, so a hovered row beside the
+    /// selected one reads as two rows. The reference paints both the
+    /// same.
+    pub sidebar_accent: Hsla,
+    /// The selected row on the sidebar.
+    pub sidebar_selected: Hsla,
+    /// Group labels and other quiet text on the sidebar.
+    pub sidebar_muted_foreground: Hsla,
+    /// The text of controls and rows: 13px at the default font size, the
+    /// reference application's control size, between base's `xs` and `sm`.
+    pub text_control: TextStyleToken,
+    /// A section heading or a sidebar title: 15px medium.
+    pub text_heading: TextStyleToken,
+    /// A page title: 24px semibold.
+    pub text_title: TextStyleToken,
+    /// The sizes of controls, rows, and window chrome.
+    pub metrics: MetricTokens,
+}
+
+/// The sizes gpui-cn components are built from.
+///
+/// Control and row sizes are on the rem scale, so they follow the UI font
+/// size. Window chrome and layout widths are fixed pixels: the platform
+/// draws its window controls at one size, and a sidebar's width is a
+/// layout decision, not a text one.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct MetricTokens {
+    /// Height of an `Xs` control: 20px.
+    pub control_xs: Pixels,
+    /// Height of an `Sm` control: 24px.
+    pub control_sm: Pixels,
+    /// Height of a `Default` control: 28px, the reference's common height.
+    pub control_md: Pixels,
+    /// Height of an `Lg` control: 32px, the reference's largest.
+    pub control_lg: Pixels,
+    /// Side padding of an `Xs` control: 6px.
+    pub control_padding_xs: Pixels,
+    /// Side padding of an `Sm` control: 8px.
+    pub control_padding_sm: Pixels,
+    /// Side padding of a `Default` control: 10px.
+    pub control_padding_md: Pixels,
+    /// Side padding of an `Lg` control: 18px.
+    pub control_padding_lg: Pixels,
+    /// Height of a small list row: 28px.
+    pub row_sm: Pixels,
+    /// Height of a list row, a tooltip, a sidebar row: 30px.
+    pub row: Pixels,
+    /// Height of a large row with an avatar or two lines: 48px.
+    pub row_lg: Pixels,
+    /// Height of a title bar: 46px, which centers the macOS window
+    /// controls on the same line as a `Default` control.
+    pub title_bar: Pixels,
+    /// Where the macOS window controls sit: 16px from the top and left.
+    pub window_controls_position: Pixels,
+    /// The room the macOS window controls take at a title bar's left edge,
+    /// including the gap after them: 88px.
+    pub window_controls_inset: Pixels,
+    /// The width of one Windows or Linux window control: 46px.
+    pub window_control_width: Pixels,
+    /// The width a sidebar opens at: 300px.
+    pub sidebar_width: Pixels,
+    /// The widths a sidebar can be dragged to: 220px to 480px.
+    pub sidebar_width_range: Range<Pixels>,
+    /// The width of a sidebar collapsed to icons: 48px.
+    pub icon_sidebar_width: Pixels,
+    /// The pointer target of a resize handle, centered on the edge: 8px.
+    pub resize_handle: Pixels,
+    /// The spread of the keyboard focus ring outside a control: 3px.
+    pub focus_ring: Pixels,
+}
+
+impl MetricTokens {
+    /// The metrics at `ui_font_size`; the rem-scale sizes are scaled from
+    /// the 16px defaults.
+    fn derive(ui_font_size: Pixels) -> Self {
+        let factor = f32::from(ui_font_size) / BASE_FONT_SIZE;
+        let scaled = |value: f32| px(value * factor);
+        Self {
+            control_xs: scaled(20.),
+            control_sm: scaled(24.),
+            control_md: scaled(28.),
+            control_lg: scaled(32.),
+            control_padding_xs: scaled(6.),
+            control_padding_sm: scaled(8.),
+            control_padding_md: scaled(10.),
+            control_padding_lg: scaled(18.),
+            row_sm: scaled(28.),
+            row: scaled(30.),
+            row_lg: scaled(48.),
+            title_bar: px(46.),
+            window_controls_position: px(16.),
+            window_controls_inset: px(88.),
+            window_control_width: px(46.),
+            sidebar_width: px(300.),
+            sidebar_width_range: px(220.)..px(480.),
+            icon_sidebar_width: px(48.),
+            resize_handle: px(8.),
+            focus_ring: px(3.),
+        }
+    }
 }
 
 /// Sizes that do not come from the config but still shape the tokens.
@@ -102,6 +211,16 @@ impl ThemeTokens {
         // with the label a step short of the surface (#dfdfdf on #2d2d2d).
         let primary = mix(ink, surface, 0.12);
         let primary_foreground = mix(surface, ink, 0.11);
+        // The reference sidebar is #222222 beside #181818 on dark, the same
+        // step as the soft fill, and #fdfdfd beside #ffffff on light. Its
+        // rows and hairline step from the sidebar, not from the window, so
+        // they stay visible on the lifted surface.
+        let sidebar = if dark { soft } else { toward_ink(0.008) };
+        let sidebar_step = |amount: f32| mix(sidebar, ink, amount);
+        let sidebar_accent = sidebar_step(if dark { 0.055 } else { 0.025 });
+        let sidebar_selected = sidebar_step(if dark { 0.095 } else { 0.05 });
+        let sidebar_border = sidebar_step(if dark { 0.10 } else { 0.07 });
+        let sidebar_muted_foreground = mix(ink, sidebar, if dark { 0.59 } else { 0.665 });
         let destructive_foreground = readable_on(config.semantic.destructive, surface, ink);
 
         let colors = ColorTokens {
@@ -126,6 +245,22 @@ impl ThemeTokens {
         };
 
         let typography = typography(config, metrics);
+        let factor = f32::from(metrics.ui_font_size) / BASE_FONT_SIZE;
+        let text_control = TextStyleToken {
+            size: px(13. * factor),
+            line_height: px(16. * factor),
+            weight: FontWeight::NORMAL,
+        };
+        let text_heading = TextStyleToken {
+            size: px(15. * factor),
+            line_height: px(20. * factor),
+            weight: FontWeight::MEDIUM,
+        };
+        let text_title = TextStyleToken {
+            size: px(24. * factor),
+            line_height: px(32. * factor),
+            weight: FontWeight::SEMIBOLD,
+        };
         let shadow = ShadowTokens::elevations(if dark {
             gpui_kit::black().alpha(0.4)
         } else {
@@ -145,6 +280,15 @@ impl ThemeTokens {
             link,
             tooltip,
             tooltip_foreground,
+            sidebar,
+            sidebar_border,
+            sidebar_accent,
+            sidebar_selected,
+            sidebar_muted_foreground,
+            text_control,
+            text_heading,
+            text_title,
+            metrics: MetricTokens::derive(metrics.ui_font_size),
         }
     }
 
@@ -407,6 +551,29 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_tokens_reproduce_the_reference_values() {
+        // Sampled from the reference application's sidebar and the hairline
+        // between it and the content.
+        let dark = dark();
+        assert_eq!(to_hex(dark.sidebar), "#222222");
+        assert_eq!(to_hex(dark.sidebar_selected), "#333333");
+        assert_eq!(to_hex(dark.sidebar_accent), "#2c2c2c");
+        assert!(lightness(dark.sidebar_accent) > lightness(dark.sidebar));
+        assert!(lightness(dark.sidebar_accent) < lightness(dark.sidebar_selected));
+        assert_eq!(to_hex(dark.sidebar_border), "#343434");
+        assert_eq!(to_hex(dark.sidebar_muted_foreground), "#747474");
+        let light = light();
+        assert_eq!(to_hex(light.sidebar), "#fdfdfd");
+        assert_eq!(to_hex(light.sidebar_selected), "#f0f0f0");
+        assert_eq!(to_hex(light.sidebar_accent), "#f6f6f7");
+        assert!(lightness(light.sidebar_accent) < lightness(light.sidebar));
+        assert!(lightness(light.sidebar_accent) > lightness(light.sidebar_selected));
+        assert_eq!(to_hex(light.sidebar_border), "#ebebeb");
+        // The sample is antialiased 13px text; one step off is inside its noise.
+        assert_eq!(to_hex(light.sidebar_muted_foreground), "#a9aaab");
+    }
+
+    #[test]
     fn contrast_scales_the_distance() {
         let mut low = ThemeConfig::light();
         low.contrast = 20;
@@ -457,6 +624,33 @@ mod tests {
         assert_eq!(tokens.radius_lg(), px(10.));
         assert_eq!(tokens.radius_xl(), px(14.));
         assert_eq!(tokens.radius_full(), px(9999.));
+    }
+
+    #[test]
+    fn control_text_and_metrics_scale_with_the_font_size_but_chrome_does_not() {
+        let default = light();
+        assert_eq!(default.text_control.size, px(13.));
+        assert_eq!(default.text_control.line_height, px(16.));
+        assert_eq!(default.text_heading.size, px(15.));
+        assert_eq!(default.text_title.size, px(24.));
+        assert_eq!(default.text_title.weight, FontWeight::SEMIBOLD);
+        assert_eq!(default.metrics.control_md, px(28.));
+        assert_eq!(default.metrics.row, px(30.));
+        assert_eq!(default.metrics.title_bar, px(46.));
+        let large = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                radius: px(10.),
+                ui_font_size: px(20.),
+                code_font_size: px(15.),
+            },
+        );
+        assert_eq!(large.text_control.size, px(16.25));
+        assert_eq!(large.metrics.control_md, px(35.));
+        assert_eq!(large.metrics.row, px(37.5));
+        assert_eq!(large.metrics.title_bar, px(46.), "window chrome stays");
+        assert_eq!(large.metrics.sidebar_width, px(300.), "layout stays");
     }
 
     #[test]

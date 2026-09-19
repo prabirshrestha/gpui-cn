@@ -25,13 +25,24 @@ pub struct ThemeConfig {
 }
 
 /// Font families for a theme. `None` means the platform default.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ThemeFonts {
     /// Interface text.
     pub ui: Option<SharedString>,
     /// Code, identifiers, and aligned numbers.
     pub code: Option<SharedString>,
+}
+
+impl Default for ThemeFonts {
+    /// The platform interface font, and the bundled code font when one
+    /// ships (see [`super::fonts`]).
+    fn default() -> Self {
+        Self {
+            ui: None,
+            code: super::fonts::default_code_font(),
+        }
+    }
 }
 
 /// Colors with a fixed meaning, independent of surface and ink.

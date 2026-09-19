@@ -16,7 +16,7 @@ workspace = true
 snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image"]
 
 [dependencies]
-gpui-cn = { workspace = true, features = ["assets"] }
+gpui-cn = { workspace = true, features = ["assets", "jetbrains-mono"] }
 gpui-kit = { workspace = true, features = ["assets"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 

@@ -43,16 +43,31 @@
 
 mod button;
 mod icon;
+mod nav;
 mod root;
+mod sidebar;
 pub mod theme;
+mod title_bar;
 mod tooltip;
 mod tooltip_host;
 
 pub use button::{Button, ButtonSize, ButtonVariant};
 pub use gpui_kit;
 pub use icon::{Icon, IconSource};
+pub use nav::{
+    NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
+    NavStackState,
+};
 pub use root::Root;
-pub use theme::{ActiveTheme, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens};
+pub use sidebar::{
+    Sidebar, SidebarCollapsible, SidebarEvent, SidebarGroup, SidebarLayout, SidebarMenuButton,
+    SidebarMenuSize, SidebarMenuSkeleton, SidebarMenuSub, SidebarSeparator, SidebarSide,
+    SidebarState, SidebarTrigger,
+};
+pub use theme::{
+    ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
+};
+pub use title_bar::TitleBar;
 pub use tooltip::{Tooltip, TooltipExt, TooltipTrigger};
 pub use tooltip_host::TooltipHost;
 
@@ -61,8 +76,10 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     pub use crate::{
-        ActiveTheme, Button, ButtonSize, ButtonVariant, Icon, ReduceMotion, Root, Theme, ThemeMode,
-        TooltipExt,
+        ActiveTheme, Button, ButtonSize, ButtonVariant, Icon, NavButtons, NavMotion, NavStack,
+        NavStackExt, NavStackState, ReduceMotion, Root, Sidebar, SidebarCollapsible, SidebarGroup,
+        SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
+        SidebarState, SidebarTrigger, Theme, ThemeMode, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -78,6 +95,9 @@ impl Global for Initialized {}
 ///
 /// Installs the built-in light and dark themes and projects them onto
 /// `gpui_base::Theme`, as `gpui_component::init` does for its own theme.
+/// With the `jetbrains-mono` feature it also registers JetBrains Mono
+/// with the text system and makes it the code font; see
+/// [`theme::fonts`].
 /// Calling it twice changes nothing. In an application that also runs
 /// `gpui_component::init`, the later of the two owns the base theme and
 /// the other layer follows its colors.
@@ -94,6 +114,7 @@ pub fn init(cx: &mut App) {
         base_initialized(cx),
         "gpui_cn::init needs gpui_base::init first; call gpui_kit::init(cx) before it"
     );
+    theme::fonts::register(cx);
     Theme::init(cx);
     root::init(cx);
     cx.set_global(Initialized);

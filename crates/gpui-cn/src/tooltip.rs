@@ -61,14 +61,14 @@ pub fn surface(cx: &App) -> Div {
     div()
         .flex()
         .items_center()
-        .h(gpui_kit::rems(1.875))
-        .px(gpui_kit::rems(0.8125))
+        .h(theme.metrics.row)
+        .px(theme.text_control.size)
         .rounded(theme.radius_lg())
         .bg(theme.tooltip)
         .text_color(theme.tooltip_foreground)
         .border_1()
         .border_color(theme.border())
-        .text_size(gpui_kit::rems(0.8125))
+        .text_size(theme.text_control.size)
         .whitespace_nowrap()
 }
 
