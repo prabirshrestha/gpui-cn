@@ -129,6 +129,14 @@ pub struct MetricTokens {
     pub resize_handle: Pixels,
     /// The spread of the keyboard focus ring outside a control: 3px.
     pub focus_ring: Pixels,
+    /// The width of a scrollbar's thumb at rest: 7px, the knob of a macOS
+    /// overlay scroller, which the reference app's web view shows.
+    pub scrollbar_thumb: Pixels,
+    /// The width of the thumb while the pointer is on the bar or drags
+    /// it: 11px, the expanded knob of a macOS overlay scroller.
+    pub scrollbar_thumb_active: Pixels,
+    /// The gap between the thumb and the edge of the scroll region: 2px.
+    pub scrollbar_inset: Pixels,
 }
 
 impl MetricTokens {
@@ -173,6 +181,9 @@ impl MetricTokens {
             sidebar_sheet_width: px(288.),
             resize_handle: px(8.),
             focus_ring: px(3.),
+            scrollbar_thumb: px(7.),
+            scrollbar_thumb_active: px(11.),
+            scrollbar_inset: px(2.),
         }
     }
 }

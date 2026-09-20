@@ -212,12 +212,36 @@ impl Theme {
         self.apply_reduce_motion(cx);
     }
 
-    /// Writes the derived tokens into `gpui_base::Theme`, keeping base's own
-    /// scrollbar and resize-handle styles.
+    /// Writes the derived tokens into `gpui_base::Theme`, with the
+    /// scrollbar and resize-handle styles every base element paints with.
+    ///
+    /// The scrollbar is a macOS overlay scroller: a rounded thumb that
+    /// shows while the region scrolls and fades when it rests, wider under
+    /// the pointer. Its colors stay base's, which take the foreground at
+    /// an alpha, so they follow the appearance.
     fn sync_base(&self, cx: &mut App) {
+        let metrics = &self.tokens.metrics;
+        let radius = self.tokens.radius_full();
+        let thumb = |width: Pixels| {
+            move |style: base::ScrollbarThumbStyle| {
+                style
+                    .width(width)
+                    .inset(metrics.scrollbar_inset)
+                    .radius(radius)
+            }
+        };
+        let scrollbar = base::ScrollbarTheme::new()
+            .with_mode(base::ScrollbarMode::Scrolling)
+            .with_styles(
+                base::ScrollbarStyles::default()
+                    .thumb(thumb(metrics.scrollbar_thumb))
+                    .thumb_hover(thumb(metrics.scrollbar_thumb_active))
+                    .thumb_active(thumb(metrics.scrollbar_thumb_active)),
+            );
         let base_theme = base::Theme::global_mut(cx);
         base_theme.appearance = self.tokens.appearance;
         base_theme.tokens = self.tokens.base.clone();
+        base_theme.scrollbar = scrollbar;
         base_theme.resizable = base::ResizableTheme {
             handle: Some(self.tokens.border()),
             active_handle: Some(self.tokens.ring()),

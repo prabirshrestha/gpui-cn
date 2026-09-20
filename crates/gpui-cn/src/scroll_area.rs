@@ -1,14 +1,15 @@
 //! A vertical scroll region that stretches past its ends and springs
-//! back, on every platform.
+//! back, on every platform, with an overlay scrollbar.
 
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ParentElement, RenderOnce,
     ScrollHandle, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
-    base::{ScrollBounce, StyledExt as _, TestSupportExt as _},
+    base::{self, ScrollBounce, StyledExt as _, TestSupportExt as _},
     div, px,
 };
 
-/// A vertical scroll region with the overscroll bounce of a `UIScrollView`.
+/// A vertical scroll region with the overscroll bounce of a `UIScrollView`
+/// and an overlay scrollbar.
 ///
 /// `gpui_base::ScrollBounce` plays the stretch and the return, and turns
 /// itself on for iOS and Android alone. gpui-cn turns it on everywhere,
@@ -16,6 +17,11 @@ use gpui_kit::{
 /// on a phone. Reduced motion turns the bounce off; the region still
 /// scrolls. The scroll position lives in window state under `id`, so it
 /// survives a re-render.
+///
+/// `gpui_base::Scrollbar` draws the bar over the region's right edge: it
+/// shows while the region scrolls, fades when it rests, and drags. Its
+/// look comes from the theme, which projects it onto base for every
+/// scrolling element.
 ///
 /// The region fills its parent. Give it a sized parent, and put fixed
 /// chrome such as a toolbar outside it.
@@ -94,8 +100,13 @@ impl RenderOnce for ScrollArea {
         // box keeps the step when the region has room to scroll, after
         // the viewport moved and the bounce took what was left; a region
         // whose content fits passes it on.
+        let scrollbar = base::Scrollbar::vertical(&handle).id(ElementId::NamedChild(
+            self.id.clone().into(),
+            "scrollbar".into(),
+        ));
         div()
             .id(ElementId::NamedChild(self.id.into(), "frame".into()))
+            .relative()
             .refine_style(&frame_style)
             .on_scroll_wheel(move |_, _, cx| {
                 if handle.max_offset().y > px(0.) {
@@ -103,6 +114,7 @@ impl RenderOnce for ScrollArea {
                 }
             })
             .child(bounce)
+            .child(scrollbar)
     }
 }
 

@@ -134,6 +134,20 @@ mod macos {
                     gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));
                 })
                 .expect("select the story");
+                if story == "Typography" {
+                    // Scroll the page a little, so the overlay scrollbar
+                    // shows in the capture.
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.scroll(
+                            "page",
+                            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-120.))),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                    })
+                    .expect("scroll the page");
+                }
                 if story == "Sidebar" {
                     // Hover the row under the selected one, so the two
                     // fills can be compared.
