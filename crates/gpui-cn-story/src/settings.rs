@@ -4,10 +4,10 @@
 use gpui_cn::{
     ActiveTheme as _, Button, ButtonSize, NavMotion, NavStackState, ReduceMotion, ScrollArea,
     Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarState,
-    Theme, ThemeMode, TitleBar, gpui_kit::assets::IconName,
+    Theme, ThemeMode, ThemeModePicker, TitleBar, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
-    AnyElement, App, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    AnyElement, App, Context, Div, Entity, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Window, base::Selectable as _, div, prelude::FluentBuilder as _, px,
 };
 
@@ -73,6 +73,12 @@ impl SettingsPage {
         }
     }
 
+    /// Shows `section`.
+    pub fn show(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.section = section;
+        cx.notify();
+    }
+
     fn render_sidebar(&self, cx: &mut Context<Self>) -> Sidebar {
         let stack = self.stack.clone();
         Sidebar::new()
@@ -93,10 +99,7 @@ impl SettingsPage {
                         .icon(section.icon())
                         .label(section.title())
                         .selected(section == self.section)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.section = section;
-                            cx.notify();
-                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
                 }),
             ))
     }
@@ -179,7 +182,7 @@ impl SettingsPage {
                     ),
                 ],
             ),
-            heading("Defaults", cx),
+            heading("Defaults", cx).into_any_element(),
             card(
                 cx,
                 [row(
@@ -216,55 +219,46 @@ impl SettingsPage {
             "System".into(),
             code_font.is_none() || !bundled.contains(code_font.as_ref().unwrap()),
         ));
-        vec![card(
-            cx,
-            [
-                row(
-                    "Code font",
-                    "The fonts that ship with the gallery, or the platform's monospace.",
-                    segmented_from("code-font", fonts, move |ix, _, cx| {
-                        let font = bundled.get(ix).cloned();
-                        Theme::update(cx, |theme| {
-                            theme.light.fonts.code = font.clone();
-                            theme.dark.fonts.code = font;
-                        });
-                    }),
-                ),
-                row(
-                    "Theme",
-                    "Follow the system, or keep one appearance.",
-                    segmented(
-                        "mode",
-                        [
-                            ("System", mode == ThemeMode::System),
-                            ("Light", mode == ThemeMode::Light),
-                            ("Dark", mode == ThemeMode::Dark),
-                        ],
-                        |ix, cx| {
-                            let mode = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark][ix];
-                            Theme::change(mode, cx);
-                        },
+        vec![
+            heading("Theme", cx).pt_0().into_any_element(),
+            ThemeModePicker::new("mode")
+                .value(mode)
+                .on_change(|mode, _, cx| Theme::change(*mode, cx))
+                .into_any_element(),
+            card(
+                cx,
+                [
+                    row(
+                        "Code font",
+                        "The fonts that ship with the gallery, or the platform's monospace.",
+                        segmented_from("code-font", fonts, move |ix, _, cx| {
+                            let font = bundled.get(ix).cloned();
+                            Theme::update(cx, |theme| {
+                                theme.light.fonts.code = font.clone();
+                                theme.dark.fonts.code = font;
+                            });
+                        }),
                     ),
-                ),
-                row(
-                    "Reduce motion",
-                    "Skip transitions. System follows the accessibility setting.",
-                    segmented(
-                        "motion",
-                        [
-                            ("System", reduce_motion == ReduceMotion::System),
-                            ("On", reduce_motion == ReduceMotion::On),
-                            ("Off", reduce_motion == ReduceMotion::Off),
-                        ],
-                        |ix, cx| {
-                            let value =
-                                [ReduceMotion::System, ReduceMotion::On, ReduceMotion::Off][ix];
-                            Theme::update(cx, |theme| theme.reduce_motion = value);
-                        },
+                    row(
+                        "Reduce motion",
+                        "Skip transitions. System follows the accessibility setting.",
+                        segmented(
+                            "motion",
+                            [
+                                ("System", reduce_motion == ReduceMotion::System),
+                                ("On", reduce_motion == ReduceMotion::On),
+                                ("Off", reduce_motion == ReduceMotion::Off),
+                            ],
+                            |ix, cx| {
+                                let value =
+                                    [ReduceMotion::System, ReduceMotion::On, ReduceMotion::Off][ix];
+                                Theme::update(cx, |theme| theme.reduce_motion = value);
+                            },
+                        ),
                     ),
-                ),
-            ],
-        )]
+                ],
+            ),
+        ]
     }
 }
 
@@ -320,8 +314,9 @@ impl Render for SettingsPage {
     }
 }
 
-/// A group heading between cards.
-fn heading(text: &'static str, cx: &App) -> AnyElement {
+/// A group heading between cards. The first block on a page drops the
+/// top padding with `.pt_0()`.
+fn heading(text: &'static str, cx: &App) -> Div {
     let heading = cx.theme().text_heading;
     div()
         .pt_6()
@@ -329,7 +324,6 @@ fn heading(text: &'static str, cx: &App) -> AnyElement {
         .line_height(heading.line_height)
         .font_weight(heading.weight)
         .child(text)
-        .into_any_element()
 }
 
 /// A card of rows on the elevated surface, hairlines between the rows.

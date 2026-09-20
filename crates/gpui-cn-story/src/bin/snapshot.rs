@@ -105,10 +105,26 @@ mod macos {
             });
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_settings(cx)));
             capture(&mut cx, &format!("settings-{name}"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.settings().update(cx, |settings, cx| {
+                        settings.show(gpui_cn_story::SettingsSection::Appearance, cx)
+                    })
+                })
+            });
+            capture(&mut cx, &format!("settings-{name}-appearance"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.settings().update(cx, |settings, cx| {
+                        settings.show(gpui_cn_story::SettingsSection::General, cx)
+                    })
+                })
+            });
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
             for story in [
                 "Typography",
                 "Spacing",
+                "Theme mode picker",
                 "Sidebar",
                 "Nav stack",
                 "Scroll area",

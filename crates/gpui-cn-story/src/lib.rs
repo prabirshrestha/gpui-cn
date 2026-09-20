@@ -21,7 +21,7 @@ use gpui_kit::{
     px,
 };
 
-use settings::SettingsPage;
+pub use settings::{SettingsPage, SettingsSection};
 
 /// The width a story or settings column grows to before it stops, so
 /// prose and cards keep a readable measure in a wide window.
@@ -91,6 +91,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::TypographyStory>(),
         StoryEntry::of::<stories::SpacingStory>(),
         StoryEntry::of::<stories::ButtonStory>(),
+        StoryEntry::of::<stories::ThemeModePickerStory>(),
         StoryEntry::of::<stories::SidebarStory>(),
         StoryEntry::of::<stories::NavStackStory>(),
         StoryEntry::of::<stories::ScrollAreaStory>(),
@@ -255,6 +256,11 @@ impl Gallery {
             stack.push(settings, NavMotion::Animated, cx);
         });
         self.close_sheet(cx);
+    }
+
+    /// The settings page.
+    pub fn settings(&self) -> &Entity<SettingsPage> {
+        &self.settings
     }
 
     /// Shows or hides the sidebar.
