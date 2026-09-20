@@ -105,10 +105,26 @@ mod macos {
             });
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_settings(cx)));
             capture(&mut cx, &format!("settings-{name}"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.settings().update(cx, |settings, cx| {
+                        settings.show(gpui_cn_story::SettingsSection::Appearance, cx)
+                    })
+                })
+            });
+            capture(&mut cx, &format!("settings-{name}-appearance"));
+            cx.update(|cx| {
+                gallery.update(cx, |gallery, cx| {
+                    gallery.settings().update(cx, |settings, cx| {
+                        settings.show(gpui_cn_story::SettingsSection::General, cx)
+                    })
+                })
+            });
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
             for story in [
                 "Typography",
                 "Spacing",
+                "Theme mode picker",
                 "Sidebar",
                 "Nav stack",
                 "Scroll area",
@@ -118,6 +134,18 @@ mod macos {
                     gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));
                 })
                 .expect("select the story");
+                if story == "Typography" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.scroll(
+                            "page",
+                            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-120.))),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                    })
+                    .expect("scroll the page");
+                }
                 if story == "Sidebar" {
                     // Hover the row under the selected one, so the two
                     // fills can be compared.

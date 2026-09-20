@@ -181,3 +181,57 @@ fn a_step_past_the_top_stretches_the_region(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_scrollbar_shows_after_a_wheel_step_and_drags_the_content(cx: &mut TestAppContext) {
+    use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let handle = cx.open_window(size(px(400.), px(400.)), |window, cx| {
+        let harness = cx.new(|_| Harness);
+        Root::new(harness, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.scroll("rows", ScrollDelta::Pixels(point(px(0.), px(-90.))), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(("row", 0usize)).bounds().origin.y, px(-90.));
+        let viewport = window.find("rows").bounds();
+        let thumb = point(viewport.right() - px(4.), px(30.));
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: thumb,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: thumb + point(px(0.), px(50.)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::default(),
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: thumb + point(px(0.), px(50.)),
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            }),
+            cx,
+        );
+        window.render_frame(cx);
+        let row = window.find(("row", 0usize)).bounds().origin.y;
+        assert!(row < px(-200.), "the thumb dragged the rows to {row:?}");
+    })
+    .unwrap();
+}

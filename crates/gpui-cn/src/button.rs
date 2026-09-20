@@ -547,8 +547,8 @@ impl RenderOnce for Button {
                     // The reference keeps a disabled button's fill at half
                     // strength and drops its text most of the way to the surface
                     // (#6e6e6e on #181818), rather than fading the whole control.
-                    target.background = target.background.opacity(0.55);
-                    target.border = target.border.opacity(0.55);
+                    target.background = target.background.opacity(theme.disabled_opacity);
+                    target.border = target.border.opacity(theme.disabled_opacity);
                     target.foreground = match variant {
                         ButtonVariant::Primary => target.foreground,
                         _ => mix(
