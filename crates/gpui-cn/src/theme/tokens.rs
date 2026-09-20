@@ -71,8 +71,18 @@ pub struct ThemeTokens {
     pub metrics: MetricTokens,
     /// The strength a disabled control keeps: 55%, measured from the
     /// reference app's disabled button fill. A button applies it to its
-    /// fill and a card to the whole.
+    /// fill and a card to the whole. The reference app's disabled switch
+    /// measures 60%; gpui-cn keeps one strength for every control.
     pub disabled_opacity: f32,
+    /// The track of a switch that is on: the accent, as the reference
+    /// app paints it (#539af8 on dark).
+    pub switch_track_on: Hsla,
+    /// The track of a switch that is off.
+    pub switch_track_off: Hsla,
+    /// The thumb of a switch: the lighter of the surface and the ink, so
+    /// it is white in both appearances of the built-in themes, as the
+    /// reference app paints it.
+    pub switch_thumb: Hsla,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -141,6 +151,18 @@ pub struct MetricTokens {
     pub scrollbar_thumb_active: Pixels,
     /// The gap between the thumb and the edge of the scroll region: 2px.
     pub scrollbar_inset: Pixels,
+    /// The width of a switch's track: 32px, measured from the reference
+    /// app at 2x. On touch it is the 51px of a UISwitch.
+    pub switch_track_width: Pixels,
+    /// The height of a switch's track: 20px from the reference app, 31px
+    /// of a UISwitch on touch.
+    pub switch_track_height: Pixels,
+    /// The diameter of a switch's thumb: 16px from the reference app, 27px
+    /// of a UISwitch on touch.
+    pub switch_thumb_size: Pixels,
+    /// The gap between the thumb and the track's edge: 2px on both. On
+    /// touch it is fixed with the track, so the thumb always fits.
+    pub switch_thumb_inset: Pixels,
 }
 
 impl MetricTokens {
@@ -188,6 +210,10 @@ impl MetricTokens {
             scrollbar_thumb: px(7.),
             scrollbar_thumb_active: px(11.),
             scrollbar_inset: px(2.),
+            switch_track_width: if touch { px(51.) } else { scaled(32.) },
+            switch_track_height: if touch { px(31.) } else { scaled(20.) },
+            switch_thumb_size: if touch { px(27.) } else { scaled(16.) },
+            switch_thumb_inset: if touch { px(2.) } else { scaled(2.) },
         }
     }
 }
@@ -268,6 +294,11 @@ impl ThemeTokens {
         let sidebar_border = sidebar_step(if dark { 0.10 } else { 0.07 });
         let sidebar_muted_foreground = mix(ink, sidebar, if dark { 0.59 } else { 0.665 });
         let destructive_foreground = readable_on(config.semantic.destructive, surface, ink);
+        // The reference app's switch: the accent when on, and when off a
+        // gray a few steps from the surface. The thumb is white on both.
+        let switch_track_on = config.accent;
+        let switch_track_off = toward_ink(0.20);
+        let switch_thumb = lighter_of(surface, ink);
 
         let colors = ColorTokens {
             background: surface,
@@ -345,6 +376,9 @@ impl ThemeTokens {
             text_title,
             metrics: MetricTokens::derive(metrics.ui_font_size, metrics.touch),
             disabled_opacity: 0.55,
+            switch_track_on,
+            switch_track_off,
+            switch_thumb,
         }
     }
 
@@ -433,6 +467,12 @@ impl ThemeTokens {
         self.base.colors.ring
     }
 
+    /// The keyboard focus ring a control paints outside its box: the ring
+    /// color at half strength, shadcn's `ring/50`.
+    pub fn focus_ring(&self) -> Hsla {
+        self.ring().opacity(0.5)
+    }
+
     /// Selected text background.
     pub fn selection(&self) -> Hsla {
         self.base.colors.selection
@@ -512,6 +552,12 @@ fn typography(config: &ThemeConfig, metrics: Metrics) -> TypographyTokens {
     }
 }
 
+/// The lighter of two colors.
+fn lighter_of(a: Hsla, b: Hsla) -> Hsla {
+    use super::color::lightness;
+    if lightness(a) >= lightness(b) { a } else { b }
+}
+
 /// Picks `surface` or `ink` as text on a colored `background`.
 ///
 /// Light text on a saturated mid-tone (the accent blue, a shadcn red) is the
@@ -520,11 +566,8 @@ fn typography(config: &ThemeConfig, metrics: Metrics) -> TypographyTokens {
 fn readable_on(background: Hsla, surface: Hsla, ink: Hsla) -> Hsla {
     use super::color::lightness;
     const LIGHT_BACKGROUND: f32 = 0.72;
-    let (lighter, darker) = if lightness(surface) >= lightness(ink) {
-        (surface, ink)
-    } else {
-        (ink, surface)
-    };
+    let lighter = lighter_of(surface, ink);
+    let darker = if lighter == surface { ink } else { surface };
     if lightness(background) > LIGHT_BACKGROUND {
         darker
     } else {
@@ -569,6 +612,22 @@ mod tests {
         assert_eq!(touch.text_title.size, px(28.), "HIG title 1");
         // The chrome that is not touched stays.
         assert_eq!(touch.metrics.sidebar_sheet_width, px(288.));
+        // The switch is a UISwitch, fixed like the chrome, so the thumb
+        // fits at every font size.
+        assert_eq!(touch.metrics.switch_track_width, px(51.));
+        assert_eq!(touch.metrics.switch_track_height, px(31.));
+        assert_eq!(touch.metrics.switch_thumb_size, px(27.));
+        assert_eq!(touch.metrics.switch_thumb_inset, px(2.));
+        let large_touch = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                touch: true,
+                ui_font_size: px(20.),
+                ..metrics()
+            },
+        );
+        assert_eq!(large_touch.metrics.switch_thumb_inset, px(2.));
         let mouse = light();
         assert!(!mouse.touch);
         assert_eq!(mouse.metrics.control_md, px(28.));
@@ -674,6 +733,24 @@ mod tests {
     }
 
     #[test]
+    fn switch_colors_reproduce_the_reference_values() {
+        // The on track and the thumb are sampled from the reference app's
+        // settings toggles at 2x on dark.
+        let dark = dark();
+        assert_eq!(to_hex(dark.switch_track_on), "#539af8");
+        assert_eq!(to_hex(dark.switch_thumb), "#ffffff");
+        assert_eq!(dark.switch_track_on, dark.ring());
+        assert!(lightness(dark.switch_track_off) > lightness(dark.background()));
+        assert!(lightness(dark.switch_track_off) < lightness(dark.switch_thumb));
+        let light = light();
+        assert_eq!(to_hex(light.switch_thumb), "#ffffff");
+        assert_eq!(light.switch_track_on, light.ring());
+        assert!(lightness(light.switch_track_off) < lightness(light.background()));
+        assert_eq!(to_hex(light.focus_ring()), "#339cff80");
+        assert_eq!(light.focus_ring().a, 0.5);
+    }
+
+    #[test]
     fn accent_and_semantic_colors_pass_through() {
         let light = light();
         assert_eq!(light.ring(), hex("#339cff"));
@@ -735,6 +812,13 @@ mod tests {
         assert_eq!(large.metrics.row, px(37.5));
         assert_eq!(large.metrics.title_bar, px(46.), "window chrome stays");
         assert_eq!(large.metrics.sidebar_width, px(300.), "layout stays");
+        assert_eq!(default.metrics.switch_track_width, px(32.));
+        assert_eq!(default.metrics.switch_track_height, px(20.));
+        assert_eq!(default.metrics.switch_thumb_size, px(16.));
+        assert_eq!(default.metrics.switch_thumb_inset, px(2.));
+        assert_eq!(large.metrics.switch_track_width, px(40.));
+        assert_eq!(large.metrics.switch_thumb_size, px(20.));
+        assert_eq!(large.metrics.switch_thumb_inset, px(2.5));
     }
 
     #[test]

@@ -566,7 +566,7 @@ impl RenderOnce for Button {
                         ButtonVariant::Destructive => theme
                             .destructive()
                             .opacity(if theme.is_dark() { 0.4 } else { 0.2 }),
-                        _ => theme.ring().opacity(0.5),
+                        _ => theme.focus_ring(),
                     },
                     ring_spread: theme.metrics.focus_ring,
                     outline_focus_border: theme.ring(),

@@ -4,7 +4,7 @@
 use gpui_cn::{
     ActiveTheme as _, Button, ButtonSize, NavMotion, NavStackState, ReduceMotion, ScrollArea,
     Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarState,
-    Theme, ThemeMode, ThemeModePicker, TitleBar, gpui_kit::assets::IconName,
+    Switch, Theme, ThemeMode, ThemeModePicker, TitleBar, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyElement, App, Context, Div, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -133,11 +133,13 @@ impl SettingsPage {
                     row(
                         "Pointer cursors",
                         "Show the hand cursor over buttons. Links always use it.",
-                        segmented(
-                            "pointer",
-                            [("On", pointer_cursors), ("Off", !pointer_cursors)],
-                            |ix, cx| Theme::update(cx, |theme| theme.pointer_cursors = ix == 0),
-                        ),
+                        Switch::new("pointer")
+                            .checked(pointer_cursors)
+                            .accessibility_label("Pointer cursors")
+                            .on_change(|checked, _, cx| {
+                                let checked = *checked;
+                                Theme::update(cx, |theme| theme.pointer_cursors = checked);
+                            }),
                     ),
                     row(
                         "Text size",
