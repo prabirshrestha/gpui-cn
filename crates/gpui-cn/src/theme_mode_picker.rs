@@ -432,7 +432,7 @@ impl RenderOnce for ThemeModePicker {
             ring: theme.foreground(),
             label: theme.foreground(),
             muted_label: theme.muted_foreground(),
-            focus_ring: theme.ring().opacity(0.5),
+            focus_ring: theme.focus_ring(),
             focus_ring_spread: theme.metrics.focus_ring,
             focus_radius: theme.radius_lg(),
             disabled_opacity: theme.disabled_opacity,

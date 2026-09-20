@@ -47,6 +47,7 @@ mod nav;
 mod root;
 mod scroll_area;
 mod sidebar;
+mod switch;
 pub mod theme;
 mod theme_mode_picker;
 mod title_bar;
@@ -67,6 +68,7 @@ pub use sidebar::{
     SidebarMenuSize, SidebarMenuSkeleton, SidebarMenuSub, SidebarSeparator, SidebarSide,
     SidebarState, SidebarTrigger,
 };
+pub use switch::Switch;
 pub use theme::{
     ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
 };
@@ -83,8 +85,8 @@ pub mod prelude {
         ActiveTheme, Button, ButtonSize, ButtonVariant, Icon, NavButtons, NavMotion, NavStack,
         NavStackExt, NavStackState, ReduceMotion, Root, ScrollArea, Sidebar, SidebarCollapsible,
         SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator,
-        SidebarSide, SidebarState, SidebarTrigger, Theme, ThemeMode, ThemeModePicker, TitleBar,
-        TooltipExt,
+        SidebarSide, SidebarState, SidebarTrigger, Switch, Theme, ThemeMode, ThemeModePicker,
+        TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

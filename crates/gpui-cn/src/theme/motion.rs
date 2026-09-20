@@ -54,6 +54,12 @@ impl MotionTokens {
         Transition::new(self.slow).easing(self.fold.clone())
     }
 
+    /// A `fast` transition with the fold curve, for a thumb that slides
+    /// between the two ends of its track.
+    pub fn slide_transition(&self) -> Transition {
+        Transition::new(self.fast).easing(self.fold.clone())
+    }
+
     /// A `fast` transition with the enter curve.
     pub fn fast_transition(&self) -> Transition {
         Transition::new(self.fast).easing(self.enter.clone())

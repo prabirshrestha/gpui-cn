@@ -124,6 +124,7 @@ mod macos {
             for story in [
                 "Typography",
                 "Spacing",
+                "Switch",
                 "Theme mode picker",
                 "Sidebar",
                 "Nav stack",
