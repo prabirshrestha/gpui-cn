@@ -46,7 +46,9 @@ mod icon;
 mod nav;
 mod root;
 mod scroll_area;
+mod select;
 mod sidebar;
+mod skeleton;
 mod switch;
 pub mod theme;
 mod theme_mode_picker;
@@ -63,11 +65,16 @@ pub use nav::{
 };
 pub use root::Root;
 pub use scroll_area::ScrollArea;
+pub use select::{
+    SearchHandler, Select, SelectEntry, SelectEvent, SelectItem, SelectRow, SelectState,
+    SelectValue,
+};
 pub use sidebar::{
     Sidebar, SidebarCollapsible, SidebarEvent, SidebarGroup, SidebarLayout, SidebarMenuButton,
     SidebarMenuSize, SidebarMenuSkeleton, SidebarMenuSub, SidebarSeparator, SidebarSide,
     SidebarState, SidebarTrigger,
 };
+pub use skeleton::Skeleton;
 pub use switch::Switch;
 pub use theme::{
     ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
@@ -83,10 +90,10 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Button, ButtonSize, ButtonVariant, Icon, NavButtons, NavMotion, NavStack,
-        NavStackExt, NavStackState, ReduceMotion, Root, ScrollArea, Sidebar, SidebarCollapsible,
-        SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator,
-        SidebarSide, SidebarState, SidebarTrigger, Switch, Theme, ThemeMode, ThemeModePicker,
-        TitleBar, TooltipExt,
+        NavStackExt, NavStackState, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
+        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
+        SidebarTrigger, Switch, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -124,6 +131,7 @@ pub fn init(cx: &mut App) {
     theme::fonts::register(cx);
     Theme::init(cx);
     root::init(cx);
+    select::init(cx);
     cx.set_global(Initialized);
 }
 

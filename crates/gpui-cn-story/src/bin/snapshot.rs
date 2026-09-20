@@ -125,6 +125,8 @@ mod macos {
                 "Typography",
                 "Spacing",
                 "Switch",
+                "Select",
+                "Skeleton",
                 "Theme mode picker",
                 "Sidebar",
                 "Nav stack",
@@ -158,6 +160,37 @@ mod macos {
                 }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                if story == "Select" {
+                    let trigger = |id: &'static str| {
+                        gpui_kit::ElementId::NamedChild(
+                            gpui_kit::ElementId::Name(id.into()).into(),
+                            "trigger".into(),
+                        )
+                    };
+                    for (id, query) in gpui_cn_story::stories::SelectStory::MENUS {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            gpui_cn_story::reveal(trigger(id), window, cx);
+                            window.click(trigger(id), cx);
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                            if !query.is_empty() {
+                                window.input(query, cx);
+                            }
+                        })
+                        .expect("open a menu");
+                        if *id == "cities" {
+                            cx.advance_clock(std::time::Duration::from_millis(400));
+                            cx.run_until_parked();
+                        }
+                        let suffix = if query.is_empty() { "" } else { "-search" };
+                        capture(&mut cx, &format!("story-{slug}-{id}{suffix}-{name}"));
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("escape", cx);
+                        })
+                        .expect("close the menu");
+                    }
+                }
             }
             cx.update_window(handle.into(), |_, window, cx| {
                 gallery.update(cx, |gallery, cx| gallery.select_story("Button", window, cx));

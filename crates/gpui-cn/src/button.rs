@@ -62,7 +62,45 @@ pub enum ButtonSize {
     Lg,
 }
 
+/// The box a control of one size tier takes: shared by the button and
+/// the select trigger, so a trigger beside a button lines up with it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ControlGeometry {
+    pub radius: Pixels,
+    pub height: Pixels,
+    pub padding: Pixels,
+    pub text_size: Pixels,
+}
+
 impl ButtonSize {
+    pub(crate) fn geometry(self, theme: &ThemeTokens) -> ControlGeometry {
+        let metrics = &theme.metrics;
+        ControlGeometry {
+            radius: if self == Self::Lg {
+                theme.radius_lg()
+            } else {
+                theme.radius_md()
+            },
+            height: match self {
+                Self::Xs => metrics.control_xs,
+                Self::Sm => metrics.control_sm,
+                Self::Default => metrics.control_md,
+                Self::Lg => metrics.control_lg,
+            },
+            padding: match self {
+                Self::Xs => metrics.control_padding_xs,
+                Self::Sm => metrics.control_padding_sm,
+                Self::Default => metrics.control_padding_md,
+                Self::Lg => metrics.control_padding_lg,
+            },
+            text_size: match self {
+                Self::Xs => theme.base.typography.xs.size,
+                Self::Sm | Self::Default => theme.text_control.size,
+                Self::Lg => theme.base.typography.sm.size,
+            },
+        }
+    }
+
     fn is_xs(self) -> bool {
         matches!(self, Self::Xs)
     }
@@ -497,10 +535,7 @@ struct Look {
     ring: Hsla,
     ring_spread: Pixels,
     outline_focus_border: Hsla,
-    radius: Pixels,
-    height: Pixels,
-    padding: Pixels,
-    text_size: Pixels,
+    geometry: ControlGeometry,
 }
 
 impl RenderOnce for Button {
@@ -570,28 +605,7 @@ impl RenderOnce for Button {
                     },
                     ring_spread: theme.metrics.focus_ring,
                     outline_focus_border: theme.ring(),
-                    radius: if size == ButtonSize::Lg {
-                        theme.radius_lg()
-                    } else {
-                        theme.radius_md()
-                    },
-                    height: match size {
-                        ButtonSize::Xs => theme.metrics.control_xs,
-                        ButtonSize::Sm => theme.metrics.control_sm,
-                        ButtonSize::Default => theme.metrics.control_md,
-                        ButtonSize::Lg => theme.metrics.control_lg,
-                    },
-                    padding: match size {
-                        ButtonSize::Xs => theme.metrics.control_padding_xs,
-                        ButtonSize::Sm => theme.metrics.control_padding_sm,
-                        ButtonSize::Default => theme.metrics.control_padding_md,
-                        ButtonSize::Lg => theme.metrics.control_padding_lg,
-                    },
-                    text_size: match size {
-                        ButtonSize::Xs => theme.base.typography.xs.size,
-                        ButtonSize::Sm | ButtonSize::Default => theme.text_control.size,
-                        ButtonSize::Lg => theme.base.typography.sm.size,
-                    },
+                    geometry: size.geometry(theme),
                 }
             };
         let surface = transition(
@@ -693,11 +707,11 @@ impl RenderOnce for Button {
         self.base
             .flex_shrink_0()
             .font_medium()
-            .text_size(look.text_size)
-            .rounded(look.radius)
-            .h(look.height)
-            .px(look.padding)
-            .when(icon_only, |this| this.px_0().w(look.height))
+            .text_size(look.geometry.text_size)
+            .rounded(look.geometry.radius)
+            .h(look.geometry.height)
+            .px(look.geometry.padding)
+            .when(icon_only, |this| this.px_0().w(look.geometry.height))
             .bg(surface.background)
             .text_color(surface.foreground)
             // Every variant carries the same 1px border, transparent where it
