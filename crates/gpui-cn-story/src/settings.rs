@@ -314,8 +314,7 @@ impl Render for SettingsPage {
     }
 }
 
-/// A group heading between cards. The first block on a page drops the
-/// top padding with `.pt_0()`.
+/// A group heading between cards.
 fn heading(text: &'static str, cx: &App) -> Div {
     let heading = cx.theme().text_heading;
     div()

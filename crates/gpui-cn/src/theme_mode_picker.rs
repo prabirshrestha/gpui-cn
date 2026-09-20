@@ -6,7 +6,7 @@ use gpui_kit::{
     base::{self, Disableable, Interpolate, StyledExt as _, TestSupportExt as _, transition},
     canvas, div, fill, point,
     prelude::FluentBuilder as _,
-    px, quad, relative, size,
+    px, quad, size,
 };
 
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
 
 type ChangeHandler = Rc<dyn Fn(&ThemeMode, &mut Window, &mut App)>;
 
-/// The modes in the order the picker shows them.
 const MODES: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
 
 /// A choice of [`ThemeMode`] on `gpui_base::RadioGroup`: three cards, each
@@ -97,7 +96,6 @@ impl Styled for ThemeModePicker {
     }
 }
 
-/// The visible label of a card.
 fn option_label(mode: ThemeMode) -> &'static str {
     match mode {
         ThemeMode::System => "System",
@@ -106,7 +104,6 @@ fn option_label(mode: ThemeMode) -> &'static str {
     }
 }
 
-/// The child name of a card's id.
 fn option_name(mode: ThemeMode) -> &'static str {
     match mode {
         ThemeMode::System => "system",
@@ -125,27 +122,18 @@ fn option_name(mode: ThemeMode) -> &'static str {
 /// on the desktop, as the reference does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Palette {
-    /// What shows around the window in the far picture.
     desktop: Hsla,
     window: Hsla,
-    /// The 1pt rim at the card's edge: a step from what it surrounds
-    /// toward the lighter of surface and ink, so it reads as a highlight
-    /// on both.
     rim: Hsla,
     heading: Hsla,
     subheading: Hsla,
     card: Hsla,
-    /// The thick bar at the start of a row.
-    bar: Hsla,
-    /// The thin bar under it.
-    line: Hsla,
-    /// The hairline between rows.
+    row_bar: Hsla,
+    row_line: Hsla,
     separator: Hsla,
 }
 
 impl Palette {
-    /// The picture for `config`, drawn on a desktop when `far`. A config
-    /// whose ink is lighter than its surface is dark.
     fn derive(config: &ThemeConfig, far: bool) -> Self {
         let step = |amount: f32| mix(config.surface, config.ink, amount);
         let dark = lightness(config.ink) > lightness(config.surface);
@@ -166,8 +154,8 @@ impl Palette {
                     heading: step(0.195),
                     subheading: step(0.125),
                     card: config.surface,
-                    bar: step(0.125),
-                    line: if far { window } else { step(0.034) },
+                    row_bar: step(0.125),
+                    row_line: if far { window } else { step(0.034) },
                     separator: step(0.034),
                 }
             }
@@ -183,8 +171,8 @@ impl Palette {
                     heading: step(0.622),
                     subheading: step(0.556),
                     card: config.ink,
-                    bar: step(0.877),
-                    line: step(0.965),
+                    row_bar: step(0.877),
+                    row_line: step(0.965),
                     separator: step(0.965),
                 }
             }
@@ -201,8 +189,8 @@ impl Palette {
                     heading: bar,
                     subheading: step(0.556),
                     card: step(0.275),
-                    bar,
-                    line: bar,
+                    row_bar: bar,
+                    row_line: bar,
                     separator: bar,
                 }
             }
@@ -225,50 +213,53 @@ const CARD_RADIUS: f32 = 10.;
 const RIM_WIDTH: f32 = 1.;
 const RING_WIDTH: f32 = 2.;
 
-/// One rounded rectangle of a picture, in reference points. A shape with
-/// no height runs to the bottom of the card with square bottom corners,
-/// as the reference clips it there.
+/// One rounded rectangle of a picture, in reference points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Shape {
     x: f32,
     y: f32,
     w: f32,
-    h: Option<f32>,
+    h: Height,
     radius: f32,
     color: Hsla,
 }
 
-/// A pill: as round as it is tall.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Height {
+    Fixed(f32),
+    /// To the bottom of the card, with square bottom corners: the
+    /// reference clips its panels there.
+    ToBottom,
+}
+
 fn pill(x: f32, y: f32, w: f32, h: f32, color: Hsla) -> Shape {
     Shape {
         x,
         y,
         w,
-        h: Some(h),
+        h: Height::Fixed(h),
         radius: h / 2.,
         color,
     }
 }
 
-/// A rectangle with square corners.
 fn rect(x: f32, y: f32, w: f32, h: f32, color: Hsla) -> Shape {
     Shape {
         x,
         y,
         w,
-        h: Some(h),
+        h: Height::Fixed(h),
         radius: 0.,
         color,
     }
 }
 
-/// A panel that runs to the bottom of the card.
 fn panel(x: f32, y: f32, w: f32, radius: f32, color: Hsla) -> Shape {
     Shape {
         x,
         y,
         w,
-        h: None,
+        h: Height::ToBottom,
         radius,
         color,
     }
@@ -282,7 +273,7 @@ fn near(p: &Palette) -> Vec<Shape> {
             x: 0.,
             y: 0.,
             w: CARD.width,
-            h: Some(CARD.height),
+            h: Height::Fixed(CARD.height),
             radius: CARD_RADIUS,
             color: p.window,
         },
@@ -292,8 +283,8 @@ fn near(p: &Palette) -> Vec<Shape> {
     ];
     for row in 0..3 {
         let y = 34.5 * row as f32;
-        shapes.push(pill(33.5, 82. + y, 64., 8., p.bar));
-        shapes.push(pill(33., 97.5 + y, 94., 2.5, p.line));
+        shapes.push(pill(33.5, 82. + y, 64., 8., p.row_bar));
+        shapes.push(pill(33., 97.5 + y, 94., 2.5, p.row_line));
         shapes.push(rect(23., 110.5 + y, 202., 1.5, p.separator));
     }
     shapes
@@ -309,7 +300,7 @@ fn far(p: &Palette, mirrored: bool) -> Vec<Shape> {
             x: 0.,
             y: 0.,
             w: CARD.width,
-            h: Some(CARD.height),
+            h: Height::Fixed(CARD.height),
             radius: CARD_RADIUS,
             color: p.desktop,
         },
@@ -321,22 +312,18 @@ fn far(p: &Palette, mirrored: bool) -> Vec<Shape> {
     for row in 0..3 {
         let y = 37. * row as f32;
         let bar = if mirrored { 150. } else { 48.5 };
-        shapes.push(pill(bar, 123.5 + y, 49.5, 8., p.bar));
-        shapes.push(pill(48.5, 139. + y, 151., 2.5, p.line));
+        shapes.push(pill(bar, 123.5 + y, 49.5, 8., p.row_bar));
+        shapes.push(pill(48.5, 139. + y, 151., 2.5, p.row_line));
         shapes.push(rect(40., 151.5 + y, 168., 1.5, p.separator));
     }
     shapes
 }
 
-/// What one card paints: a picture, or the light and dark far pictures
-/// split down the middle for the System card.
 enum Picture {
     Whole(Palette),
-    Split(Palette, Palette),
+    Split { light: Palette, dark: Palette },
 }
 
-/// Paints `shapes` into `bounds`, scaled from reference points, clipped to
-/// `mask`.
 fn paint_shapes(
     shapes: &[Shape],
     bounds: Bounds<Pixels>,
@@ -348,8 +335,8 @@ fn paint_shapes(
         for shape in shapes {
             let origin = bounds.origin + point(px(shape.x * scale), px(shape.y * scale));
             let (height, corners) = match shape.h {
-                Some(h) => (px(h * scale), Corners::all(px(shape.radius * scale))),
-                None => (
+                Height::Fixed(h) => (px(h * scale), Corners::all(px(shape.radius * scale))),
+                Height::ToBottom => (
                     bounds.bottom() - origin.y,
                     Corners {
                         top_left: px(shape.radius * scale),
@@ -368,7 +355,6 @@ fn paint_shapes(
     });
 }
 
-/// Paints the rim or the ring: a stroke inside the card's edge.
 fn paint_edge(bounds: Bounds<Pixels>, width: f32, color: Hsla, scale: f32, window: &mut Window) {
     window.paint_quad(quad(
         bounds,
@@ -380,8 +366,6 @@ fn paint_edge(bounds: Bounds<Pixels>, width: f32, color: Hsla, scale: f32, windo
     ));
 }
 
-/// Paints one card into `bounds`: the picture, its rim, and the ring at
-/// `ring`'s alpha.
 fn paint_card(picture: &Picture, ring: Hsla, bounds: Bounds<Pixels>, window: &mut Window) {
     let scale = f32::from(bounds.size.width) / CARD.width;
     match picture {
@@ -389,7 +373,7 @@ fn paint_card(picture: &Picture, ring: Hsla, bounds: Bounds<Pixels>, window: &mu
             paint_shapes(&near(palette), bounds, bounds, scale, window);
             paint_edge(bounds, RIM_WIDTH, palette.rim, scale, window);
         }
-        Picture::Split(light, dark) => {
+        Picture::Split { light, dark } => {
             let half = bounds.size.width / 2.;
             let left = Bounds::new(bounds.origin, size(half, bounds.size.height));
             let right = Bounds::new(
@@ -411,7 +395,6 @@ fn paint_card(picture: &Picture, ring: Hsla, bounds: Bounds<Pixels>, window: &mu
     }
 }
 
-/// The colors of one card in one state, animated together.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Surface {
     ring: Hsla,
@@ -435,7 +418,10 @@ impl RenderOnce for ThemeModePicker {
         let light = &settings.light;
         let dark = &settings.dark;
         let pictures = [
-            Picture::Split(Palette::derive(light, true), Palette::derive(dark, true)),
+            Picture::Split {
+                light: Palette::derive(light, true),
+                dark: Palette::derive(dark, true),
+            },
             Picture::Whole(Palette::derive(light, false)),
             Picture::Whole(Palette::derive(dark, false)),
         ];
@@ -449,6 +435,7 @@ impl RenderOnce for ThemeModePicker {
             focus_ring: theme.ring().opacity(0.5),
             focus_ring_spread: theme.metrics.focus_ring,
             focus_radius: theme.radius_lg(),
+            disabled_opacity: theme.disabled_opacity,
             text_size: theme.text_control.size,
             line_height: theme.text_control.line_height,
         };
@@ -517,19 +504,12 @@ impl RenderOnce for ThemeModePicker {
                                         this.cursor_default()
                                     }
                                 })
-                                // A disabled card fades as a whole, at the
-                                // strength a disabled button keeps its fill.
-                                .when(disabled, |this| this.opacity(0.55))
+                                .when(disabled, |this| this.opacity(look.disabled_opacity))
                                 .child(
-                                    // The card keeps the reference ratio at
-                                    // any width: its height is all padding,
-                                    // and a percentage of padding resolves
-                                    // against the width, as in CSS. The
-                                    // picture fills the padding box.
                                     div()
                                         .relative()
                                         .w_full()
-                                        .pt(relative(CARD.height / CARD.width))
+                                        .aspect_ratio(CARD.width / CARD.height)
                                         .rounded(look.focus_radius)
                                         .when(focus_visible, |this| {
                                             this.shadow(vec![gpui_kit::BoxShadow {
@@ -569,15 +549,14 @@ impl RenderOnce for ThemeModePicker {
     }
 }
 
-/// Everything the render needs from the theme, read in one borrow.
 struct Look {
     ring: Hsla,
     label: Hsla,
     muted_label: Hsla,
     focus_ring: Hsla,
     focus_ring_spread: Pixels,
-    /// The corner radius of the keyboard focus ring around a card.
     focus_radius: Pixels,
+    disabled_opacity: f32,
     text_size: Pixels,
     line_height: Pixels,
 }
@@ -595,8 +574,8 @@ mod tests {
         assert_eq!(to_hex(palette.heading), "#cdcdce");
         assert_eq!(to_hex(palette.subheading), "#dfdfdf");
         assert_eq!(to_hex(palette.card), "#ffffff");
-        assert_eq!(to_hex(palette.bar), "#dfdfdf");
-        assert_eq!(to_hex(palette.line), "#f6f6f6");
+        assert_eq!(to_hex(palette.row_bar), "#dfdfdf");
+        assert_eq!(to_hex(palette.row_line), "#f6f6f6");
         assert_eq!(to_hex(palette.desktop), "#9e9fa0");
         let far = Palette::derive(&ThemeConfig::light(), true);
         assert_eq!(
@@ -607,6 +586,7 @@ mod tests {
             far.rim,
             mix(far.desktop, ThemeConfig::light().surface, 0.09)
         );
+        assert_eq!(far.row_line, far.window, "thin bars on the desktop");
     }
 
     #[test]
@@ -617,17 +597,17 @@ mod tests {
         assert_eq!(to_hex(near.heading), "#9f9f9f");
         assert_eq!(to_hex(near.subheading), "#8f8f8f");
         assert_eq!(to_hex(near.card), "#ffffff");
-        assert_eq!(to_hex(near.bar), "#dfdfdf");
-        assert_eq!(to_hex(near.line), "#f6f6f6");
+        assert_eq!(to_hex(near.row_bar), "#dfdfdf");
+        assert_eq!(to_hex(near.row_line), "#f6f6f6");
         let far = Palette::derive(&ThemeConfig::dark(), true);
         assert_eq!(to_hex(far.desktop), "#5d5d5d");
         assert_eq!(to_hex(far.window), "#393939");
         assert_eq!(to_hex(far.heading), "#767676");
         assert_eq!(to_hex(far.subheading), "#8f8f8f");
         assert_eq!(to_hex(far.card), "#4f4f4f");
-        assert_eq!(to_hex(far.bar), "#767676");
-        assert_eq!(far.separator, far.bar);
-        assert_eq!(far.line, far.bar);
+        assert_eq!(to_hex(far.row_bar), "#767676");
+        assert_eq!(far.separator, far.row_bar);
+        assert_eq!(far.row_line, far.row_bar);
     }
 
     #[test]
@@ -642,11 +622,7 @@ mod tests {
             );
             assert!(shape.y >= 0., "{shape:?}");
         }
-        // The last separator of the far picture is below the card; the
-        // clip drops it.
-        assert!(plain.last().unwrap().y > CARD.height);
-        // Mirroring moves only the thick bars, to the other side of the
-        // split.
+        assert!(plain.last().unwrap().y > CARD.height, "the clip drops it");
         assert_eq!(mirrored[1].x, plain[1].x);
         assert_eq!(mirrored[2].x, plain[2].x);
         assert_eq!(mirrored[4].x, plain[4].x);

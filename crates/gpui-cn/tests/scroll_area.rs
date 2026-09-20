@@ -197,9 +197,6 @@ fn the_scrollbar_shows_after_a_wheel_step_and_drags_the_content(cx: &mut TestApp
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.render_frame(cx);
-        // Forty 30px rows in a 200px viewport: the wheel moves the rows 90px
-        // and wakes the bar, whose thumb then sits near the top of the
-        // right edge.
         window.scroll("rows", ScrollDelta::Pixels(point(px(0.), px(-90.))), cx);
         window.render_frame(cx);
         assert_eq!(window.find(("row", 0usize)).bounds().origin.y, px(-90.));
@@ -233,8 +230,6 @@ fn the_scrollbar_shows_after_a_wheel_step_and_drags_the_content(cx: &mut TestApp
             cx,
         );
         window.render_frame(cx);
-        // Dragging the thumb 50px down moves the content several times
-        // that, since the track is shorter than the content.
         let row = window.find(("row", 0usize)).bounds().origin.y;
         assert!(row < px(-200.), "the thumb dragged the rows to {row:?}");
     })

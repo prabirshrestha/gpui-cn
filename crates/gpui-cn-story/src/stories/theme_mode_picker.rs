@@ -8,7 +8,6 @@ use crate::{Story, note, page, section};
 
 /// The three appearance cards.
 pub struct ThemeModePickerStory {
-    /// A choice of the story's own, apart from the theme's.
     value: ThemeMode,
 }
 

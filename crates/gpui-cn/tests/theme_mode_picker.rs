@@ -67,7 +67,6 @@ fn setup(cx: &mut TestAppContext, disabled: bool) -> Setup {
     }
 }
 
-/// Presses and releases a key on the focused element.
 fn tap(window: &mut Window, key: &str, cx: &mut gpui_kit::App) {
     let keystroke = gpui_kit::Keystroke::parse(key).unwrap();
     window.press(key, cx);
@@ -113,16 +112,15 @@ fn three_cards_in_a_row_with_the_chosen_one_selected(cx: &mut TestAppContext) {
 fn a_card_keeps_the_reference_ratio_from_the_first_frame(cx: &mut TestAppContext) {
     let setup = setup(cx, false);
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        // The window is 900px wide with 16px of padding on each side, so
-        // three cards with two 12px gaps get (868 - 24) / 3 = 281.33px.
         let card = window.find(option(ThemeMode::Light)).bounds();
-        assert!((card.size.width - px(281.33)).abs() < px(1.), "{card:?}");
-        // The picture is 175 tall for every 248 wide, plus the label row.
+        let expected_width = (px(900.) - px(16.) * 2. - px(12.) * 2.) / 3.;
+        assert!(
+            (card.size.width - expected_width).abs() < px(1.),
+            "{card:?}"
+        );
         let picture_height = card.size.width * (175. / 248.);
         assert!(card.size.height > picture_height, "{card:?}");
         assert!(card.size.height < picture_height + px(40.), "{card:?}");
-        // Nothing changes on later frames: the ratio is layout, not a
-        // measurement that settles.
         let before = window.find(option(ThemeMode::Light)).bounds();
         window.render_frame(cx);
         window.render_frame(cx);

@@ -69,6 +69,10 @@ pub struct ThemeTokens {
     pub text_title: TextStyleToken,
     /// The sizes of controls, rows, and window chrome.
     pub metrics: MetricTokens,
+    /// The strength a disabled control keeps: 55%, measured from the
+    /// reference app's disabled button fill. A button applies it to its
+    /// fill and a card to the whole.
+    pub disabled_opacity: f32,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -340,6 +344,7 @@ impl ThemeTokens {
             text_heading,
             text_title,
             metrics: MetricTokens::derive(metrics.ui_font_size, metrics.touch),
+            disabled_opacity: 0.55,
         }
     }
 

@@ -135,8 +135,6 @@ mod macos {
                 })
                 .expect("select the story");
                 if story == "Typography" {
-                    // Scroll the page a little, so the overlay scrollbar
-                    // shows in the capture.
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
                         window.scroll(
