@@ -1,12 +1,28 @@
 //! A vertical scroll region that stretches past its ends and springs
 //! back, on every platform, with an overlay scrollbar.
 
+use std::rc::Rc;
+
 use gpui_kit::{
-    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ParentElement, RenderOnce,
-    ScrollHandle, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
-    base::{self, ScrollBounce, StyledExt as _, TestSupportExt as _},
-    div, px,
+    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ListSizingBehavior,
+    ListState, ParentElement, Pixels, RenderOnce, ScrollHandle, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, Window,
+    base::{self, ScrollBounce, ScrollbarHandle, StyledExt as _, TestSupportExt as _},
+    div, list,
 };
+
+type RenderItem = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
+
+/// What the region scrolls: children laid out in full, or a virtual list
+/// that lays out only the rows in view.
+enum Content {
+    Children(Vec<AnyElement>),
+    List {
+        state: ListState,
+        row_hint: Pixels,
+        render_item: RenderItem,
+    },
+}
 
 /// A vertical scroll region with the overscroll bounce of a `UIScrollView`
 /// and an overlay scrollbar.
@@ -34,10 +50,14 @@ use gpui_kit::{
 ///     ScrollArea::new("page").child(div().child("A long page"))
 /// }
 /// ```
+///
+/// A long collection uses [`list`](Self::list) instead of children: GPUI's
+/// `list` element lays out only the rows in view, and the caller's
+/// `ListState` owns the scroll position and the row measurements.
 #[derive(IntoElement)]
 pub struct ScrollArea {
     id: ElementId,
-    children: Vec<AnyElement>,
+    content: Content,
     style: StyleRefinement,
 }
 
@@ -47,7 +67,34 @@ impl ScrollArea {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            children: Vec::new(),
+            content: Content::Children(Vec::new()),
+            style: StyleRefinement::default(),
+        }
+    }
+
+    /// A scroll region over a virtual list: `render_item` builds the row
+    /// at an index when it comes into view, and `state` (the caller's, so
+    /// it can scroll to a row and reset the count) owns the scroll
+    /// position. The region sizes itself to its rows up to the height its
+    /// style allows, so a short list is short and a long one scrolls.
+    ///
+    /// `row_hint` is the height a row is taken to have before it is laid
+    /// out, so the scroll range and a scroll to a far row are right from
+    /// the first frame. GPUI drops every unmeasured row's hint whenever
+    /// the list's width changes; the region puts it back.
+    pub fn list(
+        id: impl Into<ElementId>,
+        state: &ListState,
+        row_hint: Pixels,
+        render_item: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            content: Content::List {
+                state: state.clone(),
+                row_hint,
+                render_item: Box::new(render_item),
+            },
             style: StyleRefinement::default(),
         }
     }
@@ -60,56 +107,116 @@ impl Styled for ScrollArea {
 }
 
 impl ParentElement for ScrollArea {
+    /// Children go to a region made with [`new`](Self::new). A region over a
+    /// list has no children of its own; the list's rows are the content.
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
+        if let Content::Children(children) = &mut self.content {
+            children.extend(elements);
+        }
     }
+}
+
+/// The bounce and the scrollbar around a viewport, and whether the
+/// region has room to scroll, for any handle base can drive.
+fn chrome<H: ScrollbarHandle + Clone>(
+    id: &ElementId,
+    handle: &H,
+    viewport: impl IntoElement,
+) -> (AnyElement, AnyElement, Rc<dyn Fn() -> bool>) {
+    let bounce = ScrollBounce::new(
+        ElementId::NamedChild(id.clone().into(), "bounce".into()),
+        handle,
+        viewport,
+    )
+    .enabled(true);
+    let scrollbar = base::Scrollbar::vertical(handle)
+        .id(ElementId::NamedChild(id.clone().into(), "scrollbar".into()));
+    let can_scroll = {
+        let handle = handle.clone();
+        move || handle.content_size().height > handle.viewport_bounds().size.height
+    };
+    (
+        bounce.into_any_element(),
+        scrollbar.into_any_element(),
+        Rc::new(can_scroll),
+    )
 }
 
 impl RenderOnce for ScrollArea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let handle = window
-            .use_keyed_state(
-                ElementId::NamedChild(self.id.clone().into(), "scroll".into()),
-                cx,
-                |_, _| ScrollHandle::new(),
-            )
-            .read(cx)
-            .clone();
         // The caller styles one element, but there are two: an outer box
         // that sits in the caller's layout, and the viewport inside it
         // that lays out the content. The box takes what places it (size,
         // flex, margin, position); the viewport takes the rest (padding,
         // direction, gap, colors).
         let (frame_style, viewport_style) = split_style(self.style);
-        let viewport = div()
-            .id(self.id.clone())
-            .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&handle)
-            .refine_style(&viewport_style)
-            .children(self.children);
-        let bounce = ScrollBounce::new(
-            ElementId::NamedChild(self.id.clone().into(), "bounce".into()),
-            &handle,
-            viewport,
-        )
-        .enabled(true);
+        let (bounce, scrollbar, can_scroll) = match self.content {
+            Content::Children(children) => {
+                let handle = window
+                    .use_keyed_state(
+                        ElementId::NamedChild(self.id.clone().into(), "scroll".into()),
+                        cx,
+                        |_, _| ScrollHandle::new(),
+                    )
+                    .read(cx)
+                    .clone();
+                let viewport = div()
+                    .id(self.id.clone())
+                    .test_support()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&handle)
+                    .refine_style(&viewport_style)
+                    .children(children);
+                chrome(&self.id, &handle, viewport)
+            }
+            Content::List {
+                state,
+                row_hint,
+                render_item,
+            } => {
+                // GPUI drops the unmeasured rows' hints when the list's
+                // width changes, and with them the scroll range. The
+                // width the rows were last hinted at is kept here, and the
+                // hint goes back when the width is seen to change. A
+                // measured row keeps its measured height.
+                let hinted_width = window.use_keyed_state(
+                    ElementId::NamedChild(self.id.clone().into(), "hinted".into()),
+                    cx,
+                    |_, _| None::<Pixels>,
+                );
+                let width = state.viewport_bounds().size.width;
+                if *hinted_width.read(cx) != Some(width) {
+                    state.clone().with_uniform_item_height(row_hint);
+                    hinted_width.update(cx, |hinted, _| *hinted = Some(width));
+                }
+                // `Infer` sizes the list to its rows, so the region is as
+                // tall as its content until the style's height caps it;
+                // `Auto` would fill a parent that has no height of its own.
+                let viewport = div()
+                    .id(self.id.clone())
+                    .test_support()
+                    .size_full()
+                    .refine_style(&viewport_style)
+                    .child(
+                        list(state.clone(), render_item)
+                            .with_sizing_behavior(ListSizingBehavior::Infer)
+                            .size_full(),
+                    );
+                chrome(&self.id, &state, viewport)
+            }
+        };
         // GPUI lets every scroll region under the pointer take a wheel
         // step, so a region inside a page would scroll the page too. The
         // box keeps the step when the region has room to scroll, after
         // the viewport moved and the bounce took what was left; a region
         // whose content fits passes it on.
-        let scrollbar = base::Scrollbar::vertical(&handle).id(ElementId::NamedChild(
-            self.id.clone().into(),
-            "scrollbar".into(),
-        ));
         div()
             .id(ElementId::NamedChild(self.id.into(), "frame".into()))
             .relative()
             .refine_style(&frame_style)
             .on_scroll_wheel(move |_, _, cx| {
-                if handle.max_offset().y > px(0.) {
+                if can_scroll() {
                     cx.stop_propagation();
                 }
             })

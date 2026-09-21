@@ -83,6 +83,40 @@ pub struct ThemeTokens {
     /// it is white in both appearances of the built-in themes, as the
     /// reference app paints it.
     pub switch_thumb: Hsla,
+    /// The surface of a menu or popover: #2d2d2d on dark, sampled from the
+    /// reference app's select menus, a larger step above the window than
+    /// a card takes. The window surface on light, as shadcn's `popover`.
+    pub popover: Hsla,
+    /// Text on a popover: the ink itself. The reference app paints menu
+    /// rows white on dark where the window's text is #dfdfdf.
+    pub popover_foreground: Hsla,
+    /// The hairline around a popover: #444444 on dark, sampled from the
+    /// reference app's menu edge. The `border` token on light.
+    pub popover_border: Hsla,
+    /// The highlighted row of a menu: #3d3d3d on dark, sampled from the
+    /// reference app's hovered menu row. On light the same step as a
+    /// hovered sidebar row.
+    pub popover_accent: Hsla,
+    /// A separator inside a popover: #3e3e3e on dark, sampled from the
+    /// reference app's menus. The `border` step on light.
+    pub popover_separator: Hsla,
+    /// A description under a menu row's label: #b5b5b5 on dark, sampled
+    /// from the reference app, a step brighter than `muted_foreground`.
+    /// The `muted_foreground` step on light.
+    pub popover_muted_foreground: Hsla,
+    /// The check beside a selected menu row and the chevron on a select
+    /// trigger: #cacaca on dark, sampled from the reference app, the ink
+    /// a step toward the surface.
+    pub select_indicator: Hsla,
+    /// The fill of a select trigger: #2a2a2a on dark, sampled from the
+    /// reference app on the window surface (it is #343434 on a #232323
+    /// card, the same step). The window surface on light, as shadcn's
+    /// `bg-transparent` trigger.
+    pub select_trigger: Hsla,
+    /// The hairline around a select trigger: #3b3b3b on dark, sampled from
+    /// the reference app. The `input` token on light, as shadcn's
+    /// `border-input`.
+    pub select_trigger_border: Hsla,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -163,6 +197,22 @@ pub struct MetricTokens {
     /// The gap between the thumb and the track's edge: 2px on both. On
     /// touch it is fixed with the track, so the thumb always fits.
     pub switch_thumb_inset: Pixels,
+    /// The gap between a select trigger and its menu: 2px, measured from
+    /// the reference app at 2x.
+    pub menu_gap: Pixels,
+    /// The narrowest a menu opens: 128px, shadcn's `min-w-[8rem]`. A menu
+    /// is never narrower than its trigger either.
+    pub menu_min_width: Pixels,
+    /// The narrowest a menu with a search field opens: 240px, the width
+    /// of the reference app's language list, so the field has room for
+    /// its placeholder.
+    pub menu_search_min_width: Pixels,
+    /// The widest a menu grows to fit its rows: 360px, the width the
+    /// reference app wraps a row's description at.
+    pub menu_max_width: Pixels,
+    /// The tallest a menu grows before it scrolls: 390px, the reference
+    /// app's language list.
+    pub menu_max_height: Pixels,
 }
 
 impl MetricTokens {
@@ -214,6 +264,11 @@ impl MetricTokens {
             switch_track_height: if touch { px(31.) } else { scaled(20.) },
             switch_thumb_size: if touch { px(27.) } else { scaled(16.) },
             switch_thumb_inset: if touch { px(2.) } else { scaled(2.) },
+            menu_gap: scaled(2.),
+            menu_min_width: scaled(128.),
+            menu_search_min_width: scaled(240.),
+            menu_max_width: scaled(360.),
+            menu_max_height: scaled(390.),
         }
     }
 }
@@ -299,6 +354,15 @@ impl ThemeTokens {
         let switch_track_on = config.accent;
         let switch_track_off = toward_ink(0.20);
         let switch_thumb = lighter_of(surface, ink);
+        let popover = if dark { toward_ink(0.109) } else { surface };
+        let popover_step = |amount: f32| mix(popover, ink, amount);
+        let popover_border = if dark { popover_step(0.13) } else { border };
+        let popover_accent = popover_step(if dark { 0.09 } else { 0.033 });
+        let popover_separator = if dark { popover_step(0.095) } else { border };
+        let popover_muted_foreground = mix(ink, popover, if dark { 0.32 } else { 0.38 });
+        let select_indicator = mix(ink, popover, if dark { 0.227 } else { 0.38 });
+        let select_trigger = if dark { toward_ink(0.09) } else { surface };
+        let select_trigger_border = if dark { toward_ink(0.178) } else { input };
 
         let colors = ColorTokens {
             background: surface,
@@ -379,6 +443,15 @@ impl ThemeTokens {
             switch_track_on,
             switch_track_off,
             switch_thumb,
+            popover,
+            popover_foreground: ink,
+            popover_border,
+            popover_accent,
+            popover_separator,
+            popover_muted_foreground,
+            select_indicator,
+            select_trigger,
+            select_trigger_border,
         }
     }
 
@@ -748,6 +821,53 @@ mod tests {
         assert!(lightness(light.switch_track_off) < lightness(light.background()));
         assert_eq!(to_hex(light.focus_ring()), "#339cff80");
         assert_eq!(light.focus_ring().a, 0.5);
+    }
+
+    #[test]
+    fn menu_colors_reproduce_the_reference_values() {
+        let dark = dark();
+        assert_eq!(to_hex(dark.popover), "#2d2d2d");
+        assert_eq!(to_hex(dark.popover_border), "#444444");
+        assert_eq!(to_hex(dark.popover_accent), "#3d3d3d");
+        assert_eq!(to_hex(dark.popover_separator), "#3e3e3e");
+        assert_eq!(to_hex(dark.popover_foreground), "#ffffff");
+        assert_eq!(to_hex(dark.popover_muted_foreground), "#b5b5b5");
+        assert_eq!(to_hex(dark.select_indicator), "#cacaca");
+        assert_eq!(to_hex(dark.select_trigger), "#292929");
+        assert_eq!(to_hex(dark.select_trigger_border), "#3a3a3a");
+        assert!(lightness(dark.popover) > lightness(dark.base.colors.surface));
+        let light = light();
+        assert_eq!(light.popover, light.background());
+        assert_eq!(light.popover_border, light.border());
+        assert_eq!(light.popover_separator, light.border());
+        assert_eq!(light.popover_foreground, light.foreground());
+        assert_eq!(light.popover_muted_foreground, light.muted_foreground());
+        assert_eq!(light.select_trigger, light.background());
+        assert_eq!(light.select_trigger_border, light.input());
+        assert_eq!(to_hex(light.popover_accent), "#f6f6f7", "a hovered row");
+        assert!(lightness(light.popover_accent) < lightness(light.popover));
+    }
+
+    #[test]
+    fn menu_metrics_scale_with_the_font_size() {
+        let default = light();
+        assert_eq!(default.metrics.menu_gap, px(2.));
+        assert_eq!(default.metrics.menu_min_width, px(128.));
+        assert_eq!(default.metrics.menu_search_min_width, px(240.));
+        assert_eq!(default.metrics.menu_max_width, px(360.));
+        assert_eq!(default.metrics.menu_max_height, px(390.));
+        let large = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                radius: px(10.),
+                ui_font_size: px(20.),
+                code_font_size: px(15.),
+                touch: false,
+            },
+        );
+        assert_eq!(large.metrics.menu_max_height, px(487.5));
+        assert_eq!(large.metrics.menu_gap, px(2.5));
     }
 
     #[test]

@@ -2380,6 +2380,7 @@ dependencies = [
  "gpui-fps",
  "gpui-kit",
  "image",
+ "libc",
 ]
 
 [[package]]

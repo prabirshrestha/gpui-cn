@@ -1249,8 +1249,9 @@ impl RenderOnce for SidebarSeparator {
     }
 }
 
-/// A placeholder row while rows load: a muted icon and a muted bar of a
-/// stable random width.
+/// A placeholder row while rows load: a [`Skeleton`](crate::Skeleton)
+/// where the icon goes and one of a stable random width where the label
+/// goes, both pulsing in the sidebar's hover fill.
 #[derive(IntoElement)]
 pub struct SidebarMenuSkeleton {
     id: ElementId,
@@ -1290,6 +1291,8 @@ impl RenderOnce for SidebarMenuSkeleton {
             acc.wrapping_mul(31).wrapping_add(byte as u32)
         });
         let width = 0.5 + (seed % 41) as f32 / 100.;
+        let icon_id = ElementId::NamedChild(self.id.clone().into(), "icon".into());
+        let bar_id = ElementId::NamedChild(self.id.clone().into(), "bar".into());
         div()
             .id(self.id)
             .flex()
@@ -1299,11 +1302,17 @@ impl RenderOnce for SidebarMenuSkeleton {
             .px_2()
             .when(icon_mode, |this| this.justify_center())
             .when(self.show_icon, |this| {
-                this.child(div().size_4().flex_shrink_0().rounded_sm().bg(fill))
+                this.child(
+                    crate::Skeleton::new(icon_id)
+                        .size_4()
+                        .flex_shrink_0()
+                        .rounded_sm()
+                        .bg(fill),
+                )
             })
             .when(!icon_mode, |this| {
                 this.child(
-                    div()
+                    crate::Skeleton::new(bar_id)
                         .h(bar_height)
                         .w(gpui_kit::relative(width))
                         .rounded_sm()

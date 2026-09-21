@@ -186,6 +186,15 @@ and its tests assert them.
 | Group label | #747474 | #a9aaab |
 | Text | #dfdfdf | #1a1c1f |
 | Muted text | #969696 | #67696b |
+| Menu | #2d2d2d | derived |
+| Menu hairline | #444444 | derived |
+| Menu row, highlighted | #3d3d3d | derived |
+| Menu separator | #3e3e3e | derived |
+| Menu text | #ffffff | derived |
+| Menu description | #b5b5b5 | derived |
+| Menu check, trigger chevron | #cacaca | derived |
+| Select trigger | #2a2a2a | derived |
+| Select trigger hairline | #3b3b3b | derived |
 
 The reference app paints the hovered row and the selected row the same
 color. gpui-cn keeps them one step apart so a hovered row beside the
@@ -195,3 +204,11 @@ The title bar is 46px tall, and on macOS its content starts 88px from the
 left edge, after the window controls. Rows are 30px. Controls are 28px
 with 13px text. The page title is 24px. The sidebar opens at 300px and
 resizes between 220px and 480px.
+
+A select menu opens 2px under its trigger, lined up with the trigger's
+trailing edge, with 4px around its rows and the large radius. Its rows are
+28px with the control padding, the check on the right, and the small
+radius when highlighted. A search field is a 28px row at the top. A menu
+with descriptions wraps at 360px, a searchable one is at least 240px wide,
+and a menu scrolls past 390px. The light values are derived from the same
+steps and were not sampled.

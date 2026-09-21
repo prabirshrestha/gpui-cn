@@ -92,6 +92,8 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::SpacingStory>(),
         StoryEntry::of::<stories::ButtonStory>(),
         StoryEntry::of::<stories::SwitchStory>(),
+        StoryEntry::of::<stories::SelectStory>(),
+        StoryEntry::of::<stories::SkeletonStory>(),
         StoryEntry::of::<stories::ThemeModePickerStory>(),
         StoryEntry::of::<stories::SidebarStory>(),
         StoryEntry::of::<stories::NavStackStory>(),
@@ -624,4 +626,24 @@ pub fn note(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
         .text_color(cx.theme().muted_foreground())
         .max_w(PAGE_WIDTH)
         .child(text.into())
+}
+
+/// Scrolls the gallery page until the element `id` is inside the window,
+/// for a headless run that drives a control below the fold. The page
+/// lays out every child, so an element below the window still has bounds.
+#[cfg(feature = "snapshot")]
+pub fn reveal(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) {
+    use gpui_kit::test::TestWindowExt as _;
+    let bounds = window.find(id).bounds();
+    let height = window.viewport_size().height;
+    let margin = px(80.);
+    if bounds.bottom() + margin > height {
+        let delta = height - bounds.bottom() - margin;
+        window.scroll(
+            "page",
+            ScrollDelta::Pixels(gpui_kit::point(px(0.), delta)),
+            cx,
+        );
+        window.render_frame(cx);
+    }
 }

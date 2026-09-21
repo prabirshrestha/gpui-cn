@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 # `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
-snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image"]
+snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image", "dep:libc"]
 # `fps`: the gpui-fps HUD, toggled with Cmd-Shift-P (Ctrl-Shift-P).
 fps = ["dep:gpui-fps"]
 
@@ -22,6 +22,8 @@ gpui-cn = { workspace = true, features = ["jetbrains-mono"] }
 gpui-kit = { workspace = true, features = ["assets"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 gpui-fps = { version = "0.6.4", optional = true }
+# The benchmark reads this process' CPU time.
+libc = { version = "0.2", optional = true }
 
 [[bin]]
 name = "snapshot"

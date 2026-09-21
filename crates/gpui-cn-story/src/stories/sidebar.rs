@@ -22,7 +22,16 @@ pub struct SidebarStory {
     projects_open: bool,
     /// Whether the nested rows show their guide line.
     guide: bool,
+    /// The recent rows, once they have "loaded"; skeleton rows until then.
+    recent: Option<&'static [(&'static str, IconName)]>,
 }
+
+/// What the loading group shows once it has loaded, a few seconds in.
+const RECENT: [(&str, IconName); 3] = [
+    ("Q3 planning", IconName::FileText),
+    ("Launch checklist", IconName::Calendar),
+    ("Design review", IconName::Bell),
+];
 
 impl Story for SidebarStory {
     fn title() -> &'static str {
@@ -38,13 +47,24 @@ impl Story for SidebarStory {
     }
 
     fn view(_: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|cx| {
+        cx.new(|cx: &mut Context<Self>| {
             let state = cx.new(|cx| {
                 SidebarState::new(cx)
                     .with_width(px(240.))
                     .with_width_range(px(180.)..px(360.))
             });
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(4))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.recent = Some(&RECENT);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
             Self {
                 state,
                 side: SidebarSide::Left,
@@ -52,6 +72,7 @@ impl Story for SidebarStory {
                 labels_open: true,
                 projects_open: true,
                 guide: true,
+                recent: None,
             }
         })
         .into()
@@ -281,10 +302,19 @@ impl Render for SidebarStory {
                                         .child(SidebarSeparator::new())
                                         .child(
                                             SidebarGroup::new()
-                                                .label("Loading")
-                                                .children((0..3).map(|ix| {
-                                                    SidebarMenuSkeleton::new(("skeleton", ix as usize))
-                                                })),
+                                                .label("Recent")
+                                                .map(|group| match self.recent {
+                                                    Some(recent) => group.children(
+                                                        recent.iter().map(|(label, icon)| {
+                                                            SidebarMenuButton::new(*label)
+                                                                .icon(*icon)
+                                                                .label(*label)
+                                                        }),
+                                                    ),
+                                                    None => group.children((0..3).map(|ix| {
+                                                        SidebarMenuSkeleton::new(("skeleton", ix as usize))
+                                                    })),
+                                                }),
                                         )
                                         .footer(
                                             SidebarMenuButton::new("story-settings")
