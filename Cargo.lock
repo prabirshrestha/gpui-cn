@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-cn"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "damascene-fonts-jetbrains-mono",
  "gpui-kit",
@@ -2374,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-cn-story"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gpui-cn",
  "gpui-fps",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-cn-story-ios"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gpui-cn",
  "gpui-cn-story",
