@@ -117,6 +117,9 @@ pub struct ThemeTokens {
     /// the reference app. The `input` token on light, as shadcn's
     /// `border-input`.
     pub select_trigger_border: Hsla,
+    /// The hairline between two unselected tabs: the muted text at 60%,
+    /// which the tab reference app paints #707070 over its #181818 bar.
+    pub tab_separator: Hsla,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -150,10 +153,17 @@ pub struct MetricTokens {
     pub row: Pixels,
     /// Height of a large row with an avatar or two lines: 48px.
     pub row_lg: Pixels,
-    /// Height of a title bar: 46px, which centers the macOS window
-    /// controls on the same line as a `Default` control.
+    /// Height of a title bar: 38px, measured from the tab reference app.
+    /// The sidebar reference app uses 46px.
     pub title_bar: Pixels,
-    /// Where the macOS window controls sit: 16px from the top and left.
+    /// The gap between a title bar's top and the line its content centers
+    /// on: 2px, measured from the tab reference app, which keeps its bar
+    /// content level with the window controls below the window's rounded
+    /// top edge.
+    pub title_bar_content_offset: Pixels,
+    /// Where the macOS window controls sit: 14px from the top and left,
+    /// measured from the tab reference app, which centers them on the
+    /// title bar's content line.
     pub window_controls_position: Pixels,
     /// The room the macOS window controls take at a title bar's left edge,
     /// including the gap after them: 88px.
@@ -213,6 +223,39 @@ pub struct MetricTokens {
     /// The tallest a menu grows before it scrolls: 390px, the reference
     /// app's language list.
     pub menu_max_height: Pixels,
+    /// The gap between the top of a tab item and its surface: 4px,
+    /// measured from the tab reference app. On touch the tab fills its bar.
+    pub tab_surface_inset: Pixels,
+    /// The width a tab prefers: 160px, measured from the tab reference app.
+    pub tab_width: Pixels,
+    /// The width a tab shrinks to before the strip scrolls: 112px, measured
+    /// from the tab reference app.
+    pub tab_min_width: Pixels,
+    /// The curve at each bottom corner of the selected tab, where it merges
+    /// into the content below: 7px, measured from the tab reference app.
+    pub tab_shoulder: Pixels,
+    /// The radius of a tab surface's top corners: 7px, measured from the tab
+    /// reference app.
+    pub tab_radius: Pixels,
+    /// The gutter at an unselected tab's right edge that holds the separator:
+    /// 7px, measured from the tab reference app.
+    pub tab_separator_gutter: Pixels,
+    /// The inset of the 1px separator from the tab item's top and bottom:
+    /// 11px, measured from the tab reference app.
+    pub tab_separator_inset: Pixels,
+    /// The box of a tab's icon: 13px, measured from the tab reference app.
+    pub tab_icon: Pixels,
+    /// The gap between a tab's icon and its label: 6px, measured from the
+    /// tab reference app.
+    pub tab_content_gap: Pixels,
+    /// The slot that holds the new-tab and scroll controls of a tab strip:
+    /// the height of an `Sm` control, which the controls are. 24px at the
+    /// default font size, measured from the tab reference app.
+    pub tab_control: Pixels,
+    /// The box of a tab's close control: the height of an `Xs` control,
+    /// which the control is. 20px at the default font size, measured from
+    /// the tab reference app.
+    pub tab_close: Pixels,
 }
 
 impl MetricTokens {
@@ -234,6 +277,7 @@ impl MetricTokens {
         } else {
             (scaled(28.), scaled(30.), scaled(48.))
         };
+        let title_bar = px(if touch { 44. } else { 38. });
         Self {
             control_xs,
             control_sm,
@@ -246,8 +290,9 @@ impl MetricTokens {
             row_sm,
             row,
             row_lg,
-            title_bar: px(if touch { 44. } else { 46. }),
-            window_controls_position: px(16.),
+            title_bar,
+            title_bar_content_offset: px(if touch { 0. } else { 2. }),
+            window_controls_position: px(14.),
             window_controls_inset: px(88.),
             window_control_width: px(46.),
             sidebar_width: px(300.),
@@ -269,6 +314,17 @@ impl MetricTokens {
             menu_search_min_width: scaled(240.),
             menu_max_width: scaled(360.),
             menu_max_height: scaled(390.),
+            tab_surface_inset: px(if touch { 0. } else { 4. }),
+            tab_width: px(160.),
+            tab_min_width: px(112.),
+            tab_shoulder: px(7.),
+            tab_radius: px(7.),
+            tab_separator_gutter: px(7.),
+            tab_separator_inset: px(11.),
+            tab_icon: px(13.),
+            tab_content_gap: px(6.),
+            tab_control: control_sm,
+            tab_close: control_xs,
         }
     }
 }
@@ -363,6 +419,7 @@ impl ThemeTokens {
         let select_indicator = mix(ink, popover, if dark { 0.227 } else { 0.38 });
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
+        let tab_separator = muted_foreground.opacity(0.6);
 
         let colors = ColorTokens {
             background: surface,
@@ -452,6 +509,7 @@ impl ThemeTokens {
             select_indicator,
             select_trigger,
             select_trigger_border,
+            tab_separator,
         }
     }
 
@@ -916,7 +974,9 @@ mod tests {
         assert_eq!(default.text_title.weight, FontWeight::SEMIBOLD);
         assert_eq!(default.metrics.control_md, px(28.));
         assert_eq!(default.metrics.row, px(30.));
-        assert_eq!(default.metrics.title_bar, px(46.));
+        assert_eq!(default.metrics.title_bar, px(38.));
+        assert_eq!(default.metrics.title_bar_content_offset, px(2.));
+        assert_eq!(default.metrics.window_controls_position, px(14.));
         let large = ThemeTokens::derive(
             &ThemeConfig::light(),
             ThemeAppearance::Light,
@@ -930,7 +990,7 @@ mod tests {
         assert_eq!(large.text_control.size, px(16.25));
         assert_eq!(large.metrics.control_md, px(35.));
         assert_eq!(large.metrics.row, px(37.5));
-        assert_eq!(large.metrics.title_bar, px(46.), "window chrome stays");
+        assert_eq!(large.metrics.title_bar, px(38.), "window chrome stays");
         assert_eq!(large.metrics.sidebar_width, px(300.), "layout stays");
         assert_eq!(default.metrics.switch_track_width, px(32.));
         assert_eq!(default.metrics.switch_track_height, px(20.));
@@ -939,6 +999,61 @@ mod tests {
         assert_eq!(large.metrics.switch_track_width, px(40.));
         assert_eq!(large.metrics.switch_thumb_size, px(20.));
         assert_eq!(large.metrics.switch_thumb_inset, px(2.5));
+    }
+
+    #[test]
+    fn the_tab_separator_is_the_muted_text_at_sixty_percent() {
+        let dark = crate::theme::test_tokens(&ThemeConfig::dark(), ThemeAppearance::Dark);
+        assert_eq!(dark.tab_separator.a, 0.6);
+        assert_eq!(
+            to_hex(dark.tab_separator.alpha(1.)),
+            to_hex(dark.muted_foreground())
+        );
+        let light = crate::theme::test_tokens(&ThemeConfig::light(), ThemeAppearance::Light);
+        assert_eq!(light.tab_separator.a, 0.6);
+    }
+
+    #[test]
+    fn tab_metrics_are_the_reference_values_and_grow_on_touch() {
+        // Measured from the tab reference app at 2x: a 38px bar whose tab
+        // surface starts 4px down, 160px items, 7px shoulders and corners.
+        let default = light();
+        let tab = &default.metrics;
+        assert_eq!(tab.tab_surface_inset, px(4.));
+        assert_eq!(tab.tab_width, px(160.));
+        assert_eq!(tab.tab_min_width, px(112.));
+        assert_eq!(tab.tab_shoulder, px(7.));
+        assert_eq!(tab.tab_radius, px(7.));
+        assert_eq!(tab.tab_separator_gutter, px(7.));
+        assert_eq!(tab.tab_separator_inset, px(11.));
+        assert_eq!(tab.tab_icon, px(13.));
+        assert_eq!(tab.tab_content_gap, px(6.));
+        assert_eq!(tab.tab_control, px(24.));
+        assert_eq!(tab.tab_close, px(20.));
+        let large = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                ui_font_size: px(20.),
+                ..metrics()
+            },
+        );
+        assert_eq!(large.metrics.tab_surface_inset, px(4.), "chrome stays");
+        assert_eq!(large.metrics.tab_control, px(30.), "holds an Sm control");
+        assert_eq!(large.metrics.tab_close, px(25.), "holds an Xs control");
+        assert_eq!(large.metrics.tab_width, px(160.));
+        let touch = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                touch: true,
+                ..metrics()
+            },
+        );
+        assert_eq!(touch.metrics.tab_surface_inset, px(0.), "fills the bar");
+        assert_eq!(touch.metrics.tab_control, touch.metrics.control_sm);
+        assert_eq!(touch.metrics.tab_close, touch.metrics.control_xs);
+        assert_eq!(touch.metrics.tab_width, px(160.));
     }
 
     #[test]

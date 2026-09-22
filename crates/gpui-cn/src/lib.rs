@@ -50,6 +50,7 @@ mod select;
 mod sidebar;
 mod skeleton;
 mod switch;
+mod tabs;
 pub mod theme;
 mod theme_mode_picker;
 mod title_bar;
@@ -76,6 +77,7 @@ pub use sidebar::{
 };
 pub use skeleton::Skeleton;
 pub use switch::Switch;
+pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
 pub use theme::{
     ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
 };
@@ -93,7 +95,8 @@ pub mod prelude {
         NavStackExt, NavStackState, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
         SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
         SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
-        SidebarTrigger, Switch, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
+        SidebarTrigger, Switch, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeMode, ThemeModePicker,
+        TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

@@ -132,6 +132,7 @@ mod macos {
                 "Nav stack",
                 "Scroll area",
                 "Title bar",
+                "Tabs",
             ] {
                 cx.update_window(handle.into(), |_, window, cx| {
                     gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement, Interactivity,
     IntoElement, ParentElement, Pixels, RenderOnce, Role, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, StyledText, TextLayout, Window,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
     base::{
         self, Disableable, ElementExt as _, Interpolate, Placement, Selectable, StyledExt as _,
         transition,
@@ -14,7 +14,9 @@ use gpui_kit::{
 };
 
 use crate::{
-    ActiveTheme as _, Icon, Theme, ThemeTokens, TooltipHost, theme::mix, tooltip::TooltipTrigger,
+    ActiveTheme as _, Icon, Theme, ThemeTokens, TooltipHost,
+    theme::mix,
+    tooltip::{TooltipTrigger, TruncatedLabel},
 };
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -641,21 +643,17 @@ impl RenderOnce for Button {
         let pointer_for_down = pointer.clone();
         let pointer_for_up = pointer.clone();
         let pointer_for_up_out = pointer;
-        // The label renders as a `StyledText` so its layout can be read back:
-        // a truncated label gets the full text as its tooltip.
-        let label = self.label.map(|label| {
-            let text = StyledText::new(label.clone());
-            let layout = text.layout().clone();
-            (label, text, layout)
-        });
+        let label = self
+            .label
+            .map(|label| (label.clone(), TruncatedLabel::new(label).into_parts()));
         let has_overlay = TooltipHost::overlay(window, cx).is_some();
         let tooltip = match (self.tooltip, &label) {
             (Some((text, placement)), _) => {
                 Some((TooltipTrigger::text(self.id.clone(), placement, text), None))
             }
-            (None, Some((label, _, layout))) if has_overlay && self.truncation_tooltip => Some((
+            (None, Some((label, (_, check)))) if has_overlay && self.truncation_tooltip => Some((
                 TooltipTrigger::text(self.id.clone(), None, label.clone()),
-                Some((label.clone(), layout.clone())),
+                Some(check.clone()),
             )),
             _ => None,
         };
@@ -686,7 +684,7 @@ impl RenderOnce for Button {
                 }
             })
             .when_some(self.icon, |this, icon| this.child(icon_size_rem(icon)))
-            .when_some(label, |this, (_, text, _)| {
+            .when_some(label, |this, (_, (text, _))| {
                 this.child(
                     div()
                         .min_w_0()
@@ -770,14 +768,10 @@ impl RenderOnce for Button {
                 this.tooltip(trigger.native())
             })
             .on_hover(move |hovered, window, cx| {
-                if let Some((trigger, only_when_truncated)) = &managed_tooltip {
-                    let wanted = match only_when_truncated {
-                        Some((label, layout)) => is_truncated(layout, label),
-                        None => true,
-                    };
-                    if wanted || !*hovered {
-                        trigger.hovered(*hovered, window, cx);
-                    }
+                match &managed_tooltip {
+                    Some((trigger, Some(check))) => check.hovered(trigger, *hovered, window, cx),
+                    Some((trigger, None)) => trigger.hovered(*hovered, window, cx),
+                    None => {}
                 }
                 if !interactive {
                     return;
@@ -833,13 +827,6 @@ impl RenderOnce for Button {
                 this.on_click(move |event, window, cx| on_click(event, window, cx))
             })
     }
-}
-
-/// Whether the laid-out label differs from the full text, which is what
-/// truncation with an ellipsis does. Hover listeners run after the frame
-/// that painted the label, so the layout is filled in.
-fn is_truncated(layout: &TextLayout, label: &SharedString) -> bool {
-    layout.text() != label.as_ref()
 }
 
 #[cfg(test)]

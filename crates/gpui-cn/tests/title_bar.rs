@@ -48,16 +48,22 @@ fn the_bar_spans_the_window_at_its_height_and_hosts_its_children(cx: &mut TestAp
         let bar = window.find("title-bar").bounds();
         assert_eq!(bar.size.width, px(600.));
         assert_eq!(bar.size.height, height);
-        assert_eq!(height, px(46.));
+        assert_eq!(height, px(38.));
         let action = window.find("action").bounds();
-        // The child sits after the platform inset and is vertically centered.
+        // The child sits after the platform inset, centered on the content
+        // line 2px below the bar's top, level with the window controls.
         let expected_left = if cfg!(target_os = "macos") {
             px(88.)
         } else {
             px(12.)
         };
         assert_eq!(action.origin.x, expected_left);
-        assert_eq!(action.origin.y + action.size.height / 2., height / 2.);
+        let offset = cx.theme().metrics.title_bar_content_offset;
+        assert_eq!(
+            action.origin.y + action.size.height / 2.,
+            offset + (height - offset) / 2.
+        );
+        assert_eq!(offset, px(2.));
         // A press on a control is the control's, so a drag from it does not
         // move the window; the click still lands.
         window.click("action", cx);
@@ -84,7 +90,7 @@ fn window_options_hide_the_system_title_bar(cx: &mut TestAppContext) {
         assert!(titlebar.appears_transparent);
         assert_eq!(
             titlebar.traffic_light_position,
-            Some(gpui_kit::point(px(16.), px(16.)))
+            Some(gpui_kit::point(px(14.), px(14.)))
         );
         assert!(options.app_owns_titlebar_drag);
     });

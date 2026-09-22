@@ -12,6 +12,65 @@ use gpui_kit::{
 };
 
 use crate::{ActiveTheme as _, Theme, TooltipHost};
+use gpui_kit::{StyledText, TextLayout};
+
+/// A label rendered as a `StyledText` so its layout can be read back after
+/// the frame that painted it: a label the layout cut short shows its full
+/// text as a tooltip. Split it with [`into_parts`](Self::into_parts) and
+/// put the text in the element tree.
+pub(crate) struct TruncatedLabel {
+    label: SharedString,
+    text: StyledText,
+}
+
+impl TruncatedLabel {
+    pub(crate) fn new(label: SharedString) -> Self {
+        Self {
+            text: StyledText::new(label.clone()),
+            label,
+        }
+    }
+
+    /// The text to render and the check that reads its layout back.
+    pub(crate) fn into_parts(self) -> (StyledText, TruncationCheck) {
+        let layout = self.text.layout().clone();
+        (
+            self.text,
+            TruncationCheck {
+                label: self.label,
+                layout,
+            },
+        )
+    }
+}
+
+/// Whether a [`TruncatedLabel`] was cut short in the last frame.
+#[derive(Clone)]
+pub(crate) struct TruncationCheck {
+    label: SharedString,
+    layout: TextLayout,
+}
+
+impl TruncationCheck {
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.layout.text() != self.label.as_ref()
+    }
+
+    /// The hover rule of a truncation tooltip: ask to show only while the
+    /// label is truncated, and always pass a leave on so a tooltip that
+    /// showed hides.
+    pub(crate) fn hovered(
+        &self,
+        trigger: &TooltipTrigger,
+        hovered: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.is_truncated() || !hovered {
+            trigger.hovered(hovered, window, cx);
+        }
+    }
+}
 
 thread_local! {
     /// One ramp, `0.` to `1.`, built once per thread (keyframes hold an
