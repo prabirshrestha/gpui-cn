@@ -653,3 +653,49 @@ fn a_leading_room_moves_the_scroll_controls_and_the_tabs_after_it(cx: &mut TestA
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_mouse_wheel_step_glides_and_a_trackpad_step_is_direct(cx: &mut TestAppContext) {
+    let setup = setup(cx, 500., 8, true);
+    let first_tab_x = |cx: &mut TestAppContext| {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.find(tab_id(0)).bounds().origin.x
+        })
+        .unwrap()
+    };
+    let wheel = |cx: &mut TestAppContext, delta: gpui_kit::ScrollDelta| {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.scroll(tab_id(1), delta, cx);
+        })
+        .unwrap();
+    };
+    let wait = |cx: &mut TestAppContext, millis: u64| {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(millis));
+    };
+    let line = cx
+        .update_window(setup.handle.into(), |_, window, _| window.line_height())
+        .unwrap();
+    let start = first_tab_x(cx);
+    // A wheel line: the offset goes back and the strip glides the line.
+    wheel(cx, gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -2.)));
+    let right_after = first_tab_x(cx);
+    assert!(
+        right_after > start - line * 2. && right_after <= start,
+        "the step glides instead of jumping: {right_after:?}"
+    );
+    wait(cx, 400);
+    assert_eq!(first_tab_x(cx), start - line * 2.);
+    // Two lines while a glide runs stack on its end.
+    wheel(cx, gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -1.)));
+    wheel(cx, gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -1.)));
+    wait(cx, 400);
+    assert_eq!(first_tab_x(cx), start - line * 4.);
+    // A trackpad step lands at once.
+    wheel(
+        cx,
+        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-10.), px(0.))),
+    );
+    assert_eq!(first_tab_x(cx), start - line * 4. - px(10.));
+}

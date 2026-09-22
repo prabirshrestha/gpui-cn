@@ -279,8 +279,32 @@ impl TabsState {
     /// delta shows tabs further right.
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
         let from = self.scroll.offset().x;
+        self.glide_to(from, from - delta, cx);
+    }
+
+    /// Glides the strip by a wheel step GPUI already applied to the
+    /// offset: the offset goes back to where it was, and the strip glides
+    /// there instead. Steps that arrive while a glide is under way stack
+    /// on its end, so a spinning wheel keeps one smooth run.
+    fn wheel_by(&mut self, step: Pixels, cx: &mut Context<Self>) {
+        let now = self.scroll.offset();
+        let from = now.x - step;
+        self.scroll.set_offset(point(from, now.y));
+        let base = match self.glide {
+            Some(glide)
+                if (glide.from..=glide.to).contains(&from)
+                    || (glide.to..=glide.from).contains(&from) =>
+            {
+                glide.to
+            }
+            _ => from,
+        };
+        self.glide_to(from, base + step, cx);
+    }
+
+    fn glide_to(&mut self, from: Pixels, to: Pixels, cx: &mut Context<Self>) {
         let max = self.scroll.max_offset().x;
-        let to = (from - delta).clamp(-max, px(0.));
+        let to = to.clamp(-max, px(0.));
         if to != from {
             let serial = self.glide.map_or(0, |glide| glide.serial + 1);
             self.glide = Some(Glide { serial, from, to });
@@ -542,9 +566,8 @@ impl RenderOnce for Tabs {
             (motion.glide_transition(), motion.fast_transition())
         };
         if let Some(glide) = glide {
-            // Each glide is its own motion, keyed by its serial, so it
-            // starts from the offset the strip had. Once it has landed the
-            // strip leaves the offset alone, so a wheel can move it again.
+            // Keyed by serial, so each glide starts from the offset the
+            // strip had; once landed, the offset is left to the wheel.
             let key = (child("glide"), SharedString::from(glide.serial.to_string()));
             let sample = Sequence::new(key, glide.from)
                 .with_step(glide.to, motion.clone())
@@ -566,8 +589,6 @@ impl RenderOnce for Tabs {
             .clone();
         let focus_visible = focus.is_focused(window) && window.last_input_was_keyboard();
 
-        // The tabs in strip order, with each leaving tab at the index it
-        // held, so the others slide together as it shrinks.
         let mut slots: Vec<Slot> = tabs
             .iter()
             .enumerate()
@@ -588,8 +609,8 @@ impl RenderOnce for Tabs {
                 },
             );
         }
-        // The selected tab's place among the viewport's children: after
-        // the lead-in, and after any tab leaving before it.
+        // Among the viewport's children: after the lead-in and any tab
+        // leaving before it.
         let selected_child = slots
             .iter()
             .position(|slot| slot.live == selected_index && slot.live.is_some())
@@ -608,9 +629,8 @@ impl RenderOnce for Tabs {
             let live = slot.live.is_some();
             let selected = live && selected_index == Some(index);
             let tab_id = Arc::new(ElementId::NamedChild(strip.clone(), tab.id.clone()));
-            // A tab grows in from nothing and shrinks out to nothing. When
-            // the motion lands the state hears of it after this frame, so
-            // the render never writes the entity it reads.
+            // Settling is deferred so the render never writes the entity
+            // it reads.
             let width = if slot.entering || !live {
                 let (from, to) = if live {
                     (px(0.), look.width)
@@ -633,16 +653,9 @@ impl RenderOnce for Tabs {
             let group = tab.id.clone();
             let separator = live && separator_after(index, selected_index, len);
             let gutter = if separator { look.gutter } else { px(0.) };
-            // The selected tab and a hovered tab share one shape: the
-            // surface with a shoulder at each bottom corner. The selected
-            // tab is an outline in the hairline's color that opens into the
-            // hairline under the other tabs; a hovered tab is a fill. Each
-            // shoulder is a quarter circle: a circle the size of two
-            // shoulders, clipped to the shoulder's square at the corner.
-            //
-            // Both states fade: the outline, the hairline it replaces, the
-            // label's color, and the hover fill each follow a fast
-            // transition, so a click or a pointer never snaps the strip.
+            // A shoulder is a circle two shoulders wide, clipped to the
+            // shoulder's square at the corner: its ring is the outline's
+            // curve, its fill carves the hover fill.
             let hovered = window
                 .use_keyed_state(part("hovered"), cx, |_, _| false)
                 .clone();
@@ -699,8 +712,6 @@ impl RenderOnce for Tabs {
                     )
             };
             let label_id = part("label");
-            // Every tab shows its label as a tooltip: a working directory
-            // is longer than a tab, and the strip cuts it short.
             let tooltip = TooltipTrigger::text(label_id.clone(), None, tab.label.clone());
             let select_state = state.clone();
             let select_id = tab.id.clone();
@@ -747,10 +758,8 @@ impl RenderOnce for Tabs {
                         .right_0()
                         .child(shoulder(true))
                         .child(shoulder(false))
-                        // The outline's top and sides end where the arcs
-                        // begin. The ring of an arc sits inside its circle,
-                        // one pixel in from the shoulder's edge, so the
-                        // sides sit one pixel in too and meet it.
+                        // The arc's ring sits one pixel inside its circle,
+                        // so the sides sit one pixel in to meet it.
                         .child(
                             div()
                                 .absolute()
@@ -849,12 +858,12 @@ impl RenderOnce for Tabs {
 
         let prepaint_scroll = scroll.clone();
         let wheel_scroll = scroll.clone();
+        let wheel_state = state.clone();
         let viewport = div()
             .on_children_prepainted(move |_, window, _| {
                 if Overflow::of(&prepaint_scroll) != overflow {
-                    // The scroll controls appear or go with the next
-                    // frame and move the tabs by their width, so the
-                    // selected tab is brought into view again after them.
+                    // The controls that appear next frame shift the tabs,
+                    // so the selected tab is revealed again after them.
                     if let Some(child) = selected_child {
                         prepaint_scroll.scroll_to_item(child);
                     }
@@ -862,11 +871,20 @@ impl RenderOnce for Tabs {
                 }
             })
             // GPUI hands a wheel step to every scroll region under the
-            // pointer, so a strip inside a page would scroll the page too.
-            // The viewport keeps the step while it has room to scroll.
-            .on_scroll_wheel(move |_, _, cx| {
+            // pointer, and applies a line step to this box before its
+            // listeners run: the viewport keeps the step while it can
+            // scroll, and glides a mouse line instead of jumping it.
+            .on_scroll_wheel(move |event, window, cx| {
                 if wheel_scroll.max_offset().x > px(0.) {
                     cx.stop_propagation();
+                }
+                if event.delta.precise() {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                let step = if delta.x != px(0.) { delta.x } else { delta.y };
+                if step != px(0.) {
+                    wheel_state.update(cx, |state, cx| state.wheel_by(step, cx));
                 }
             })
             .id(child("scroll"))
@@ -877,10 +895,8 @@ impl RenderOnce for Tabs {
             .min_w_0()
             .overflow_x_scroll()
             .track_scroll(&scroll)
-            // Room before the first tab, so its shoulder has somewhere to
-            // flare. A child, not padding: GPUI counts a scroll box's
-            // padding into its content twice, which would keep an empty
-            // strip scrollable.
+            // A child, not padding: GPUI counts a scroll box's padding into
+            // its content twice, which keeps an empty strip scrollable.
             .child(room(&look, look.edge))
             .children(items);
 
@@ -920,8 +936,6 @@ impl RenderOnce for Tabs {
                         this.child(room(&look, self.leading))
                     })
                     .when(overflow.overflowing, |this| {
-                        // Room before the scroll controls, so a hovered
-                        // control does not touch the strip's edge.
                         this.child(room(&look, look.edge))
                             .child(slot(
                                 &look,
@@ -959,9 +973,6 @@ impl RenderOnce for Tabs {
                     })
                     .child(viewport)
                     .when(self.addable, |this| {
-                        // The same room after the last tab as before the
-                        // first, so the control is not crammed against
-                        // the last tab's curve.
                         this.child(room(&look, look.edge)).child(slot(
                             &look,
                             Button::new(child("add"))
