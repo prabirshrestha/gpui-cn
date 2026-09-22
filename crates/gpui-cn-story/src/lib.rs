@@ -99,6 +99,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::NavStackStory>(),
         StoryEntry::of::<stories::ScrollAreaStory>(),
         StoryEntry::of::<stories::TitleBarStory>(),
+        StoryEntry::of::<stories::TabsStory>(),
     ]
 }
 
@@ -513,6 +514,7 @@ pub fn shell_controls(
         .top_0()
         .left_0()
         .h(theme.metrics.title_bar)
+        .pt(theme.metrics.title_bar_content_offset)
         .flex()
         .items_center()
         .gap(theme.base.spacing.xs)

@@ -159,10 +159,17 @@ impl RenderOnce for TitleBar {
         let is_web = cfg!(target_family = "wasm");
         let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
         let macos_inset = is_macos && self.inset && !window.is_fullscreen();
-        let (height, inset, gap) = {
+        // The bar's own padding sits on the outer element so a caller can
+        // clear it and let a child, such as a tab strip, paint the whole
+        // bar. Where the bar draws window controls at its right edge the
+        // trailing padding and the content offset move inside, between the
+        // content and them, so the controls keep the window's top edge.
+        let draws_controls = draws_window_controls(window);
+        let (height, offset, inset, gap) = {
             let theme = cx.theme();
             (
                 theme.metrics.title_bar,
+                theme.metrics.title_bar_content_offset,
                 theme.metrics.window_controls_inset,
                 theme.base.spacing.xs,
             )
@@ -194,6 +201,7 @@ impl RenderOnce for TitleBar {
             .flex_shrink_0()
             .w_full()
             .h(height)
+            .when(!draws_controls, |this| this.pt(offset))
             .map(|this| {
                 if macos_inset {
                     this.pl(inset)
@@ -201,6 +209,7 @@ impl RenderOnce for TitleBar {
                     this.pl_3()
                 }
             })
+            .when(!draws_controls, |this| this.pr_3())
             .refine_style(&self.style)
             .on_mouse_down(
                 MouseButton::Left,
@@ -231,7 +240,7 @@ impl RenderOnce for TitleBar {
                     .min_w_0()
                     .h_full()
                     .gap(gap)
-                    .pr_3()
+                    .when(draws_controls, |this| this.pt(offset).pr_3())
                     .when(!is_web, |this| {
                         this.window_control_area(WindowControlArea::Drag).when(
                             is_linux && client_decorated,
@@ -256,18 +265,19 @@ struct WindowControls {
     on_close_window: Option<CloseHandler>,
 }
 
+/// Whether the bar draws the window controls itself. Only Windows and
+/// Linux let the application draw them; macOS draws its own, and a phone
+/// or the web has none. Under server-side decorations on Linux the window
+/// manager draws them, and a second set here would sit on top of its.
+fn draws_window_controls(window: &Window) -> bool {
+    cfg!(target_os = "windows")
+        || (cfg!(target_os = "linux")
+            && matches!(window.window_decorations(), Decorations::Client { .. }))
+}
+
 impl RenderOnce for WindowControls {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        // Only Windows and Linux let the application draw the controls.
-        // macOS draws its own, and a phone or the web has none.
-        if !cfg!(any(target_os = "windows", target_os = "linux")) {
-            return div().id("window-controls");
-        }
-        // Under server-side decorations the window manager draws its own
-        // controls; a second set here would sit on top of them.
-        if cfg!(target_os = "linux")
-            && !matches!(window.window_decorations(), Decorations::Client { .. })
-        {
+        if !draws_window_controls(window) {
             return div().id("window-controls");
         }
         let supported = window.window_controls();

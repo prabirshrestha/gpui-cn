@@ -200,8 +200,10 @@ The reference app paints the hovered row and the selected row the same
 color. gpui-cn keeps them one step apart so a hovered row beside the
 selected row reads as two rows.
 
-The title bar is 46px tall, and on macOS its content starts 88px from the
-left edge, after the window controls. Rows are 30px. Controls are 28px
+The title bar is 38px tall with its content 2px down and the macOS
+window controls at 14px, measured from the tab reference app (the
+reference app's own bar is 46px). On macOS the bar's content starts 88px
+from the left edge, after the window controls. Rows are 30px. Controls are 28px
 with 13px text. The page title is 24px. The sidebar opens at 300px and
 resizes between 220px and 480px.
 
