@@ -279,8 +279,32 @@ impl TabsState {
     /// delta shows tabs further right.
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
         let from = self.scroll.offset().x;
+        self.glide_to(from, from - delta, cx);
+    }
+
+    /// Glides the strip by a wheel step GPUI already applied to the
+    /// offset: the offset goes back to where it was, and the strip glides
+    /// there instead. Steps that arrive while a glide is under way stack
+    /// on its end, so a spinning wheel keeps one smooth run.
+    fn wheel_by(&mut self, step: Pixels, cx: &mut Context<Self>) {
+        let now = self.scroll.offset();
+        let from = now.x - step;
+        self.scroll.set_offset(point(from, now.y));
+        let base = match self.glide {
+            Some(glide)
+                if (glide.from..=glide.to).contains(&from)
+                    || (glide.to..=glide.from).contains(&from) =>
+            {
+                glide.to
+            }
+            _ => from,
+        };
+        self.glide_to(from, base + step, cx);
+    }
+
+    fn glide_to(&mut self, from: Pixels, to: Pixels, cx: &mut Context<Self>) {
         let max = self.scroll.max_offset().x;
-        let to = (from - delta).clamp(-max, px(0.));
+        let to = to.clamp(-max, px(0.));
         if to != from {
             let serial = self.glide.map_or(0, |glide| glide.serial + 1);
             self.glide = Some(Glide { serial, from, to });
@@ -849,6 +873,7 @@ impl RenderOnce for Tabs {
 
         let prepaint_scroll = scroll.clone();
         let wheel_scroll = scroll.clone();
+        let wheel_state = state.clone();
         let viewport = div()
             .on_children_prepainted(move |_, window, _| {
                 if Overflow::of(&prepaint_scroll) != overflow {
@@ -864,9 +889,22 @@ impl RenderOnce for Tabs {
             // GPUI hands a wheel step to every scroll region under the
             // pointer, so a strip inside a page would scroll the page too.
             // The viewport keeps the step while it has room to scroll.
-            .on_scroll_wheel(move |_, _, cx| {
+            //
+            // A mouse wheel moves in lines, which GPUI applies to the
+            // offset before this runs; the strip takes the step back and
+            // glides it, as the scroll controls do. A trackpad moves in
+            // pixels and stays direct.
+            .on_scroll_wheel(move |event, window, cx| {
                 if wheel_scroll.max_offset().x > px(0.) {
                     cx.stop_propagation();
+                }
+                if event.delta.precise() {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                let step = if delta.x != px(0.) { delta.x } else { delta.y };
+                if step != px(0.) {
+                    wheel_state.update(cx, |state, cx| state.wheel_by(step, cx));
                 }
             })
             .id(child("scroll"))
