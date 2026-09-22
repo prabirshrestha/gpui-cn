@@ -1080,3 +1080,59 @@ fn the_value_labels_empty_and_loading_can_each_be_drawn_by_the_application(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn on_touch_a_long_press_in_the_search_box_opens_the_edit_menu(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |window, cx| {
+        SelectState::new(entries(), cx).with_search("Search", window, cx)
+    });
+    cx.update(|cx| Theme::update(cx, |theme| theme.touch = true));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.input("germ", cx);
+        window.render_frame(cx);
+        // The query sits at the left of the search row, after the icon.
+        let search = window.find(child("search")).bounds();
+        let at = gpui_kit::point(search.origin.x + px(48.), search.center().y);
+        // A finger comes down before it presses long; the harness has only
+        // typed so far, and a hitbox ignores the pointer after a keystroke.
+        window.dispatch_event(
+            gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                position: at,
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        for phase in [gpui_kit::TouchPhase::Started, gpui_kit::TouchPhase::Ended] {
+            window.dispatch_event(
+                gpui_kit::PlatformInput::LongPress(gpui_kit::LongPressEvent {
+                    phase,
+                    start_position: at,
+                    position: at,
+                }),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+        assert!(window.try_find("Copy").is_some(), "the menu offers Copy");
+        assert!(
+            window.try_find(child("menu")).is_some(),
+            "the select stays open"
+        );
+        window.click("Copy", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let copied = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some("germ"));
+    assert_eq!(
+        setup
+            .state
+            .read_with(cx, |state, cx| state.query(cx))
+            .as_ref(),
+        "germ"
+    );
+}

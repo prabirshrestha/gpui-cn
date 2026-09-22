@@ -43,6 +43,8 @@
 
 mod button;
 mod icon;
+mod input;
+mod label;
 mod nav;
 mod root;
 mod scroll_area;
@@ -56,10 +58,14 @@ mod theme_mode_picker;
 mod title_bar;
 mod tooltip;
 mod tooltip_host;
+mod touch_selection;
 
 pub use button::{Button, ButtonSize, ButtonVariant};
 pub use gpui_kit;
+pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
 pub use icon::{Icon, IconSource};
+pub use input::{Field, Input, Textarea};
+pub use label::Label;
 pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
@@ -91,12 +97,12 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     pub use crate::{
-        ActiveTheme, Button, ButtonSize, ButtonVariant, Icon, NavButtons, NavMotion, NavStack,
-        NavStackExt, NavStackState, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
-        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
-        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
-        SidebarTrigger, Switch, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeMode, ThemeModePicker,
-        TitleBar, TooltipExt,
+        ActiveTheme, Button, ButtonSize, ButtonVariant, Field, Icon, Input, InputState, Label,
+        NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, ReduceMotion, Root,
+        ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible,
+        SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator,
+        SidebarSide, SidebarState, SidebarTrigger, Switch, Tab, Tabs, TabsEvent, TabsState,
+        Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

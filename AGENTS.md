@@ -195,6 +195,9 @@ and its tests assert them.
 | Menu check, trigger chevron | #cacaca | derived |
 | Select trigger | #2a2a2a | derived |
 | Select trigger hairline | #3b3b3b | derived |
+| Field | #2c2c2c | #ffffff |
+| Field border | #3b3b3b | #e5e5e6 |
+| Field border, focused | #799cca (derived) | #339cff |
 
 The reference app paints the hovered row and the selected row the same
 color. gpui-cn keeps them one step apart so a hovered row beside the
@@ -204,7 +207,9 @@ The title bar is 38px tall with its content 2px down and the macOS
 window controls at 14px, measured from the tab reference app (the
 reference app's own bar is 46px). On macOS the bar's content starts 88px
 from the left edge, after the window controls. Rows are 30px. Controls are 28px
-with 13px text. The page title is 24px. The sidebar opens at 300px and
+with 13px text. Text fields are 32px with 12px side padding, and a
+textarea keeps 10px at the sides and 8px above and below its 18.5px
+lines. The page title is 24px. The sidebar opens at 300px and
 resizes between 220px and 480px.
 
 A select menu opens 2px under its trigger, lined up with the trigger's
