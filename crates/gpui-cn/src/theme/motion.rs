@@ -60,10 +60,12 @@ impl MotionTokens {
         Transition::new(self.fast).easing(self.fold.clone())
     }
 
-    /// A `normal` transition with the fold curve, for content that glides
-    /// to a new resting place in view: a tab strip paging.
+    /// A `normal` transition with the enter curve, for content that
+    /// glides to a new resting place: a tab strip paging or taking a wheel
+    /// step. The enter curve leaves fast and settles, the shape of a
+    /// scroll that decelerates, so a run of steps reads as one motion.
     pub fn glide_transition(&self) -> Transition {
-        Transition::new(self.normal).easing(self.fold.clone())
+        Transition::new(self.normal).easing(self.enter.clone())
     }
 
     /// A `fast` transition with the enter curve.
