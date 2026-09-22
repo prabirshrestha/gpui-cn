@@ -92,6 +92,8 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::SpacingStory>(),
         StoryEntry::of::<stories::ButtonStory>(),
         StoryEntry::of::<stories::SwitchStory>(),
+        StoryEntry::of::<stories::InputStory>(),
+        StoryEntry::of::<stories::TextareaStory>(),
         StoryEntry::of::<stories::SelectStory>(),
         StoryEntry::of::<stories::SkeletonStory>(),
         StoryEntry::of::<stories::ThemeModePickerStory>(),

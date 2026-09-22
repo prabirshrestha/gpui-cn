@@ -125,6 +125,8 @@ mod macos {
                 "Typography",
                 "Spacing",
                 "Switch",
+                "Input",
+                "Textarea",
                 "Select",
                 "Skeleton",
                 "Theme mode picker",
@@ -149,6 +151,26 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("scroll the page");
+                }
+                // The caret goes into the first field, so the focused
+                // hairline and the text sit beside the resting ones; the
+                // search field gets text so its clear button shows.
+                let fields: &[&str] = match story {
+                    "Input" => &["search", "name"],
+                    "Textarea" => &["notes"],
+                    _ => &[],
+                };
+                for &field in fields {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(field, cx);
+                        // The window is reused per appearance, so the
+                        // text of the last pass is replaced, not appended.
+                        window.press("cmd-a", cx);
+                        window.input("Ada Lovelace", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("type into the field");
                 }
                 if story == "Sidebar" {
                     // Hover the row under the selected one, so the two

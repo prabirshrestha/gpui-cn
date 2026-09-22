@@ -120,6 +120,23 @@ pub struct ThemeTokens {
     /// The hairline between two unselected tabs: the muted text at 60%,
     /// which the tab reference app paints #707070 over its #181818 bar.
     pub tab_separator: Hsla,
+    /// The fill of a text field: #2c2c2c on dark, sampled from the
+    /// reference app's settings textarea at 2x on the #181818 window. The
+    /// window surface on light, as shadcn's `bg-transparent` input.
+    pub field: Hsla,
+    /// The hairline around a text field at rest: #3b3b3b on dark, sampled
+    /// from the reference app's select trigger, the same family. The
+    /// `input` token on light, as shadcn's `border-input`.
+    pub field_border: Hsla,
+    /// The hairline around a text field while the caret is inside: #799ec8
+    /// on dark, sampled from the reference app's focused textarea at 2x,
+    /// the link color most of the way over the fill. One pixel, no spread.
+    /// The ring itself on light, as shadcn's `border-ring`.
+    pub field_focus_border: Hsla,
+    /// The text of a multi-line field: 13px on an 18.5px line, the pitch
+    /// measured from the reference app's settings textarea at 2x (37px),
+    /// looser than `text_control` so lines of prose read apart.
+    pub text_textarea: TextStyleToken,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -187,6 +204,19 @@ pub struct MetricTokens {
     pub resize_handle: Pixels,
     /// The spread of the keyboard focus ring outside a control: 3px.
     pub focus_ring: Pixels,
+    /// The height of a single-line text field: 32px, measured from the
+    /// reference app's search and settings text fields at 2x, a step
+    /// taller than its 28px buttons and select triggers, so `control_lg`.
+    /// On touch it is `control_md`, the 44pt hit target.
+    pub field_height: Pixels,
+    /// The side padding of a single-line text field: 12px, measured from
+    /// the reference app's search field at 2x. A multi-line field keeps
+    /// `control_padding_md`, the 10px its settings textarea measures.
+    pub field_padding_x: Pixels,
+    /// The padding above and below the lines of a multi-line field: 8px,
+    /// measured from the reference app's settings textarea at 2x, the
+    /// same step as `control_padding_sm`.
+    pub field_padding_y: Pixels,
     /// The width of a scrollbar's thumb at rest: 7px, the knob of a macOS
     /// overlay scroller, which the reference app's web view shows.
     pub scrollbar_thumb: Pixels,
@@ -278,13 +308,14 @@ impl MetricTokens {
             (scaled(28.), scaled(30.), scaled(48.))
         };
         let title_bar = px(if touch { 44. } else { 38. });
+        let control_padding_sm = scaled(8.);
         Self {
             control_xs,
             control_sm,
             control_md,
             control_lg,
             control_padding_xs: scaled(6.),
-            control_padding_sm: scaled(8.),
+            control_padding_sm,
             control_padding_md: scaled(if touch { 14. } else { 10. }),
             control_padding_lg: scaled(18.),
             row_sm,
@@ -302,6 +333,9 @@ impl MetricTokens {
             sidebar_sheet_width: px(288.),
             resize_handle: px(8.),
             focus_ring: px(3.),
+            field_height: if touch { control_md } else { control_lg },
+            field_padding_x: scaled(12.),
+            field_padding_y: control_padding_sm,
             scrollbar_thumb: px(7.),
             scrollbar_thumb_active: px(11.),
             scrollbar_inset: px(2.),
@@ -420,6 +454,13 @@ impl ThemeTokens {
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
         let tab_separator = muted_foreground.opacity(0.6);
+        let field = if dark { toward_ink(0.104) } else { surface };
+        let field_border = if dark { toward_ink(0.181) } else { input };
+        let field_focus_border = if dark {
+            mix(field, link, 0.78)
+        } else {
+            config.accent
+        };
 
         let colors = ColorTokens {
             background: surface,
@@ -451,6 +492,10 @@ impl ThemeTokens {
             size: px(if metrics.touch { 17. } else { 13. } * factor),
             line_height: px(if metrics.touch { 22. } else { 16. } * factor),
             weight: FontWeight::NORMAL,
+        };
+        let text_textarea = TextStyleToken {
+            line_height: px(if metrics.touch { 22. } else { 18.5 } * factor),
+            ..text_control
         };
         let text_heading = TextStyleToken {
             size: px(if metrics.touch { 17. } else { 15. } * factor),
@@ -510,6 +555,10 @@ impl ThemeTokens {
             select_trigger,
             select_trigger_border,
             tab_separator,
+            field,
+            field_border,
+            field_focus_border,
+            text_textarea,
         }
     }
 
@@ -926,6 +975,29 @@ mod tests {
         );
         assert_eq!(large.metrics.menu_max_height, px(487.5));
         assert_eq!(large.metrics.menu_gap, px(2.5));
+    }
+
+    #[test]
+    fn field_colors_reproduce_the_reference_values() {
+        // The fill is sampled from the reference app's settings textarea
+        // and the rest hairline from its select trigger, both at 2x on the
+        // dark window surface.
+        let dark = dark();
+        assert_eq!(to_hex(dark.field), "#2c2c2c");
+        assert_eq!(to_hex(dark.field_border), "#3b3b3b");
+        assert_eq!(
+            to_hex(dark.field_focus_border),
+            "#799cca",
+            "two steps from the #799ec8 sample, inside its noise"
+        );
+        assert_eq!(dark.text_textarea.line_height, px(18.5));
+        assert_eq!(dark.text_textarea.size, px(13.));
+        assert!(lightness(dark.field_border) > lightness(dark.field));
+        assert!(lightness(dark.field) > lightness(dark.background()));
+        let light = light();
+        assert_eq!(light.field, light.background());
+        assert_eq!(light.field_border, light.input());
+        assert_eq!(light.field_focus_border, light.ring());
     }
 
     #[test]

@@ -18,7 +18,7 @@ use super::{
     item::{SelectEntry, SelectItem, SelectValue},
     state::SelectState,
 };
-use crate::{Icon, ScrollArea, ThemeTokens};
+use crate::{Icon, ScrollArea, ThemeTokens, touch_selection};
 
 pub(super) type ItemRenderer<V> =
     Rc<dyn Fn(&SelectItem<V>, SelectRow, &mut Window, &mut App) -> AnyElement>;
@@ -261,7 +261,20 @@ impl<V: SelectValue> Menu<V> {
             .text_color(look.foreground)
             .on_mouse_down_out({
                 let state = state.clone();
-                move |_, window, cx| state.update(cx, |state, cx| state.close(window, cx))
+                let search = search.clone();
+                move |_, window, cx| {
+                    // The search box's touch edit menu floats outside the
+                    // panel; a press on it is the search's, not a close.
+                    let edit_menu_open = search.as_ref().is_some_and(|search| {
+                        search
+                            .read(cx)
+                            .touch_selection()
+                            .is_some_and(|selection| selection.is_menu_open())
+                    });
+                    if !edit_menu_open {
+                        state.update(cx, |state, cx| state.close(window, cx));
+                    }
+                }
             })
             .when_some(search, |this, search| {
                 this.child(
@@ -283,7 +296,8 @@ impl<V: SelectValue> Menu<V> {
                                 .flex_1()
                                 .min_w_0()
                                 .child(base::input::Input::new(&search)),
-                        ),
+                        )
+                        .children(touch_selection::for_state(&search, window, cx)),
                 )
                 .child(separator(look))
             })
