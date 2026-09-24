@@ -128,6 +128,7 @@ mod macos {
                 "Input",
                 "Textarea",
                 "Select",
+                "Menu",
                 "Skeleton",
                 "Theme mode picker",
                 "Sidebar",
@@ -183,6 +184,78 @@ mod macos {
                 }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                if story == "Menu" {
+                    use gpui_cn_story::stories::MenuStory;
+                    let named = |parent: &'static str, child: &'static str| {
+                        gpui_kit::ElementId::NamedChild(
+                            gpui_kit::ElementId::Name(parent.into()).into(),
+                            child.into(),
+                        )
+                    };
+                    // The document holds the caret, so Edit acts on it and
+                    // the menus show the story's shortcuts.
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(MenuStory::DOCUMENT, cx);
+                    })
+                    .expect("focus the document");
+                    for title in ["File", "View"] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.click(named(MenuStory::MENU_BAR, title), cx);
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("open a menu of the bar");
+                        let slug_title = title.to_lowercase();
+                        capture(&mut cx, &format!("story-{slug}-bar-{slug_title}-{name}"));
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("escape", cx);
+                        })
+                        .expect("close the menu");
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(MenuStory::OPTIONS, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.hover(named("options", "share"), cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the dropdown");
+                    capture(&mut cx, &format!("story-{slug}-dropdown-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal(MenuStory::REGION, window, cx);
+                        window.right_click(MenuStory::REGION, cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the context menu");
+                    capture(&mut cx, &format!("story-{slug}-context-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal("dated", window, cx);
+                        window.click("dated", cx);
+                        window.press("cmd-a", cx);
+                        window.input("Remember the milk, the eggs, and the bread", cx);
+                        window.press("cmd-a", cx);
+                        window.right_click("dated", cx);
+                    })
+                    .expect("right-click the field");
+                    capture(&mut cx, &format!("story-{slug}-field-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.scroll(
+                            "page",
+                            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(2000.))),
+                            cx,
+                        );
+                    })
+                    .expect("close the field's menu");
+                }
                 if story == "Select" {
                     let trigger = |id: &'static str| {
                         gpui_kit::ElementId::NamedChild(

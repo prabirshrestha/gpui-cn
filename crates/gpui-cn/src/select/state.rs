@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 
 use super::item::{self, SelectEntry, SelectItem, SelectValue};
-use crate::{ActiveTheme as _, ThemeTokens};
+use crate::{ActiveTheme as _, MenuState, ThemeTokens};
 
 /// What a [`SelectState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +40,9 @@ struct SearchField<V: SelectValue> {
     /// edit that leaves its text as it was, such as an Enter; the rows
     /// answer only to a query that differs.
     query: SharedString,
+    /// The field's right-click menu. The select's own popup blocks base's
+    /// hook for it, so the menu opens from the search row.
+    menu: Entity<MenuState>,
 }
 
 /// The rows, the selection, and the open menu of a [`Select`](super::Select).
@@ -228,10 +231,14 @@ impl<V: SelectValue> SelectState<V> {
                     this.query_changed(cx);
                 }
             }));
+        let menu = cx.new(MenuState::new);
+        self._subscriptions
+            .push(cx.observe(&menu, |_, _, cx| cx.notify()));
         self.search = Some(SearchField {
             input,
             handler,
             query: SharedString::default(),
+            menu,
         });
         self
     }
@@ -433,6 +440,7 @@ impl<V: SelectValue> SelectState<V> {
         let had_focus = self.owns_focus(window, cx);
         // The query clears for the next opening, which refreshes the rows.
         if let Some(search) = &mut self.search {
+            search.menu.update(cx, |menu, cx| menu.close(window, cx));
             search.query = SharedString::default();
             if !search.input.read(cx).value().is_empty() {
                 search
@@ -588,6 +596,11 @@ impl<V: SelectValue> SelectState<V> {
         self.search.as_ref().map(|search| &search.input)
     }
 
+    /// The search field's right-click menu.
+    pub(super) fn search_menu(&self) -> Option<&Entity<MenuState>> {
+        self.search.as_ref().map(|search| &search.menu)
+    }
+
     /// Where the trigger records its bounds each frame.
     pub(super) fn trigger_bounds(&self) -> &Rc<Cell<Bounds<Pixels>>> {
         &self.trigger_bounds
@@ -712,16 +725,16 @@ impl<V: SelectValue> SelectState<V> {
         }
     }
 
-    /// Whether the list or the search field is focused.
+    /// Whether the list, the search field, or the search field's menu is
+    /// focused.
     fn owns_focus(&self, window: &Window, cx: &App) -> bool {
         let Some(focused) = window.focused(cx) else {
             return false;
         };
         focused == self.content_focus
-            || self
-                .search
-                .as_ref()
-                .is_some_and(|search| search.input.read(cx).focus_handle(cx) == focused)
+            || self.search.as_ref().is_some_and(|search| {
+                search.input.read(cx).focus_handle(cx) == focused || search.menu.read(cx).is_open()
+            })
     }
 
     fn focus_content(&self, window: &mut Window, cx: &mut Context<Self>) {
