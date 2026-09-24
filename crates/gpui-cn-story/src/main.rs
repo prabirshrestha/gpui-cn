@@ -108,6 +108,10 @@ fn main() {
             .open_window(options, |window, cx| {
                 mark("window created");
                 let view = cx.new(|cx| Gallery::new(window, cx));
+                let story = std::env::args().skip_while(|arg| arg != "--story").nth(1);
+                if let Some(title) = story {
+                    view.update(cx, |gallery, cx| gallery.select_story(&title, window, cx));
+                }
                 gallery = Some(view.clone());
                 window.on_next_frame(move |_, _| mark("first frame drawn"));
                 cx.new(|cx| gpui_cn::Root::new(view, window, cx))

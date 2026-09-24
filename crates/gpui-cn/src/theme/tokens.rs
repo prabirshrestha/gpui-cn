@@ -83,6 +83,9 @@ pub struct ThemeTokens {
     /// it is white in both appearances of the built-in themes, as the
     /// reference app paints it.
     pub switch_thumb: Hsla,
+    /// The track of a progress bar: `primary` at 20%, shadcn's
+    /// `bg-primary/20`. The indicator is `primary` itself.
+    pub progress_track: Hsla,
     /// The surface of a menu or popover: #2d2d2d on dark, sampled from the
     /// reference app's select menus, a larger step above the window than
     /// a card takes. The window surface on light, as shadcn's `popover`.
@@ -444,6 +447,7 @@ impl ThemeTokens {
         let switch_track_on = config.accent;
         let switch_track_off = toward_ink(0.20);
         let switch_thumb = lighter_of(surface, ink);
+        let progress_track = primary.opacity(0.2);
         let popover = if dark { toward_ink(0.109) } else { surface };
         let popover_step = |amount: f32| mix(popover, ink, amount);
         let popover_border = if dark { popover_step(0.13) } else { border };
@@ -545,6 +549,7 @@ impl ThemeTokens {
             switch_track_on,
             switch_track_off,
             switch_thumb,
+            progress_track,
             popover,
             popover_foreground: ink,
             popover_border,
@@ -910,6 +915,15 @@ mod tests {
             high.border(),
             "separators do not move with contrast"
         );
+    }
+
+    #[test]
+    fn the_progress_track_is_the_primary_at_a_fifth() {
+        let dark = dark();
+        assert_eq!(to_hex(dark.primary()), "#dfdfdf");
+        assert_eq!(to_hex(dark.progress_track), "#dfdfdf33");
+        let light = light();
+        assert_eq!(to_hex(light.progress_track), "#31333533");
     }
 
     #[test]

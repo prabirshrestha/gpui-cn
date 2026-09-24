@@ -45,13 +45,16 @@ mod button;
 mod icon;
 mod input;
 mod label;
+mod looping;
 mod menu;
 mod nav;
+mod progress;
 mod root;
 mod scroll_area;
 mod select;
 mod sidebar;
 mod skeleton;
+mod spinner;
 mod switch;
 mod tabs;
 pub mod theme;
@@ -75,6 +78,7 @@ pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
 };
+pub use progress::Progress;
 pub use root::Root;
 pub use scroll_area::ScrollArea;
 pub use select::{
@@ -87,6 +91,7 @@ pub use sidebar::{
     SidebarState, SidebarTrigger,
 };
 pub use skeleton::Skeleton;
+pub use spinner::Spinner;
 pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
 pub use theme::{
@@ -105,11 +110,11 @@ pub mod prelude {
         ActiveTheme, Button, ButtonSize, ButtonVariant, ContextMenu, DropdownMenu, Field, Icon,
         Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
         MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
-        ReduceMotion, Root, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
-        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
-        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Switch, Tab, Tabs, TabsEvent,
-        TabsState, Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar,
-        TooltipExt,
+        Progress, ReduceMotion, Root, ScrollArea, Select, SelectEntry, SelectItem, SelectState,
+        Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton,
+        SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner,
+        Switch, Tab, Tabs, TabsEvent, TabsState, Textarea, TextareaState, Theme, ThemeMode,
+        ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    Animation, AnimationExt as _, App, ElementId, IntoElement, RenderOnce, StyleRefinement, Styled,
-    Window, base::StyledExt as _, bounce, div, ease_in_out,
+    App, ElementId, InteractiveElement as _, IntoElement, RenderOnce, StyleRefinement, Styled,
+    TestSupportExt as _, Window, base::StyledExt as _, bounce, div, ease_in_out,
 };
 
-use crate::{ActiveTheme as _, Theme};
+use crate::{ActiveTheme as _, Theme, looping};
 
 /// A shadcn-style skeleton: a rounded block in the accent fill that pulses
 /// while content loads, so a list or a card keeps its shape before its
@@ -27,7 +27,10 @@ use crate::{ActiveTheme as _, Theme};
 ///
 /// The pulse is shadcn's `animate-pulse`: opacity from full to half and
 /// back over two seconds, eased both ways, repeating while the block is
-/// rendered and still under reduced motion.
+/// rendered and still under reduced motion. It repaints at 30 fps on the
+/// app's shared loop clock, not at the display rate: a slow fade shows no
+/// steps at that rate, and every block on screen repaints on the same
+/// tick, in step.
 #[derive(IntoElement)]
 pub struct Skeleton {
     id: ElementId,
@@ -35,7 +38,7 @@ pub struct Skeleton {
 }
 
 impl Skeleton {
-    /// A block with a stable id, which keys its pulse.
+    /// A block with a stable id.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -57,8 +60,12 @@ const PULSE: Duration = Duration::from_secs(2);
 /// The opacity the pulse falls to: half, as shadcn's.
 const PULSE_FLOOR: f32 = 0.5;
 
+/// How often the pulse repaints: 30 fps, where a two-second fade between
+/// full and half opacity moves too little per step to show the steps.
+const PULSE_FPS: u32 = 30;
+
 impl RenderOnce for Skeleton {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (fill, radius, height) = {
             let theme = cx.theme();
             (
@@ -68,23 +75,18 @@ impl RenderOnce for Skeleton {
             )
         };
         let block = div()
+            .id(self.id)
+            .test_support()
             .w_full()
             .h(height)
             .rounded(radius)
             .bg(fill)
             .refine_style(&self.style);
-        if Theme::global(cx).motion.slow.is_zero() {
-            return block.opacity(PULSE_FLOOR).into_any_element();
+        if Theme::holds_still(cx) {
+            return block.opacity(PULSE_FLOOR);
         }
-        block
-            .with_animation(
-                self.id,
-                Animation::new(PULSE)
-                    .repeat()
-                    .with_easing(bounce(ease_in_out)),
-                |block, delta| block.opacity(1. - delta * (1. - PULSE_FLOOR)),
-            )
-            .into_any_element()
+        let delta = bounce(ease_in_out)(looping::phase(PULSE, PULSE_FPS, window, cx));
+        block.opacity(1. - delta * (1. - PULSE_FLOOR))
     }
 }
 
