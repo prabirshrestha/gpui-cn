@@ -45,6 +45,7 @@ mod button;
 mod icon;
 mod input;
 mod label;
+mod looping;
 mod menu;
 mod nav;
 mod progress;

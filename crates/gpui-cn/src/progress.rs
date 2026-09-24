@@ -1,16 +1,15 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    Animation, AnimationExt as _, App, ElementId, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled, TestSupportExt as _,
-    Window,
+    App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
+    SharedString, StyleRefinement, Styled, TestSupportExt as _, Window,
     base::{self, ProgressIndicator, ProgressTrack, StyledExt as _, transition},
     div, ease_in_out,
     prelude::FluentBuilder as _,
     relative,
 };
 
-use crate::{ActiveTheme as _, Theme};
+use crate::{ActiveTheme as _, Theme, looping};
 
 /// A shadcn-style progress bar on `gpui_base::Progress`.
 ///
@@ -31,7 +30,10 @@ use crate::{ActiveTheme as _, Theme};
 ///
 /// A value is a percentage, clamped to `0..=100`. With no value the bar is
 /// indeterminate, as in Radix: a segment slides across the track and
-/// repeats, and under reduced motion it holds still in the middle. A new
+/// repeats, and under reduced motion it holds still in the middle. The
+/// sweep repaints at 60 fps on the app's shared loop clock, not at the
+/// display rate, and every indeterminate bar on screen repaints on the
+/// same tick. A new
 /// value moves the indicator with the theme's slide motion, shadcn's
 /// `transition-all`.
 ///
@@ -85,6 +87,10 @@ impl Styled for Progress {
 /// gpui-kit's progress bar. shadcn has no indeterminate bar.
 const SWEEP: Duration = Duration::from_secs(1);
 
+/// How often the sweep repaints: 60 fps. The segment crosses a wide track
+/// in half a second at its fastest, and at 30 fps its steps show.
+const SWEEP_FPS: u32 = 60;
+
 /// How far in from each end the still indeterminate segment sits under
 /// reduced motion, as a fraction of the track: the middle 35%, as
 /// gpui-kit's.
@@ -134,16 +140,13 @@ impl RenderOnce for Progress {
                 .left(relative(STILL_INSET))
                 .w(relative(1. - STILL_INSET * 2.))
                 .into_any_element(),
-            None => indicator
-                .with_animation(
-                    child_id("sweep"),
-                    Animation::new(SWEEP).repeat(),
-                    |indicator, delta| {
-                        let (start, end) = sweep(delta);
-                        indicator.left(relative(start)).w(relative(end - start))
-                    },
-                )
-                .into_any_element(),
+            None => {
+                let (start, end) = sweep(looping::phase(SWEEP, SWEEP_FPS, window, cx));
+                indicator
+                    .left(relative(start))
+                    .w(relative(end - start))
+                    .into_any_element()
+            }
         };
 
         div()
