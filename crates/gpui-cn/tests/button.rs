@@ -21,6 +21,7 @@ struct Harness {
     clicks: Rc<Cell<usize>>,
     keyboard_clicks: Rc<Cell<usize>>,
     disabled: bool,
+    loading: bool,
     icon_only: bool,
     variant: ButtonVariant,
 }
@@ -33,6 +34,7 @@ impl Render for Harness {
             .track_focus(&self.focus)
             .variant(self.variant)
             .disabled(self.disabled)
+            .loading(self.loading)
             .on_click(move |event, _, _| {
                 clicks.set(clicks.get() + 1);
                 if matches!(event, gpui_kit::ClickEvent::Keyboard(_)) {
@@ -98,6 +100,7 @@ fn setup(cx: &mut TestAppContext, configure: impl FnOnce(&mut Harness)) -> Setup
                 clicks: clicks.clone(),
                 keyboard_clicks: keyboard_clicks.clone(),
                 disabled: false,
+                loading: false,
                 icon_only: false,
                 variant: ButtonVariant::Default,
             };
@@ -183,6 +186,60 @@ fn disabled_button_ignores_pointer_and_keyboard(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(setup.clicks.get(), 0);
+}
+
+#[gpui_kit::test]
+fn a_loading_button_keeps_focus_and_ignores_activation(cx: &mut TestAppContext) {
+    let setup = setup(cx, |harness| harness.loading = true);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(gpui_kit::ElementId::NamedChild(
+                    gpui_kit::ElementId::from("save").into(),
+                    "spinner".into()
+                ))
+                .role(),
+            Some(gpui_kit::Role::Status)
+        );
+        window.click("save", cx);
+    })
+    .unwrap();
+    focus_save(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        assert_eq!(window.find("save").focused(), Some(true));
+        tap(window, "enter", cx);
+        tap(window, "space", cx);
+    })
+    .unwrap();
+    assert_eq!(setup.clicks.get(), 0);
+
+    setup.view.update(cx, |view, cx| {
+        view.loading = false;
+        cx.notify();
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save", cx);
+        tap(window, "enter", cx);
+    })
+    .unwrap();
+    assert_eq!(setup.clicks.get(), 2);
+}
+
+#[gpui_kit::test]
+fn a_loading_icon_only_button_stays_square(cx: &mut TestAppContext) {
+    let setup = setup(cx, |harness| {
+        harness.icon_only = true;
+        harness.loading = true;
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("save").bounds();
+        assert_eq!(bounds.size.width, px(28.));
+        assert_eq!(bounds.size.height, px(28.));
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

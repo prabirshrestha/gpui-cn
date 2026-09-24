@@ -14,7 +14,7 @@ use gpui_kit::{
 };
 
 use crate::{
-    ActiveTheme as _, Icon, Theme, ThemeTokens, TooltipHost,
+    ActiveTheme as _, Icon, Spinner, Theme, ThemeTokens, TooltipHost,
     theme::mix,
     tooltip::{TooltipTrigger, TruncatedLabel},
 };
@@ -151,6 +151,7 @@ pub struct Button {
     trailing_icon: Option<Icon>,
     children: Vec<AnyElement>,
     disabled: bool,
+    loading: bool,
     selected: bool,
     open: bool,
     toggled: Option<bool>,
@@ -185,6 +186,7 @@ impl Button {
             trailing_icon: None,
             children: Vec::new(),
             disabled: false,
+            loading: false,
             selected: false,
             open: false,
             toggled: None,
@@ -281,6 +283,20 @@ impl Button {
         self
     }
 
+    /// Marks the button busy with work it started: a [`Spinner`] takes the
+    /// leading icon's place (or comes before the label when there is no
+    /// icon), and activation does nothing until the work ends. Unlike
+    /// `disabled`, the button keeps its colors and its focus.
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Whether the button is busy.
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
     /// Whether the button is marked open by its popup.
     pub fn is_open(&self) -> bool {
         self.open
@@ -360,9 +376,10 @@ impl Button {
         self.icon.is_some() && self.label.is_none() && self.children.is_empty()
     }
 
-    /// Whether the button responds to input at all.
+    /// Whether the button accepts the pointer and activation: not while
+    /// it is disabled, and not while it is busy.
     fn is_interactive(&self) -> bool {
-        !self.disabled
+        !self.disabled && !self.loading
     }
 }
 
@@ -561,6 +578,17 @@ struct Look {
     geometry: ControlGeometry,
 }
 
+/// Sizes an icon, or the spinner in its place, to the button's tier.
+fn icon_size_rem<E: Styled>(icon: E, size: ButtonSize) -> E {
+    if size.is_xs() {
+        icon.size_3()
+    } else if size.is_compact() {
+        icon.size_3p5()
+    } else {
+        icon.size_4()
+    }
+}
+
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let settings = Theme::global(cx);
@@ -647,15 +675,15 @@ impl RenderOnce for Button {
         });
         let focus_visible = focus_handle.is_focused(window) && window.last_input_was_keyboard();
 
-        let icon_size_rem = move |icon: Icon| {
-            if size.is_xs() {
-                icon.size_3()
-            } else if size.is_compact() {
-                icon.size_3p5()
-            } else {
-                icon.size_4()
-            }
-        };
+        let spinner = self.loading.then(|| {
+            icon_size_rem(
+                Spinner::new(ElementId::NamedChild(
+                    self.id.clone().into(),
+                    "spinner".into(),
+                )),
+                size,
+            )
+        });
 
         let accessibility_label = self.accessibility_label.or_else(|| self.label.clone());
         let on_click = self.on_click;
@@ -704,7 +732,12 @@ impl RenderOnce for Button {
                     this.gap_1p5()
                 }
             })
-            .when_some(self.icon, |this, icon| this.child(icon_size_rem(icon)))
+            .map(|this| match spinner {
+                Some(spinner) => this.child(spinner),
+                None => this.when_some(self.icon, |this, icon| {
+                    this.child(icon_size_rem(icon, size))
+                }),
+            })
             .when_some(label, |this, (_, (text, _))| {
                 this.child(
                     div()
@@ -720,7 +753,7 @@ impl RenderOnce for Button {
             })
             .children(self.children)
             .when_some(self.trailing_icon, |this, icon| {
-                this.child(icon_size_rem(icon))
+                this.child(icon_size_rem(icon, size))
             });
 
         self.base

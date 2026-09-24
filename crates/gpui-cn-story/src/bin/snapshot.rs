@@ -130,6 +130,8 @@ mod macos {
                 "Select",
                 "Menu",
                 "Skeleton",
+                "Spinner",
+                "Progress",
                 "Theme mode picker",
                 "Sidebar",
                 "Nav stack",
