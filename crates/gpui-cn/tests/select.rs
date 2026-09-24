@@ -1136,3 +1136,214 @@ fn on_touch_a_long_press_in_the_search_box_opens_the_edit_menu(cx: &mut TestAppC
         "germ"
     );
 }
+
+/// A row of the search field's right-click menu.
+fn search_menu_row(name: &'static str) -> ElementId {
+    ElementId::NamedChild(child("search-menu").into(), name.into())
+}
+
+#[gpui_kit::test]
+fn paste_from_the_search_fields_menu_runs_the_search(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |window, cx| {
+        SelectState::new(entries(), cx).with_search("Search", window, cx)
+    });
+    cx.update(|cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("germ".into())));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(child("all")).is_some());
+        window.right_click(child("search"), cx);
+        window.render_frame(cx);
+        let search = window.find(child("search")).bounds();
+        let menu = window.find(search_menu_row("menu")).bounds();
+        assert_eq!(
+            menu.origin,
+            search.center(),
+            "the menu opens at the pointer"
+        );
+        assert!(
+            window.try_find(child("menu")).is_some(),
+            "the select stays open under it"
+        );
+        assert!(window.try_find(search_menu_row("copy")).is_some());
+        window.click(search_menu_row("paste"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(search_menu_row("menu")).is_none());
+        assert!(window.try_find(child("menu")).is_some(), "still open");
+    })
+    .unwrap();
+    // The field reports its change as an event, which lands after the
+    // click's own update.
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(setup.state.read(cx).query(cx).as_ref(), "germ");
+        assert!(window.try_find(child("de")).is_some(), "a keyword matches");
+        assert!(window.try_find(child("all")).is_none());
+        window.input("an", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        setup
+            .state
+            .read_with(cx, |state, cx| state.query(cx))
+            .as_ref(),
+        "german",
+        "focus is back in the search field"
+    );
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_search_fields_menu_before_the_select(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |window, cx| {
+        SelectState::new(entries(), cx).with_search("Search", window, cx)
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.right_click(child("search"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(search_menu_row("menu")).is_some());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(search_menu_row("menu")).is_none());
+        assert!(window.try_find(child("menu")).is_some(), "the select stays");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(child("menu")).is_none());
+    })
+    .unwrap();
+    assert!(!setup.state.read_with(cx, |state, _| state.is_open()));
+}
+
+#[gpui_kit::test]
+fn a_rows_icon_lines_up_with_the_label_not_the_description(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |_, cx| {
+        SelectState::new(
+            [
+                SelectItem::new("plain", "Plain").icon(gpui_kit::assets::IconName::File),
+                SelectItem::new("described", "Described")
+                    .icon(gpui_kit::assets::IconName::File)
+                    .description("A line under the label"),
+            ],
+            cx,
+        )
+    });
+    let line = cx.update(|cx| {
+        use gpui_cn::ActiveTheme as _;
+        cx.theme().text_control.line_height
+    });
+    let part = |key: &'static str, name: &'static str| {
+        ElementId::NamedChild(child(key).into(), name.into())
+    };
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        let leading = window.find(part("described", "leading")).bounds();
+        let label = window.find(part("described", "label")).bounds();
+        let expected = label.top() + line / 2.;
+        assert!((leading.center().y - expected).abs() <= px(0.5));
+        let row = window.find(child("plain")).bounds();
+        let leading = window.find(part("plain", "leading")).bounds();
+        assert!((leading.center().y - row.center().y).abs() <= px(0.5));
+    })
+    .unwrap();
+}
+
+/// A searchable select whose search field's menu is replaced, or off.
+struct SearchMenuHarness {
+    state: Entity<State>,
+    menu_enabled: bool,
+}
+
+impl Render for SearchMenuHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let state = self.state.clone();
+        div().size_full().p_4().child(
+            Select::new("pick", &self.state)
+                .search_context_menu_enabled(self.menu_enabled)
+                .search_context_menu(move |_, _, _, _| {
+                    let state = state.clone();
+                    vec![
+                        gpui_cn::MenuItem::new("pick-first", "Pick First")
+                            .on_select(move |window, cx| {
+                                state.update(cx, |state, cx| {
+                                    state.set_selected(["all"], cx);
+                                    state.close(window, cx);
+                                });
+                            })
+                            .into(),
+                    ]
+                }),
+        )
+    }
+}
+
+fn setup_search_menu(cx: &mut TestAppContext, menu_enabled: bool) -> Setup {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut state = None;
+    let handle = cx.open_window(size(px(500.), px(600.)), |window, cx| {
+        let select = cx.new(|cx| SelectState::new(entries(), cx).with_search("Search", window, cx));
+        state = Some(select.clone());
+        let harness = cx.new(|cx| {
+            cx.observe(&select, |_, _, cx| cx.notify()).detach();
+            SearchMenuHarness {
+                state: select,
+                menu_enabled,
+            }
+        });
+        Root::new(harness, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    Setup {
+        handle,
+        state: state.unwrap(),
+        events,
+    }
+}
+
+#[gpui_kit::test]
+fn the_search_fields_menu_can_be_replaced(cx: &mut TestAppContext) {
+    let setup = setup_search_menu(cx, true);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.right_click(child("search"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(search_menu_row("menu")).is_some());
+        assert!(
+            window.try_find(search_menu_row("cut")).is_none(),
+            "no default rows"
+        );
+        window.click(search_menu_row("pick-first"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(selected(&setup, cx), ["all"]);
+}
+
+#[gpui_kit::test]
+fn a_search_field_without_a_menu_ignores_the_right_click(cx: &mut TestAppContext) {
+    let setup = setup_search_menu(cx, false);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.right_click(child("search"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(search_menu_row("menu")).is_none());
+        assert!(
+            window.try_find(child("menu")).is_some(),
+            "the select stays open"
+        );
+    })
+    .unwrap();
+    assert!(setup.state.read_with(cx, |state, _| state.is_open()));
+}

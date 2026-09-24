@@ -162,6 +162,12 @@ pub struct Button {
     focus_handle: Option<FocusHandle>,
     tab_index: isize,
     tab_stop: bool,
+    /// The role assistive technology reads, when a composite such as a
+    /// menu bar gives its buttons one of its own.
+    role: Option<Role>,
+    /// Whether the popup this button opens is open, for assistive
+    /// technology, when the button is known to open one.
+    expanded: Option<bool>,
 }
 
 impl Button {
@@ -190,6 +196,8 @@ impl Button {
             focus_handle: None,
             tab_index: 0,
             tab_stop: true,
+            role: None,
+            expanded: None,
         }
     }
 
@@ -330,6 +338,19 @@ impl Button {
     /// Whether Tab reaches the button. The default is `true`.
     pub fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.tab_stop = tab_stop;
+        self
+    }
+
+    /// The role a composite gives its buttons, such as a menu bar's items.
+    pub(crate) fn with_role(mut self, role: Role) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    /// Tells assistive technology whether the popup this button opens is
+    /// open, for a composite whose buttons always open one.
+    pub(crate) fn with_expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
         self
     }
 
@@ -740,16 +761,17 @@ impl RenderOnce for Button {
                 }
             })
             .refine_style(&self.style)
-            .role(if variant == ButtonVariant::Link {
+            .role(self.role.unwrap_or(if variant == ButtonVariant::Link {
                 Role::Link
             } else {
                 Role::Button
-            })
+            }))
             .selected(shows_selected)
             .disabled(disabled)
             .when_some(accessibility_label, |this, label| {
                 this.accessibility_label(label)
             })
+            .when_some(self.expanded, |this, expanded| this.aria_expanded(expanded))
             .when_some(self.toggled, |this, toggled| {
                 this.aria_toggled(if toggled {
                     gpui_kit::accesskit::Toggled::True

@@ -2,12 +2,13 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Icon, Input, InputEvent, InputState, Root, Theme};
+use gpui_cn::{Icon, Input, InputEvent, InputState, MenuEntry, MenuItem, Root, Theme};
 use gpui_kit::{
-    AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled as _, TestAppContext, TestSupportExt as _, Window,
-    base::Disableable as _, div, point, prelude::FluentBuilder as _, px, size,
-    test::TestWindowExt as _,
+    AppContext as _, ClipboardItem, Context, ElementId, Entity, Focusable as _,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Pixels, PlatformInput, Point, Render, Styled as _,
+    TestAppContext, TestSupportExt as _, Window, base::Disableable as _, div, point,
+    prelude::FluentBuilder as _, px, size, test::TestWindowExt as _,
 };
 
 struct Harness {
@@ -29,7 +30,41 @@ impl Render for Harness {
                         .suffix(div().id("suffix").test_support().size_4())
                 })
                 .cleanable(options.cleanable)
-                .mask_toggle(options.masked),
+                .mask_toggle(options.masked)
+                .context_menu_enabled(options.context_menu)
+                .when(options.replace_menu, |this| {
+                    let state = self.state.clone();
+                    this.context_menu(move |_, _, _, _| {
+                        let state = state.clone();
+                        vec![
+                            MenuItem::new("only", "Only")
+                                .on_select(move |window, cx| {
+                                    state.update(cx, |state, cx| {
+                                        state.set_value("REPLACED", window, cx)
+                                    });
+                                })
+                                .into(),
+                        ]
+                    })
+                })
+                .when(options.extend_menu, |this| {
+                    let state = self.state.clone();
+                    this.context_menu(move |mut entries, _, _, _| {
+                        let state = state.clone();
+                        entries.push(MenuEntry::Separator);
+                        entries.push(
+                            MenuItem::new("shout", "Shout")
+                                .on_select(move |window, cx| {
+                                    state.update(cx, |state, cx| {
+                                        let loud = state.value().to_uppercase();
+                                        state.set_value(loud, window, cx);
+                                    });
+                                })
+                                .into(),
+                        );
+                        entries
+                    })
+                }),
         )
     }
 }
@@ -49,6 +84,12 @@ struct Options {
     cleanable: bool,
     /// The state is masked and the field shows the toggle.
     masked: bool,
+    /// Whether a right click opens the field's menu.
+    context_menu: bool,
+    /// Whether the menu gets an item of the application's.
+    extend_menu: bool,
+    /// Whether the application's one item replaces the menu.
+    replace_menu: bool,
 }
 
 impl Default for Options {
@@ -60,6 +101,9 @@ impl Default for Options {
             label: true,
             cleanable: false,
             masked: false,
+            context_menu: true,
+            extend_menu: false,
+            replace_menu: false,
         }
     }
 }
@@ -377,4 +421,317 @@ fn the_mask_toggle_shows_and_hides_the_value(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert!(masked(cx));
+}
+
+/// A row of the field's right-click menu.
+fn menu_row(name: &'static str) -> ElementId {
+    ElementId::NamedChild(
+        ElementId::NamedChild(ElementId::Name("name".into()).into(), "context-menu".into()).into(),
+        name.into(),
+    )
+}
+
+/// The window position of the caret before `offset`.
+fn caret_at(state: &Entity<InputState>, offset: usize, cx: &gpui_kit::App) -> Point<Pixels> {
+    let state = state.read(cx);
+    let bounds = state.text_bounds().expect("the text was laid out");
+    let caret = state
+        .range_to_bounds(&(offset..offset))
+        .expect("the offset is in the line");
+    point(caret.origin.x, bounds.center().y)
+}
+
+/// A right click at `at`, as a mouse sends it.
+fn right_click_at(window: &mut Window, at: Point<Pixels>, cx: &mut gpui_kit::App) {
+    window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: at,
+            pressed_button: None,
+            modifiers: Default::default(),
+        }),
+        cx,
+    );
+    window.dispatch_event(
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Right,
+            position: at,
+            modifiers: Default::default(),
+            click_count: 1,
+            first_mouse: false,
+        }),
+        cx,
+    );
+    window.dispatch_event(
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Right,
+            position: at,
+            modifiers: Default::default(),
+            click_count: 1,
+        }),
+        cx,
+    );
+}
+
+/// Types `text` into the field and selects its last `selected`
+/// characters.
+fn type_and_select(setup: &Setup, text: &str, selected: usize, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("name", cx);
+        window.input(text, cx);
+        for _ in 0..selected {
+            window.press("shift-left", cx);
+        }
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+/// Right-clicks the field inside its text at `offset`.
+fn open_menu_at(setup: &Setup, offset: usize, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        let at = caret_at(&setup.state, offset, cx) + point(px(1.), px(0.));
+        right_click_at(window, at, cx);
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+fn clipboard(cx: &mut TestAppContext) -> Option<String> {
+    cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+fn value(setup: &Setup, cx: &mut TestAppContext) -> String {
+    setup
+        .state
+        .read_with(cx, |state, _| state.value().to_string())
+}
+
+#[gpui_kit::test]
+fn a_right_click_opens_the_edit_menu_while_another_popup_is_open(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    let popup = cx.update(gpui_kit::base::GlobalState::register_deferred_popover);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.right_click("name", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(menu_row("copy")).is_some());
+    })
+    .unwrap();
+    drop(popup);
+}
+
+#[gpui_kit::test]
+fn a_right_click_opens_the_edit_menu_at_the_pointer(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.right_click("name", cx);
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let field = window.find("name").bounds();
+        let menu = window.find(menu_row("menu")).bounds();
+        assert_eq!(
+            menu.origin,
+            field.center(),
+            "the corner sits on the pointer"
+        );
+        let cut = window.find(menu_row("cut")).bounds();
+        assert_eq!(cut.origin, field.center() + point(px(5.), px(5.)));
+        assert_eq!(cut.size.height, px(28.));
+        for row in ["copy", "paste", "select-all"] {
+            assert!(window.try_find(menu_row(row)).is_some(), "{row}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn copy_puts_the_selection_on_the_clipboard(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    type_and_select(&setup, "Ada Lovelace", 8, cx);
+    open_menu_at(&setup, 6, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("copy"), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(menu_row("menu")).is_none());
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx).as_deref(), Some("Lovelace"));
+    assert_eq!(value(&setup, cx), "Ada Lovelace");
+}
+
+#[gpui_kit::test]
+fn cut_moves_the_selection_to_the_clipboard(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    type_and_select(&setup, "Ada Lovelace", 8, cx);
+    open_menu_at(&setup, 6, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("cut"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx).as_deref(), Some("Lovelace"));
+    assert_eq!(value(&setup, cx), "Ada ");
+}
+
+#[gpui_kit::test]
+fn paste_inserts_the_clipboard_text(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("Grace".into())));
+    type_and_select(&setup, "Hi ", 0, cx);
+    open_menu_at(&setup, 3, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("paste"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(value(&setup, cx), "Hi Grace");
+}
+
+#[gpui_kit::test]
+fn select_all_then_copy_takes_the_whole_value(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    type_and_select(&setup, "Ada Lovelace", 0, cx);
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("select-all"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("copy"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx).as_deref(), Some("Ada Lovelace"));
+}
+
+#[gpui_kit::test]
+fn without_a_selection_copy_and_paste_ignore_the_click(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    type_and_select(&setup, "Ada", 0, cx);
+    open_menu_at(&setup, 3, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        // Nothing is selected and the clipboard is empty.
+        window.click(menu_row("copy"), cx);
+        window.click(menu_row("paste"), cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find(menu_row("menu")).is_some(),
+            "a disabled row keeps the menu open"
+        );
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx), None);
+    assert_eq!(value(&setup, cx), "Ada");
+}
+
+#[gpui_kit::test]
+fn a_masked_field_offers_no_cut_or_copy(cx: &mut TestAppContext) {
+    let setup = setup(
+        cx,
+        Options {
+            masked: true,
+            ..Options::default()
+        },
+    );
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("before".into())));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("name", cx);
+        window.input("hunter2", cx);
+        window.press("cmd-a", cx);
+        window.right_click("name", cx);
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(menu_row("menu")).is_some());
+        assert!(window.try_find(menu_row("copy")).is_none());
+        assert!(window.try_find(menu_row("cut")).is_none());
+        assert!(window.try_find(menu_row("paste")).is_some());
+    })
+    .unwrap();
+    assert_eq!(clipboard(cx).as_deref(), Some("before"));
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_menu_and_typing_goes_back_into_the_field(cx: &mut TestAppContext) {
+    let setup = setup(cx, Options::default());
+    type_and_select(&setup, "Ada", 0, cx);
+    open_menu_at(&setup, 3, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        assert_eq!(window.find(menu_row("menu")).focused(), Some(true));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(menu_row("menu")).is_none());
+        window.input("!", cx);
+    })
+    .unwrap();
+    assert_eq!(value(&setup, cx), "Ada!");
+}
+
+#[gpui_kit::test]
+fn the_application_extends_the_menu_with_its_own_item(cx: &mut TestAppContext) {
+    let setup = setup(
+        cx,
+        Options {
+            extend_menu: true,
+            ..Options::default()
+        },
+    );
+    type_and_select(&setup, "quiet", 0, cx);
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        assert!(
+            window.try_find(menu_row("copy")).is_some(),
+            "the defaults stay"
+        );
+        window.click(menu_row("shout"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(value(&setup, cx), "QUIET");
+}
+
+#[gpui_kit::test]
+fn a_field_without_a_menu_ignores_the_right_click(cx: &mut TestAppContext) {
+    let setup = setup(
+        cx,
+        Options {
+            context_menu: false,
+            ..Options::default()
+        },
+    );
+    type_and_select(&setup, "Ada", 0, cx);
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        assert!(window.try_find(menu_row("menu")).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_application_replaces_the_menu_with_its_own_items(cx: &mut TestAppContext) {
+    let setup = setup(
+        cx,
+        Options {
+            replace_menu: true,
+            ..Options::default()
+        },
+    );
+    type_and_select(&setup, "quiet", 0, cx);
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        assert!(
+            window.try_find(menu_row("cut")).is_none(),
+            "no default rows"
+        );
+        assert!(window.try_find(menu_row("copy")).is_none());
+        window.click(menu_row("only"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(value(&setup, cx), "REPLACED");
 }

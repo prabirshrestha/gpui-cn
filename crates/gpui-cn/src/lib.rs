@@ -45,6 +45,7 @@ mod button;
 mod icon;
 mod input;
 mod label;
+mod menu;
 mod nav;
 mod root;
 mod scroll_area;
@@ -66,6 +67,10 @@ pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
 pub use icon::{Icon, IconSource};
 pub use input::{Field, Input, Textarea};
 pub use label::Label;
+pub use menu::{
+    ContextMenu, DropdownMenu, MenuAnchor, MenuBar, MenuBarMenu, MenuBarState, MenuEntry,
+    MenuEvent, MenuItem, MenuRowState, MenuState, MenuSubmenu,
+};
 pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
@@ -97,12 +102,14 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     pub use crate::{
-        ActiveTheme, Button, ButtonSize, ButtonVariant, Field, Icon, Input, InputState, Label,
-        NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, ReduceMotion, Root,
-        ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible,
-        SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator,
-        SidebarSide, SidebarState, SidebarTrigger, Switch, Tab, Tabs, TabsEvent, TabsState,
-        Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
+        ActiveTheme, Button, ButtonSize, ButtonVariant, ContextMenu, DropdownMenu, Field, Icon,
+        Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
+        MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
+        ReduceMotion, Root, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
+        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
+        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Switch, Tab, Tabs, TabsEvent,
+        TabsState, Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar,
+        TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -141,6 +148,7 @@ pub fn init(cx: &mut App) {
     Theme::init(cx);
     root::init(cx);
     select::init(cx);
+    menu::init(cx);
     cx.set_global(Initialized);
 }
 

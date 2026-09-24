@@ -5,8 +5,9 @@ use std::{cell::Cell, rc::Rc};
 
 use gpui_cn::{Root, Textarea, TextareaState};
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Role, Styled as _,
-    TestAppContext, Window, base::Disableable as _, div, px, size, test::TestWindowExt as _,
+    AppContext as _, ClipboardItem, Context, ElementId, Entity, IntoElement, MouseButton,
+    MouseDownEvent, MouseUpEvent, ParentElement as _, PlatformInput, Render, Role, Styled as _,
+    TestAppContext, Window, base::Disableable as _, div, point, px, size, test::TestWindowExt as _,
 };
 
 struct Harness {
@@ -122,4 +123,82 @@ fn a_disabled_field_ignores_input(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(setup.state.read_with(cx, |state, _| state.value()), "");
+}
+
+/// A row of the field's right-click menu.
+fn menu_row(name: &'static str) -> ElementId {
+    ElementId::NamedChild(
+        ElementId::NamedChild(
+            ElementId::Name("notes".into()).into(),
+            "context-menu".into(),
+        )
+        .into(),
+        name.into(),
+    )
+}
+
+/// Right-clicks the text just after the caret position `offset`; base
+/// opens the menu after the click's update, as between two real events.
+fn open_menu_at(setup: &Setup, offset: usize, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        let caret = setup
+            .state
+            .read(cx)
+            .range_to_bounds(&(offset..offset))
+            .expect("the offset was laid out");
+        let at = point(caret.origin.x + px(1.), caret.center().y);
+        for event in [
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Right,
+                position: at,
+                modifiers: Default::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Right,
+                position: at,
+                modifiers: Default::default(),
+                click_count: 1,
+            }),
+        ] {
+            window.dispatch_event(event, cx);
+        }
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_edit_menu_pastes_and_copies_across_lines(cx: &mut TestAppContext) {
+    let setup = setup(cx, 3, false);
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(" three".into())));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("notes", cx);
+        window.input("one", cx);
+        window.press("enter", cx);
+        window.input("two", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    open_menu_at(&setup, 7, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("paste"), cx);
+        window.render_frame(cx);
+        window.press("cmd-a", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        setup.state.read_with(cx, |state, _| state.value()),
+        "one\ntwo three"
+    );
+    open_menu_at(&setup, 2, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(menu_row("copy"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let copied = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some("one\ntwo three"));
 }

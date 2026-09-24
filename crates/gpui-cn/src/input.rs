@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui_kit::{
     AccessibleAction, AnyElement, App, Edges, ElementId, Entity, Hsla, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, Role, SharedString,
@@ -7,14 +9,19 @@ use gpui_kit::{
     base::{
         Disableable, StyledExt as _, TextStyleToken,
         input::{
-            InputBase, InputBaseState, InputEditorStyle, InputMode, InputModeKind, TextareaMode,
+            InputBase, InputBaseState, InputContextMenuCapabilities, InputEditorStyle, InputMode,
+            InputModeKind, TextareaMode,
         },
     },
     div,
     prelude::FluentBuilder as _,
 };
 
-use crate::{ActiveTheme as _, Button, ButtonSize, Theme, touch_selection};
+use crate::{
+    ActiveTheme as _, Button, ButtonSize, MenuEntry, MenuState, Theme,
+    menu::{MenuPanels, TextMenuBuilder, open_text_menu},
+    touch_selection,
+};
 
 /// Everything the render needs from the theme, read in one borrow.
 struct Look {
@@ -92,6 +99,8 @@ pub struct Field<M: InputModeKind> {
     suffix: Option<AnyElement>,
     cleanable: bool,
     mask_toggle: bool,
+    context_menu: Option<TextMenuBuilder>,
+    context_menu_enabled: bool,
 }
 
 /// A single-line text field on an [`InputState`](crate::InputState).
@@ -138,6 +147,8 @@ impl<M: InputModeKind> Field<M> {
             suffix: None,
             cleanable: false,
             mask_toggle: false,
+            context_menu: None,
+            context_menu_enabled: true,
         }
     }
 
@@ -157,6 +168,43 @@ impl<M: InputModeKind> Field<M> {
     /// The name a screen reader announces. The placeholder is the fallback.
     pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
         self.accessibility_label = Some(label.into());
+        self
+    }
+
+    /// Shapes the menu a right click opens: `build` gets the default rows
+    /// (Cut, Copy, Paste, a separator, Select All, enabled from what the
+    /// field can do at that moment) and returns the rows to show, the
+    /// defaults extended or replaced. No rows, no menu.
+    ///
+    /// ```no_run
+    /// use gpui_cn::{Input, InputState, MenuEntry, MenuItem};
+    /// use gpui_kit::Entity;
+    ///
+    /// fn field(state: &Entity<InputState>) -> Input {
+    ///     Input::new(state).context_menu(|mut entries, _, _, _| {
+    ///         entries.push(MenuEntry::Separator);
+    ///         entries.push(MenuItem::new("insert-date", "Insert Date").into());
+    ///         entries
+    ///     })
+    /// }
+    /// ```
+    pub fn context_menu(
+        mut self,
+        build: impl Fn(
+            Vec<MenuEntry>,
+            InputContextMenuCapabilities,
+            &mut Window,
+            &mut App,
+        ) -> Vec<MenuEntry>
+        + 'static,
+    ) -> Self {
+        self.context_menu = Some(Rc::new(build));
+        self
+    }
+
+    /// Whether a right click opens the field's menu. On by default.
+    pub fn context_menu_enabled(mut self, enabled: bool) -> Self {
+        self.context_menu_enabled = enabled;
         self
     }
 }
@@ -208,7 +256,9 @@ impl<M: InputModeKind> RenderOnce for Field<M> {
         let pointer_cursors = Theme::global(cx).pointer_cursors;
         let (disabled, readonly) = (self.disabled, self.readonly);
         let text_align = self.style.text.text_align.unwrap_or(TextAlign::Left);
+        let context_menu_enabled = self.context_menu_enabled;
         let presentation = self.state.update(cx, |state, cx| {
+            state.set_context_menu_enabled(context_menu_enabled);
             if let Some(disabled) = disabled {
                 state.set_disabled(disabled, cx);
             }
@@ -220,6 +270,9 @@ impl<M: InputModeKind> RenderOnce for Field<M> {
         });
         let disabled = presentation.is_disabled();
         let look = Look::read::<M>(disabled, cx);
+        let menu_id = ElementId::NamedChild(self.id.clone().into(), "context-menu".into());
+        let menu = window.use_keyed_state(menu_id.clone(), cx, |_, cx| MenuState::new(cx));
+        let menu_open = menu.read(cx).is_open();
         // Base fills an unset selection from its `accent` token, which
         // gpui-cn projects as the hover surface, so a selection would
         // vanish into the fill.
@@ -339,6 +392,16 @@ impl<M: InputModeKind> RenderOnce for Field<M> {
             .when(disabled, |this| {
                 this.capture_any_mouse_down(|_, window, _| window.prevent_default())
             })
+            // The field opens its own menu: base's hook stays off while any
+            // popup is open. The press is the field's, not a context menu's
+            // around it.
+            .when(!disabled && context_menu_enabled, |this| {
+                let (menu, input, builder) = (menu.clone(), state.clone(), self.context_menu);
+                this.on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_up(MouseButton::Right, move |event, window, cx| {
+                        open_text_menu(&menu, &input, event.position, builder.as_ref(), window, cx);
+                    })
+            })
             // A click on the padding or an affix puts the caret in the
             // text instead of focusing the frame. A control inside the
             // frame that prevents default keeps the click.
@@ -385,6 +448,9 @@ impl<M: InputModeKind> RenderOnce for Field<M> {
             .child(div().relative().flex().flex_1().min_w_0().child(state))
             .children(suffix.map(|suffix| affix(suffix, disabled, cx)))
             .children(touch_selection)
+            .when(menu_open, |this| {
+                this.child(MenuPanels::new(menu_id, &menu))
+            })
     }
 }
 

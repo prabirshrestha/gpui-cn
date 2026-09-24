@@ -7,18 +7,19 @@ mod item;
 mod menu;
 mod state;
 
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use gpui_kit::{
-    Anchor, AnyElement, App, Bounds, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
-    KeyBinding, Length, ParentElement as _, Pixels, RenderOnce, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    AnyElement, App, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement, KeyBinding,
+    Length, ParentElement as _, Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, Window,
     assets::IconName,
     base::{
-        self, Align, Disableable, ElementExt as _, GlobalState, Placement, Positioner, Presence,
-        PresencePhase, StyledExt as _, TestSupportExt as _, Transition,
+        self, Align, Disableable, ElementExt as _, GlobalState, Placement, Positioner,
+        StyledExt as _, TestSupportExt as _,
         actions::{Confirm, SelectDown, SelectFirst, SelectLast, SelectUp},
         h_flex,
+        input::InputContextMenuCapabilities,
     },
     deferred, div, point,
     prelude::FluentBuilder as _,
@@ -29,10 +30,13 @@ pub use item::{SelectEntry, SelectItem, SelectValue};
 pub use menu::SelectRow;
 pub use state::{SearchHandler, SelectEvent, SelectState};
 
-use menu::{ItemRenderer, LabelRenderer, Menu, MenuLook, MenuMotion, PartRenderer, Rows};
+use menu::{ItemRenderer, LabelRenderer, Menu, PartRenderer, Rows};
 
 use crate::{
-    ActiveTheme as _, ButtonSize, Icon, Theme, ThemeTokens, button::ControlGeometry, theme::mix,
+    ActiveTheme as _, ButtonSize, Icon, MenuEntry, Theme, ThemeTokens,
+    button::ControlGeometry,
+    menu::{MenuLook, MenuMotion, TextMenuBuilder, corner},
+    theme::mix,
 };
 
 /// The key context of a select's trigger and menu, outside base's own.
@@ -123,6 +127,8 @@ pub struct Select<V: SelectValue> {
     render_label: Option<LabelRenderer>,
     render_empty: Option<PartRenderer>,
     render_loading: Option<PartRenderer>,
+    search_context_menu: Option<TextMenuBuilder>,
+    search_context_menu_enabled: bool,
     disabled: bool,
     tab_index: isize,
 }
@@ -147,6 +153,8 @@ impl<V: SelectValue> Select<V> {
             render_label: None,
             render_empty: None,
             render_loading: None,
+            search_context_menu: None,
+            search_context_menu_enabled: true,
             disabled: false,
             tab_index: 0,
         }
@@ -295,6 +303,32 @@ impl<V: SelectValue> Select<V> {
         self.render_loading = Some(Rc::new(move |window, cx| {
             render(window, cx).into_any_element()
         }));
+        self
+    }
+
+    /// Shapes the menu a right click opens on the search field, as
+    /// [`Field::context_menu`](crate::Field::context_menu) does for a field:
+    /// `build` gets the default rows (Cut, Copy, Paste, a separator, Select
+    /// All) and returns the rows to show, the defaults extended or
+    /// replaced. No rows, no menu.
+    pub fn search_context_menu(
+        mut self,
+        build: impl Fn(
+            Vec<MenuEntry>,
+            InputContextMenuCapabilities,
+            &mut Window,
+            &mut App,
+        ) -> Vec<MenuEntry>
+        + 'static,
+    ) -> Self {
+        self.search_context_menu = Some(Rc::new(build));
+        self
+    }
+
+    /// Whether a right click on the search field opens its menu. On by
+    /// default.
+    pub fn search_context_menu_enabled(mut self, enabled: bool) -> Self {
+        self.search_context_menu_enabled = enabled;
         self
     }
 
@@ -522,16 +556,9 @@ impl<V: SelectValue> Select<V> {
             .into_any_element()
     }
 
-    /// The menu, deferred over the page, while it is open or coming in.
-    ///
-    /// It comes in as shadcn's `animate-in`: it fades up while it slides
-    /// the last step down from the trigger. It goes out in one frame.
-    /// GPUI fades each primitive on its own, so a panel fading out would
-    /// show its own shadow through itself as a dark slab, and the same
-    /// slab would flash on the way in unless the shadow's ink rises by
-    /// the cube of the fade, which keeps it out of sight until the panel
-    /// covers it. A zero exit also means a menu that has never opened
-    /// stays absent from the first frame.
+    /// The menu, deferred over the page, while it is open or coming in:
+    /// it fades up while it slides the last step down from the trigger,
+    /// and goes out in one frame.
     fn menu(
         &self,
         look: &MenuLook,
@@ -540,25 +567,14 @@ impl<V: SelectValue> Select<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let enter = Theme::global(cx).motion.enter_transition();
-        let presence = Presence::new(
+        let motion = MenuMotion::sample(
             ElementId::NamedChild(self.id.clone().into(), "presence".into()),
             open,
-        )
-        .transition(if open {
-            enter
-        } else {
-            Transition::new(Duration::ZERO)
-        })
-        .sample(window, cx);
-        if !presence.should_render() {
-            return None;
-        }
-        let progress = match presence.phase {
-            PresencePhase::Entering => presence.progress,
-            PresencePhase::Present => 1.,
-            PresencePhase::Exiting | PresencePhase::Absent => 0.,
-        };
+            true,
+            look,
+            window,
+            cx,
+        )?;
         let state = &self.state;
         let (bounds, placement, content_focus) = {
             let state = state.read(cx);
@@ -583,11 +599,9 @@ impl<V: SelectValue> Select<V> {
             empty_text: self.empty_text.clone(),
             render_empty: self.render_empty.clone(),
             render_loading: self.render_loading.clone(),
-            motion: MenuMotion {
-                opacity: progress,
-                shadow_strength: progress * progress * progress,
-                offset: look.enter_offset * (1. - progress),
-            },
+            search_menu_builder: self.search_context_menu.clone(),
+            search_menu_enabled: self.search_context_menu_enabled,
+            motion,
         }
         .render(window, cx);
         // A corner anchor clamps into the window but never flips, so the
@@ -599,39 +613,6 @@ impl<V: SelectValue> Select<V> {
                 .with_priority(base::POPUP_PRIORITY)
                 .into_any_element(),
         )
-    }
-}
-
-/// The menu's corner that touches the trigger, and where it goes: on the
-/// side the menu is on, at the edge it lines up with, a gap away.
-fn corner(
-    placement: Placement,
-    align: Align,
-    trigger: Bounds<Pixels>,
-    gap: Pixels,
-) -> (Anchor, gpui_kit::Point<Pixels>) {
-    let x = match align {
-        Align::Start => trigger.left(),
-        Align::Center => trigger.center().x,
-        Align::End => trigger.right(),
-    };
-    match placement {
-        Placement::Top => {
-            let anchor = match align {
-                Align::Start => Anchor::BottomLeft,
-                Align::Center => Anchor::BottomCenter,
-                Align::End => Anchor::BottomRight,
-            };
-            (anchor, point(x, trigger.top() - gap))
-        }
-        _ => {
-            let anchor = match align {
-                Align::Start => Anchor::TopLeft,
-                Align::Center => Anchor::TopCenter,
-                Align::End => Anchor::TopRight,
-            };
-            (anchor, point(x, trigger.bottom() + gap))
-        }
     }
 }
 
@@ -762,19 +743,5 @@ mod tests {
         assert_eq!(to_hex(trigger.foreground), "#ffffff");
         assert_eq!(trigger.geometry.height, px(28.));
         assert!(trigger.fill_hovered.l > trigger.fill.l);
-    }
-
-    #[test]
-    fn the_menu_corner_touches_the_trigger_on_the_chosen_side() {
-        let trigger = Bounds::new(point(px(100.), px(50.)), gpui_kit::size(px(80.), px(28.)));
-        let (anchor, position) = corner(Placement::Bottom, Align::End, trigger, px(2.));
-        assert_eq!(anchor, Anchor::TopRight);
-        assert_eq!(position, point(px(180.), px(80.)));
-        let (anchor, position) = corner(Placement::Top, Align::Start, trigger, px(2.));
-        assert_eq!(anchor, Anchor::BottomLeft);
-        assert_eq!(position, point(px(100.), px(48.)));
-        let (anchor, position) = corner(Placement::Bottom, Align::Center, trigger, px(2.));
-        assert_eq!(anchor, Anchor::TopCenter);
-        assert_eq!(position.x, px(140.));
     }
 }

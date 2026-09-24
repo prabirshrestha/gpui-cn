@@ -2,6 +2,7 @@
 
 mod button;
 mod input;
+mod menu;
 mod nav_stack;
 mod scroll_area;
 mod select;
@@ -17,6 +18,7 @@ mod typography;
 
 pub use button::ButtonStory;
 pub use input::InputStory;
+pub use menu::MenuStory;
 pub use nav_stack::NavStackStory;
 pub use scroll_area::ScrollAreaStory;
 pub use select::SelectStory;
