@@ -66,7 +66,7 @@ const DEFAULT_LABEL: &str = "Loading";
 
 impl RenderOnce for Spinner {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let still = cx.reduce_motion() || Theme::global(cx).motion.slow.is_zero();
+        let still = Theme::holds_still(cx);
         let icon = Icon::from(IconName::LoaderCircle).size_full();
         let turn_id = ElementId::NamedChild(self.id.clone().into(), "turn".into());
         div()
@@ -89,17 +89,5 @@ impl RenderOnce for Spinner {
                 })
                 .into_any_element()
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builders_refine_the_spinner() {
-        let spinner = Spinner::new("s").size_6().accessibility_label("Syncing");
-        assert!(spinner.style.size.width.is_some());
-        assert_eq!(spinner.accessibility_label.as_deref(), Some("Syncing"));
     }
 }

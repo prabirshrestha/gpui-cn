@@ -101,7 +101,7 @@ fn sweep(delta: f32) -> (f32, f32) {
 
 impl RenderOnce for Progress {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let still = cx.reduce_motion() || Theme::global(cx).motion.slow.is_zero();
+        let still = Theme::holds_still(cx);
         let slide = Theme::global(cx).motion.slide_transition();
         let (track, fill, radius) = {
             let theme = cx.theme();

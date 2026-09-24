@@ -73,7 +73,7 @@ impl RenderOnce for Skeleton {
             .rounded(radius)
             .bg(fill)
             .refine_style(&self.style);
-        if Theme::global(cx).motion.slow.is_zero() {
+        if Theme::holds_still(cx) {
             return block.opacity(PULSE_FLOOR).into_any_element();
         }
         block

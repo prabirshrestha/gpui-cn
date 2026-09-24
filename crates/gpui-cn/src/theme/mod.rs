@@ -131,6 +131,12 @@ impl Theme {
         cx.global::<Self>()
     }
 
+    /// Whether a looping animation (a spinner, a pulse, a sweep) holds
+    /// still: under reduced motion, or with every motion duration at zero.
+    pub fn holds_still(cx: &App) -> bool {
+        cx.reduce_motion() || Self::global(cx).motion.slow.is_zero()
+    }
+
     /// The derived tokens for the active appearance.
     pub fn tokens(&self) -> &ThemeTokens {
         &self.tokens
