@@ -41,6 +41,7 @@
 //! }
 //! ```
 
+mod avatar;
 mod button;
 mod icon;
 mod input;
@@ -64,6 +65,7 @@ mod tooltip;
 mod tooltip_host;
 mod touch_selection;
 
+pub use avatar::{Avatar, AvatarGroup, AvatarSize};
 pub use button::{Button, ButtonSize, ButtonVariant};
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
@@ -107,14 +109,14 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     pub use crate::{
-        ActiveTheme, Button, ButtonSize, ButtonVariant, ContextMenu, DropdownMenu, Field, Icon,
-        Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
-        MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
-        Progress, ReduceMotion, Root, ScrollArea, Select, SelectEntry, SelectItem, SelectState,
-        Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton,
-        SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner,
-        Switch, Tab, Tabs, TabsEvent, TabsState, Textarea, TextareaState, Theme, ThemeMode,
-        ThemeModePicker, TitleBar, TooltipExt,
+        ActiveTheme, Avatar, AvatarGroup, AvatarSize, Button, ButtonSize, ButtonVariant,
+        ContextMenu, DropdownMenu, Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu,
+        MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack,
+        NavStackExt, NavStackState, Progress, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
+        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
+        SidebarTrigger, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Textarea, TextareaState,
+        Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

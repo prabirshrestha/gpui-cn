@@ -129,6 +129,7 @@ mod macos {
                 "Textarea",
                 "Select",
                 "Menu",
+                "Avatar",
                 "Skeleton",
                 "Spinner",
                 "Progress",
