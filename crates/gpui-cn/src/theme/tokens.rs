@@ -289,6 +289,24 @@ pub struct MetricTokens {
     /// which the control is. 20px at the default font size, measured from
     /// the tab reference app.
     pub tab_close: Pixels,
+    /// The diameter of a `Sm` avatar: 24px, shadcn's `size-6`.
+    pub avatar_sm: Pixels,
+    /// The diameter of a `Default` avatar: 32px, shadcn's `size-8`.
+    pub avatar_md: Pixels,
+    /// The diameter of a `Lg` avatar: 40px, shadcn's `size-10`.
+    pub avatar_lg: Pixels,
+    /// The initials size in a `Sm` avatar: 10px, so two capitals fit the
+    /// 24px circle and stay clear of an overlapping neighbor.
+    pub avatar_initials_sm: Pixels,
+    /// The initials size in a `Default` avatar: 12px, shadcn's `text-xs`.
+    pub avatar_initials_md: Pixels,
+    /// The initials size in a `Lg` avatar: 14px, shadcn's `text-sm`.
+    pub avatar_initials_lg: Pixels,
+    /// How far each avatar in a group covers the one before it: 8px,
+    /// shadcn's `-space-x-2`.
+    pub avatar_group_overlap: Pixels,
+    /// The ring that parts overlapped avatars: 2px, shadcn's `ring-2`.
+    pub avatar_group_ring: Pixels,
 }
 
 impl MetricTokens {
@@ -362,6 +380,14 @@ impl MetricTokens {
             tab_content_gap: px(6.),
             tab_control: control_sm,
             tab_close: control_xs,
+            avatar_sm: scaled(24.),
+            avatar_md: scaled(32.),
+            avatar_lg: scaled(40.),
+            avatar_initials_sm: scaled(10.),
+            avatar_initials_md: scaled(12.),
+            avatar_initials_lg: scaled(14.),
+            avatar_group_overlap: scaled(8.),
+            avatar_group_ring: px(2.),
         }
     }
 }
@@ -1085,6 +1111,9 @@ mod tests {
         assert_eq!(large.metrics.switch_track_width, px(40.));
         assert_eq!(large.metrics.switch_thumb_size, px(20.));
         assert_eq!(large.metrics.switch_thumb_inset, px(2.5));
+        assert_eq!(default.metrics.avatar_md, px(32.));
+        assert_eq!(large.metrics.avatar_md, px(40.));
+        assert_eq!(large.metrics.avatar_group_ring, px(2.), "a hairline stays");
     }
 
     #[test]

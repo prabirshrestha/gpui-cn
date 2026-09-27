@@ -1,5 +1,6 @@
 //! One module per component.
 
+mod avatar;
 mod button;
 mod input;
 mod menu;
@@ -18,6 +19,7 @@ mod theme_mode_picker;
 mod title_bar;
 mod typography;
 
+pub use avatar::AvatarStory;
 pub use button::ButtonStory;
 pub use input::InputStory;
 pub use menu::MenuStory;
