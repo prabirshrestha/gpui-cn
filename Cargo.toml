@@ -5,7 +5,7 @@ default-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ repository = "https://github.com/prabirshrestha/gpui-cn"
 homepage = "https://github.com/prabirshrestha/gpui-cn"
 
 [workspace.dependencies]
-gpui-cn = { path = "crates/gpui-cn", version = "0.2.0" }
+gpui-cn = { path = "crates/gpui-cn", version = "0.3.0" }
 gpui-kit = { version = "0.6.4", default-features = false }
 
 [workspace.lints.clippy]
