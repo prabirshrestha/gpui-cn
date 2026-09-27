@@ -526,7 +526,7 @@ impl ButtonVariant {
                 // until the pointer commits to it.
                 let red = theme.destructive();
                 let fill = match state {
-                    Rest => red.opacity(if dark { 0.2 } else { 0.1 }),
+                    Rest => theme.destructive_tint,
                     Hovered => red.opacity(if dark { 0.3 } else { 0.16 }),
                     Pressed => red.opacity(if dark { 0.4 } else { 0.22 }),
                 };

@@ -7,7 +7,7 @@ pub mod fonts;
 mod motion;
 mod tokens;
 
-pub use color::{hex, lightness, mix, to_hex, try_hex};
+pub use color::{contrast_ratio, hex, lightness, mix, to_hex, try_hex};
 pub use config::{SemanticColors, ThemeConfig, ThemeFonts};
 pub use motion::MotionTokens;
 pub use tokens::{MetricTokens, ThemeTokens};
