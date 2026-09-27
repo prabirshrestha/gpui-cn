@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release new version"
+  short_description: "Release gpui-cn through GitHub Actions"
+  default_prompt: "Use $release-new-version to version, validate, push, and tag a gpui-cn release."
