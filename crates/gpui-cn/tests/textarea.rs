@@ -186,7 +186,15 @@ fn the_edit_menu_pastes_and_copies_across_lines(cx: &mut TestAppContext) {
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click(menu_row("paste"), cx);
         window.render_frame(cx);
-        window.press("cmd-a", cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
+        assert_eq!(setup.state.read(cx).selected_range(), 0..13);
     })
     .unwrap();
     assert_eq!(

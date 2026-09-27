@@ -224,7 +224,14 @@ fn edit_copy_acts_on_the_focused_field(cx: &mut TestAppContext) {
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click("name", cx);
         window.input("Ada Lovelace", cx);
-        window.press("cmd-a", cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
         window.click(title("edit"), cx);
         window.render_frame(cx);
         window.click(row("copy"), cx);

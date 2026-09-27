@@ -236,7 +236,14 @@ fn select_all_takes_the_whole_value(cx: &mut TestAppContext) {
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click("name", cx);
         window.input("Ada", cx);
-        window.press("cmd-a", cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
         window.render_frame(cx);
     })
     .unwrap();
@@ -641,7 +648,15 @@ fn a_masked_field_offers_no_cut_or_copy(cx: &mut TestAppContext) {
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click("name", cx);
         window.input("hunter2", cx);
-        window.press("cmd-a", cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
+        assert_eq!(setup.state.read(cx).selected_range(), 0..7);
         window.right_click("name", cx);
     })
     .unwrap();
