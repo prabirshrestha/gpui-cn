@@ -130,6 +130,8 @@ mod macos {
                 "Select",
                 "Menu",
                 "Avatar",
+                "Badge",
+                "Tag",
                 "Skeleton",
                 "Spinner",
                 "Progress",

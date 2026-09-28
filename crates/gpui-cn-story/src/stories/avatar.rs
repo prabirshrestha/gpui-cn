@@ -89,7 +89,7 @@ impl Render for AvatarStory {
                     ))
                     .child(sizes("image", |avatar| {
                         avatar
-                            .src(portrait("#6366f1", "#ec4899"))
+                            .src(portrait(PORTRAITS[0].0, PORTRAITS[0].1))
                             .name("Ada Lovelace")
                     }))
                     .child(sizes("broken", |avatar| {
@@ -143,10 +143,11 @@ impl Render for AvatarStory {
     }
 }
 
-/// Gradient stops for the group of portraits.
+/// Gradient stops for the group of portraits: low-saturation pairs, so the
+/// photos sit in the neutral window as a real profile photo would.
 const PORTRAITS: [(&str, &str); 4] = [
-    ("#6366f1", "#ec4899"),
-    ("#0ea5e9", "#22c55e"),
-    ("#f59e0b", "#ef4444"),
-    ("#14b8a6", "#8b5cf6"),
+    ("#6b7280", "#8a8f99"),
+    ("#7c8a82", "#a3ada6"),
+    ("#8d7f74", "#b0a59c"),
+    ("#6f7a8c", "#99a2b1"),
 ];

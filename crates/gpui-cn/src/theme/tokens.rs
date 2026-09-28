@@ -19,8 +19,8 @@ const BASE_FONT_SIZE: f32 = 16.;
 /// [`ThemeConfig`] when the theme resolves. It is never edited by hand
 /// except through [`Theme::update`](super::Theme::update).
 ///
-/// Roles are added here only when a component reads them. Semantic colors
-/// (success, warning, info, skill) stay on the config until then.
+/// Roles are added here only when a component reads them. The skill
+/// color stays on the config until then.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ThemeTokens {
@@ -83,6 +83,37 @@ pub struct ThemeTokens {
     /// it is white in both appearances of the built-in themes, as the
     /// reference app paints it.
     pub switch_thumb: Hsla,
+    /// Positive status, such as a success tag. The config's `success`.
+    pub success: Hsla,
+    /// Caution status, such as a warning tag. The config's `warning`.
+    pub warning: Hsla,
+    /// Neutral information, such as an info tag. The accent, so it is the
+    /// theme's own blue.
+    pub info: Hsla,
+    /// The solid fill of a destructive mark, such as an alert count: the
+    /// destructive color stepped toward the darker end of surface and ink
+    /// until `solid_foreground` on it reaches 4.5:1, WCAG AA for text.
+    pub destructive_solid: Hsla,
+    /// The solid fill of a success mark, derived as `destructive_solid`.
+    pub success_solid: Hsla,
+    /// The solid fill of a warning mark, derived as `destructive_solid`.
+    pub warning_solid: Hsla,
+    /// The solid fill of an info mark, derived as `destructive_solid`.
+    pub info_solid: Hsla,
+    /// Text on a solid status fill: the lighter of surface and ink.
+    pub solid_foreground: Hsla,
+    /// The fill of a destructive status, such as a danger tag: one step
+    /// from the surface toward the destructive color, scaled by contrast.
+    pub destructive_tint: Hsla,
+    /// The fill of a success status: the `destructive_tint` step toward
+    /// `success`.
+    pub success_tint: Hsla,
+    /// The fill of a warning status: the `destructive_tint` step toward
+    /// `warning`.
+    pub warning_tint: Hsla,
+    /// The fill of an info status: the `destructive_tint` step toward
+    /// `info`.
+    pub info_tint: Hsla,
     /// The track of a progress bar: `primary` at 20%, shadcn's
     /// `bg-primary/20`. The indicator is `primary` itself.
     pub progress_track: Hsla,
@@ -289,6 +320,22 @@ pub struct MetricTokens {
     /// which the control is. 20px at the default font size, measured from
     /// the tab reference app.
     pub tab_close: Pixels,
+    /// The height of a tag: 20px, shadcn's badge `h-5`.
+    pub tag_height: Pixels,
+    /// The size of an icon in a tag: 12px, shadcn's badge `size-3`.
+    pub tag_icon: Pixels,
+    /// The height and least width of a badge count: 16px, gpui-kit's
+    /// medium badge.
+    pub badge_count: Pixels,
+    /// The text of a badge count: 10px, gpui-kit's badge text.
+    pub badge_count_text: Pixels,
+    /// How far a badge count sits past the corner of its element: 4px,
+    /// so it overlaps the corner as gpui-kit's does.
+    pub badge_count_offset: Pixels,
+    /// The diameter of a badge dot: 6px, gpui-kit's dot.
+    pub badge_dot: Pixels,
+    /// The circle of a badge icon: 16px, gpui-kit's medium badge.
+    pub badge_icon: Pixels,
     /// The diameter of a `Sm` avatar: 24px, shadcn's `size-6`.
     pub avatar_sm: Pixels,
     /// The diameter of a `Default` avatar: 32px, shadcn's `size-8`.
@@ -380,6 +427,13 @@ impl MetricTokens {
             tab_content_gap: px(6.),
             tab_control: control_sm,
             tab_close: control_xs,
+            tag_height: scaled(20.),
+            tag_icon: scaled(12.),
+            badge_count: scaled(16.),
+            badge_count_text: scaled(10.),
+            badge_count_offset: scaled(4.),
+            badge_dot: scaled(6.),
+            badge_icon: scaled(16.),
             avatar_sm: scaled(24.),
             avatar_md: scaled(32.),
             avatar_lg: scaled(40.),
@@ -474,6 +528,23 @@ impl ThemeTokens {
         let switch_track_off = toward_ink(0.20);
         let switch_thumb = lighter_of(surface, ink);
         let progress_track = primary.opacity(0.2);
+        // A status fill is a step toward its color, as `selected` is a step
+        // toward the ink. The constants give the 20% (dark) and 10%
+        // (light) tints of the destructive button at the built-in
+        // contrasts, so a tag and a button of one color read as one.
+        let solid_foreground = lighter_of(surface, ink);
+        let darker = if solid_foreground == surface {
+            ink
+        } else {
+            surface
+        };
+        let solid = |color: Hsla| {
+            (0..=20)
+                .map(|step| mix(color, darker, step as f32 * 0.04))
+                .find(|fill| super::color::contrast_ratio(*fill, solid_foreground) >= 4.5)
+                .unwrap_or(darker)
+        };
+        let tint = |color: Hsla| mix(surface, color, if dark { 0.1667 } else { 0.111 } * c);
         let popover = if dark { toward_ink(0.109) } else { surface };
         let popover_step = |amount: f32| mix(popover, ink, amount);
         let popover_border = if dark { popover_step(0.13) } else { border };
@@ -575,6 +646,18 @@ impl ThemeTokens {
             switch_track_on,
             switch_track_off,
             switch_thumb,
+            success: config.semantic.success,
+            warning: config.semantic.warning,
+            info: config.accent,
+            destructive_solid: solid(config.semantic.destructive),
+            success_solid: solid(config.semantic.success),
+            warning_solid: solid(config.semantic.warning),
+            info_solid: solid(config.accent),
+            solid_foreground,
+            destructive_tint: tint(config.semantic.destructive),
+            success_tint: tint(config.semantic.success),
+            warning_tint: tint(config.semantic.warning),
+            info_tint: tint(config.accent),
             progress_track,
             popover,
             popover_foreground: ink,
@@ -944,6 +1027,29 @@ mod tests {
     }
 
     #[test]
+    fn status_tints_step_toward_their_color() {
+        let dark = ThemeTokens::derive(&ThemeConfig::dark(), ThemeAppearance::Dark, metrics());
+        let light = ThemeTokens::derive(&ThemeConfig::light(), ThemeAppearance::Light, metrics());
+        assert_eq!(dark.info, hex("#539af8"), "info is the accent");
+        for theme in [&dark, &light] {
+            for solid in [
+                theme.destructive_solid,
+                theme.success_solid,
+                theme.warning_solid,
+                theme.info_solid,
+            ] {
+                let ratio = crate::theme::contrast_ratio(solid, theme.solid_foreground);
+                assert!(ratio >= 4.5, "{} is {ratio}", to_hex(solid));
+            }
+        }
+        assert_eq!(to_hex(dark.destructive_solid), "#d23f39");
+        assert_eq!(to_hex(dark.success_tint), "#25372a");
+        assert_eq!(to_hex(dark.destructive_tint), "#412421");
+        assert_eq!(to_hex(light.success_tint), "#ebf6ec");
+        assert_eq!(to_hex(light.destructive_tint), "#fbebe8");
+    }
+
+    #[test]
     fn the_progress_track_is_the_primary_at_a_fifth() {
         let dark = dark();
         assert_eq!(to_hex(dark.primary()), "#dfdfdf");
@@ -1112,6 +1218,10 @@ mod tests {
         assert_eq!(large.metrics.switch_thumb_size, px(20.));
         assert_eq!(large.metrics.switch_thumb_inset, px(2.5));
         assert_eq!(default.metrics.avatar_md, px(32.));
+        assert_eq!(default.metrics.tag_height, px(20.));
+        assert_eq!(large.metrics.tag_height, px(25.));
+        assert_eq!(default.metrics.badge_count, px(16.));
+        assert_eq!(default.metrics.badge_dot, px(6.));
         assert_eq!(large.metrics.avatar_md, px(40.));
         assert_eq!(large.metrics.avatar_group_ring, px(2.), "a hairline stays");
     }

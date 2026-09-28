@@ -1,6 +1,7 @@
 //! One module per component.
 
 mod avatar;
+mod badge;
 mod button;
 mod input;
 mod menu;
@@ -14,12 +15,14 @@ mod spacing;
 mod spinner;
 mod switch;
 mod tabs;
+mod tag;
 mod textarea;
 mod theme_mode_picker;
 mod title_bar;
 mod typography;
 
 pub use avatar::AvatarStory;
+pub use badge::BadgeStory;
 pub use button::ButtonStory;
 pub use input::InputStory;
 pub use menu::MenuStory;
@@ -33,6 +36,7 @@ pub use spacing::SpacingStory;
 pub use spinner::SpinnerStory;
 pub use switch::SwitchStory;
 pub use tabs::TabsStory;
+pub use tag::TagStory;
 pub use textarea::TextareaStory;
 pub use theme_mode_picker::ThemeModePickerStory;
 pub use title_bar::TitleBarStory;

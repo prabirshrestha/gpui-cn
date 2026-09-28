@@ -99,6 +99,18 @@ fn from_oklab(lab: [f32; 3], alpha: f32) -> Hsla {
     })
 }
 
+/// The WCAG 2 contrast ratio between two opaque colors, from 1 to 21.
+pub fn contrast_ratio(a: Hsla, b: Hsla) -> f32 {
+    let luminance = |color: Hsla| {
+        let rgb = color.to_rgb();
+        0.2126 * srgb_to_linear(rgb.r)
+            + 0.7152 * srgb_to_linear(rgb.g)
+            + 0.0722 * srgb_to_linear(rgb.b)
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
 fn srgb_to_linear(value: f32) -> f32 {
     if value <= 0.040_45 {
         value / 12.92

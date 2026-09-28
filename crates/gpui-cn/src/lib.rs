@@ -42,6 +42,7 @@
 //! ```
 
 mod avatar;
+mod badge;
 mod button;
 mod icon;
 mod input;
@@ -58,6 +59,7 @@ mod skeleton;
 mod spinner;
 mod switch;
 mod tabs;
+mod tag;
 pub mod theme;
 mod theme_mode_picker;
 mod title_bar;
@@ -66,6 +68,7 @@ mod tooltip_host;
 mod touch_selection;
 
 pub use avatar::{Avatar, AvatarGroup, AvatarSize};
+pub use badge::Badge;
 pub use button::{Button, ButtonSize, ButtonVariant};
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
@@ -96,6 +99,7 @@ pub use skeleton::Skeleton;
 pub use spinner::Spinner;
 pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
+pub use tag::{Tag, TagVariant};
 pub use theme::{
     ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
 };
@@ -109,14 +113,14 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     pub use crate::{
-        ActiveTheme, Avatar, AvatarGroup, AvatarSize, Button, ButtonSize, ButtonVariant,
+        ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
         ContextMenu, DropdownMenu, Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu,
         MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack,
         NavStackExt, NavStackState, Progress, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
         SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
         SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
-        SidebarTrigger, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Textarea, TextareaState,
-        Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
+        SidebarTrigger, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant,
+        Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

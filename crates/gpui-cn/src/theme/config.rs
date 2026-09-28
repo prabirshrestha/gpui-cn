@@ -55,8 +55,6 @@ pub struct SemanticColors {
     pub destructive: Hsla,
     /// Needs attention but not an error.
     pub warning: Hsla,
-    /// Neutral information.
-    pub info: Hsla,
     /// Skills, plugins, and other extension surfaces.
     pub skill: Hsla,
 }
@@ -108,7 +106,6 @@ impl SemanticColors {
             success: hex("#00a240"),
             destructive: hex("#ba2623"),
             warning: hex("#b45309"),
-            info: hex("#2563eb"),
             skill: hex("#924ff7"),
         }
     }
@@ -119,7 +116,6 @@ impl SemanticColors {
             success: hex("#40c977"),
             destructive: hex("#fa423e"),
             warning: hex("#f59e0b"),
-            info: hex("#60a5fa"),
             skill: hex("#ad7bf9"),
         }
     }
