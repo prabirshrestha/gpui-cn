@@ -3,15 +3,15 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
-    Anchor, AnyElement, App, Bounds, ElementId, FocusHandle, InteractiveElement as _, IntoElement,
+    AnyElement, App, Bounds, ElementId, FocusHandle, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, StyleRefinement, Styled, Window,
-    base::{self, Align, Selectable, StyledExt as _, TestSupportExt as _},
+    base::{self, Align, Placement, Selectable, StyledExt as _, TestSupportExt as _},
     div,
 };
 
 use crate::{
     ActiveTheme as _,
-    menu::{MenuLook, MenuMotion, measure},
+    menu::{MenuLook, MenuMotion, corner, measure, placement},
 };
 
 type TriggerBuilder = Box<dyn FnOnce(bool) -> AnyElement>;
@@ -141,20 +141,14 @@ impl RenderOnce for Popover {
             )
             .read(cx)
             .clone();
-        // Below when the menu's full height fits, else on the side with
-        // more room, as a menu opens.
-        let trigger = trigger_bounds.get();
-        let below = window.viewport_size().height - trigger.bottom();
-        let above = trigger.top();
-        let opens_above = below < look.max_height + look.gap && above > below;
-        let anchor = match (self.align, opens_above) {
-            (Align::Start, false) => Anchor::TopLeft,
-            (Align::Center, false) => Anchor::TopCenter,
-            (Align::End, false) => Anchor::TopRight,
-            (Align::Start, true) => Anchor::BottomLeft,
-            (Align::Center, true) => Anchor::BottomCenter,
-            (Align::End, true) => Anchor::BottomRight,
-        };
+        let side = placement(
+            trigger_bounds.get(),
+            window.viewport_size().height,
+            look.max_height,
+            look.gap,
+        );
+        let opens_above = side == Placement::Top;
+        let (anchor, _) = corner(side, self.align, trigger_bounds.get(), look.gap);
         let panel_id = ElementId::NamedChild(self.id.clone().into(), "panel".into());
         let content = self.content;
         let style = self.style;

@@ -370,14 +370,12 @@ impl<V: SelectValue> SelectState<V> {
             let metrics = &cx.theme().metrics;
             (metrics.menu_max_height, metrics.menu_gap)
         };
-        let bounds = self.trigger_bounds.get();
-        let below = window.viewport_size().height - bounds.bottom();
-        let above = bounds.top();
-        self.menu_placement = Some(if below >= max_height + gap || below >= above {
-            Placement::Bottom
-        } else {
-            Placement::Top
-        });
+        self.menu_placement = Some(crate::menu::placement(
+            self.trigger_bounds.get(),
+            window.viewport_size().height,
+            max_height,
+            gap,
+        ));
         if let Some(search) = &self.search {
             let style = search_style(cx.theme());
             search

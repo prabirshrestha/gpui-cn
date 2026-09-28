@@ -276,13 +276,7 @@ impl MenuState {
         };
         let placement = match anchor {
             MenuAnchor::Trigger(bounds, _) => {
-                let below = window.viewport_size().height - bounds.bottom();
-                let above = bounds.top();
-                if below >= max_height + gap || below >= above {
-                    Placement::Bottom
-                } else {
-                    Placement::Top
-                }
+                super::placement(bounds, window.viewport_size().height, max_height, gap)
             }
             MenuAnchor::Point(_) => Placement::Bottom,
         };

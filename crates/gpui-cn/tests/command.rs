@@ -400,9 +400,10 @@ fn a_custom_row_draws_inside_the_row_frame(cx: &mut TestAppContext) {
             "the renderer sees the highlight"
         );
         let row = window.find(child("custom")).bounds();
-        assert!(
-            row.size.height > px(40.),
-            "the frame keeps its padding around the content"
+        assert_eq!(
+            row.size.height,
+            px(52.),
+            "the 40px content inside the row's 6px padding above and below"
         );
         window.press("down", cx);
         window.render_frame(cx);

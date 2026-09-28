@@ -332,9 +332,12 @@ impl<V: SelectValue> Rows<V> {
                     .children(content)
                     // A pointer that moves over a row highlights it; a row that
                     // scrolls under a resting pointer does not, so the
-                    // keyboard's highlight is not snatched back.
-                    .on_mouse_move(move |_, _, cx| {
-                        hover_state.update(cx, |state, cx| state.highlight_row(row, cx));
+                    // keyboard's highlight is not snatched back. A finger has
+                    // no hover.
+                    .when(!look.touch, |this| {
+                        this.on_mouse_move(move |_, _, cx| {
+                            hover_state.update(cx, |state, cx| state.highlight_row(row, cx));
+                        })
                     })
                     .on_click(move |_, window, cx| {
                         choose_state.update(cx, |state, cx| state.choose(&value, window, cx));
