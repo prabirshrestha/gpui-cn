@@ -17,10 +17,13 @@ description: Release a new version of gpui-cn by updating main, checking CI, app
 - Publish only `gpui-cn`. The gallery and iOS host have `publish = false`.
 - Do not publish locally. A version tag starts the `Release` workflow in
   `.github/workflows/release.yml`.
-- That workflow uses the `CARGO_REGISTRY_TOKEN` repository secret.
-  Never print or request the token in chat. If publication
-  fails, diagnose the failure before retrying. Do not move or recreate a
-  release tag.
+- That workflow uses crates.io Trusted Publishing through GitHub OIDC,
+  with `rust-lang/crates-io-auth-action`. No repository token secret or
+  GitHub environment is required. The crates.io publisher must match
+  `prabirshrestha/gpui-cn` and workflow filename `release.yml`, with the
+  environment left blank.
+- Never print or request a token in chat. If publication fails, diagnose
+  the failure before retrying. Do not move or recreate a release tag.
 
 ## Check upstream CI
 
@@ -120,6 +123,26 @@ Do not push a tag before the release commit CI succeeds. If a workflow cannot
 be found or its result is unclear, stop before the next publication step and
 report the pending state. Do not report publication until the `Release`
 workflow's publish step succeeds.
+
+## Recover an existing release
+
+Do not bump the version again to retry an unpublished tag. Confirm that
+the version is not already published and that the tag's commit passed CI.
+If only external settings changed, rerun the failed Release run.
+
+If the workflow itself changed, a rerun still uses the old workflow.
+Commit and push the workflow fix on `main`, wait for its CI to pass, then
+dispatch the updated workflow with the unchanged release tag:
+
+```sh
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
+
+Find the new `workflow_dispatch` Release run and check its workflow commit
+against `main`. Its `headSha` is the workflow commit, not the release tag's
+commit. Check the tag and resolved SHA in the "Check the release commit CI"
+step before reporting publication. The workflow checks that the tag is on
+main, has successful CI, and matches the package version.
 
 ## Report
 

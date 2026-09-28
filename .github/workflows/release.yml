@@ -1,23 +1,60 @@
 name: Release
 
-# Publishes gpui-cn to crates.io when a version tag is pushed. The tag
-# must match the version in Cargo.toml, and the CARGO_REGISTRY_TOKEN
-# secret must hold a crates.io token with publish rights.
+# Publishes a version tag through crates.io Trusted Publishing.
+# Manual runs use the current workflow to recover an existing release tag.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish gpui-cn
     runs-on: macos-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Validate the release tag
+        run: |
+          [[ "$RELEASE_TAG" == v* ]] || { echo "expected a version tag"; exit 1; }
+          git check-ref-format "refs/tags/$RELEASE_TAG"
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the release commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$sha" origin/main
+          echo "Release tag $RELEASE_TAG resolves to $sha"
+          gh run list --workflow ci.yml --branch main --commit "$sha" \
+            --json conclusion --jq 'any(.[]; .conclusion == "success")' |
+            grep -qx true
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Check the tag against the version
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gpui-cn") | .version')
-          test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} is not v$version"; exit 1; }
+          test "v$version" = "$RELEASE_TAG" || { echo "tag $RELEASE_TAG is not v$version"; exit 1; }
+      - run: cargo publish -p gpui-cn --dry-run --locked
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
       - run: cargo publish -p gpui-cn --locked
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
