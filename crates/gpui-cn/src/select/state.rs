@@ -7,13 +7,13 @@ use gpui_kit::{
     ListAlignment, ListState, Pixels, SharedString, Subscription, Task, Window,
     base::{
         DeferredPopover, GlobalState, Placement,
-        input::{InputEditorStyle, InputEvent, InputState},
+        input::{InputEvent, InputState},
     },
     px,
 };
 
 use super::item::{self, SelectEntry, SelectItem, SelectValue};
-use crate::{ActiveTheme as _, MenuState, ThemeTokens};
+use crate::{ActiveTheme as _, MenuState, menu::search_style};
 
 /// What a [`SelectState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -747,20 +747,6 @@ impl<V: SelectValue> SelectState<V> {
 
 fn same_values<V: SelectValue>(a: &[SelectItem<V>], b: &[SelectItem<V>]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.value() == b.value())
-}
-
-/// The colors the search field paints its text, caret, and selection in:
-/// the menu's, not the window's. Left unset, base paints the selection in
-/// its `accent`, which on this theme is the soft fill, invisible on the
-/// menu; the theme's selection is the accent color itself.
-fn search_style(theme: &ThemeTokens) -> InputEditorStyle {
-    InputEditorStyle {
-        foreground: theme.popover_foreground,
-        muted_foreground: theme.muted_foreground(),
-        selection: theme.selection(),
-        caret: theme.popover_foreground,
-        ..Default::default()
-    }
 }
 
 #[cfg(test)]

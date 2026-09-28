@@ -7,9 +7,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use gpui_cn::{
-    ReduceMotion, Root, Select, SelectEntry, SelectEvent, SelectItem, SelectState, Theme,
-};
+use gpui_cn::{ReduceMotion, Select, SelectEntry, SelectEvent, SelectItem, SelectState, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, Focusable as _, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window,

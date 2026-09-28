@@ -1,6 +1,7 @@
 //! UI integration tests for `Tag`.
 
-use gpui_cn::{ActiveTheme as _, Root, Tag};
+use gpui_cn::{ActiveTheme as _, Tag};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     Window, WindowHandle, assets::IconName, div, px, size, test::TestWindowExt as _,

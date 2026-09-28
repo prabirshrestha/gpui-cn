@@ -6,7 +6,7 @@ use gpui_kit::{
 
 /// The per-window registry of tooltip overlays.
 ///
-/// [`Root`](crate::Root) registers its overlay here. A host with its own
+/// gpui-cn registers the overlay it adds to each `Root` here. A host with its own
 /// root view registers the overlay it owns the same way, and gpui-cn
 /// components then show their tooltips through it. With no registration a
 /// component falls back to GPUI's native tooltip.

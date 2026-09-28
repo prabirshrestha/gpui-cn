@@ -28,8 +28,10 @@ pub use dropdown::DropdownMenu;
 pub use entry::{MenuEntry, MenuItem, MenuRowState, MenuSubmenu};
 pub use state::{MenuAnchor, MenuEvent, MenuState};
 
-pub(crate) use look::{MenuLook, MenuMotion, label_block, line_slot, row_line, separator};
-pub(crate) use panel::{MenuPanels, corner};
+pub(crate) use look::{
+    MenuLook, MenuMotion, label_block, line_slot, row_line, search_row, search_style, separator,
+};
+pub(crate) use panel::{MenuPanels, corner, measure, shortcut};
 pub(crate) use text::{TextMenuBuilder, open_text_menu};
 
 /// The key context of an open menu's root panel, which holds the

@@ -2,7 +2,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Input, InputState, Label, Root};
+use gpui_cn::{Input, InputState, Label};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, base::Disableable as _, div, px, size, test::TestWindowExt as _,

@@ -323,8 +323,10 @@ impl EditMenu {
 }
 
 impl RenderOnce for EditMenu {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        // Two steps of the spacing scale between the bar and the text.
+        let gap = gpui_kit::rems(0.5).to_pixels(window.rem_size());
         let height = theme.metrics.control_md;
         let radius = theme.radius_full();
         let (fill, border, separator, foreground) = (
@@ -335,6 +337,7 @@ impl RenderOnce for EditMenu {
         );
         let shadow = theme.base.shadow.md.clone();
         let text = theme.text_control;
+        let bar_id = self.id.clone();
         let items = self.items.into_iter().enumerate().flat_map(|(ix, item)| {
             let on_click = item.on_click;
             // Observed under its label, so a test can press "Copy".
@@ -343,17 +346,20 @@ impl RenderOnce for EditMenu {
                 .test_support()
                 .h_full()
                 .child(
-                    Button::new(ix)
-                        .ghost()
-                        .tab_stop(false)
-                        .label(item.label)
-                        .h_full()
-                        .px_5()
-                        .rounded(radius)
-                        .text_size(text.size)
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(foreground)
-                        .on_click(move |_: &ClickEvent, window, cx| on_click(window, cx)),
+                    Button::new(ElementId::NamedChild(
+                        bar_id.clone().into(),
+                        item.label.clone(),
+                    ))
+                    .ghost()
+                    .tab_stop(false)
+                    .label(item.label)
+                    .h_full()
+                    .px_5()
+                    .rounded(radius)
+                    .text_size(text.size)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(foreground)
+                    .on_click(move |_: &ClickEvent, window, cx| on_click(window, cx)),
                 )
                 .into_any_element();
             (ix > 0)
@@ -364,7 +370,7 @@ impl RenderOnce for EditMenu {
         deferred(
             Positioner::side(self.anchor)
                 .placement(Placement::Top)
-                .offset(px(8.))
+                .offset(gap)
                 .occlude()
                 .child(
                     div()

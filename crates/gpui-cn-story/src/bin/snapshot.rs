@@ -61,7 +61,7 @@ mod macos {
                 |window, cx| {
                     let view = cx.new(|cx| Gallery::new(window, cx));
                     gallery = Some(view.clone());
-                    cx.new(|cx| gpui_cn::Root::new(view, window, cx))
+                    cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
                 },
             )
             .expect("open the gallery window");
@@ -129,6 +129,8 @@ mod macos {
                 "Textarea",
                 "Select",
                 "Menu",
+                "Command",
+                "Popover",
                 "Avatar",
                 "Badge",
                 "Tag",
@@ -260,6 +262,50 @@ mod macos {
                         );
                     })
                     .expect("close the field's menu");
+                }
+                if story == "Command" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal("command-popover-trigger", window, cx);
+                        window.click("command-popover-trigger", cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the palette");
+                    capture(&mut cx, &format!("story-{slug}-popover-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                    })
+                    .expect("close the palette");
+                }
+                if story == "Tabs" {
+                    let add = gpui_kit::ElementId::NamedChild(
+                        gpui_kit::ElementId::Name("tabs-menu".into()).into(),
+                        "add".into(),
+                    );
+                    for query in ["", "er"] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            gpui_cn_story::reveal(add.clone(), window, cx);
+                            window.click(add.clone(), cx);
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                            if !query.is_empty() {
+                                window.input(query, cx);
+                            }
+                        })
+                        .expect("open the new-tab menu");
+                        cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                            .expect("draw the rows that match");
+                        let suffix = if query.is_empty() { "" } else { "-search" };
+                        capture(&mut cx, &format!("story-{slug}-add-menu{suffix}-{name}"));
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            // Escape clears a query first, then closes.
+                            window.press("escape", cx);
+                            window.press("escape", cx);
+                        })
+                        .expect("close the menu");
+                    }
                 }
                 if story == "Select" {
                     let trigger = |id: &'static str| {

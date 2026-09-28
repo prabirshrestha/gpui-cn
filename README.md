@@ -49,24 +49,19 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             gpui_cn::init(cx);
-            cx.spawn(async move |cx| {
-                cx.open_window(WindowOptions::default(), |window, cx| {
-                    let view = cx.new(|_| Hello);
-                    cx.new(|cx| gpui_cn::Root::new(view, window, cx))
-                })
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Hello))
                 .expect("failed to open window");
-            })
-            .detach();
         });
 }
 ```
 
 `with_assets` registers the Lucide icons that gpui-kit bundles, which the
 components draw with. Call `gpui_kit::init` first. It sets up `gpui-base`.
-Then call `gpui_cn::init`, which installs the theme. `Root` paints the
-window background from the theme, sets the rem size, moves focus on Tab
-and Shift-Tab, copies the selected text on Cmd-C, and hosts the tooltip
-overlay.
+Then call `gpui_cn::init`, which installs the theme and adds gpui-cn to
+the `Root` that `gpui_kit::open_window` puts at the top of each window.
+gpui-base's root moves focus on Tab and Shift-Tab and copies the selected
+text on Cmd-C; gpui-cn paints the window background from the theme, sets
+the rem size, and hosts the tooltip overlay.
 
 ## Theme
 
@@ -139,31 +134,13 @@ cargo run -p gpui-cn-story --features snapshot --bin snapshot -- snapshots
 cargo run -p gpui-cn-story --features snapshot --bin snapshot -- snapshots 2400
 ```
 
-### iOS
-
-The gallery also runs in the iOS Simulator, as a Rust application from
-`main` down: `crates/gpui-cn-story-ios` is a UIKit host written with
-`objc2` around the iOS platform from
-[gpui-mobile](https://github.com/longbridge/gpui-mobile). It needs Xcode
-and the `aarch64-apple-ios-sim` Rust target.
-
-```bash
-rustup target add aarch64-apple-ios-sim
-crates/gpui-cn-story-ios/ios/run.sh
-```
-
-The script builds the binary, wraps it in `gpui-cn-story.app`, and boots,
-installs, and launches it on the first available iPhone simulator. Pass
-`--device "iPhone 16 Pro"` to pick one and `--no-run` to build only.
-
 ## Performance
 
-Three tools measure the gallery:
+Two tools measure the gallery:
 
 ```bash
 cargo run --release -p gpui-cn-story --features snapshot --bin bench
 cargo run --release --features fps -- --exercise
-crates/gpui-cn-story-ios/ios/run.sh --release
 ```
 
 `GPUI_CN_STARTUP_TRACE=1` makes the gallery print when the application
@@ -174,10 +151,7 @@ memory before and after the slide. The `fps` feature adds the
 [gpui-fps](https://crates.io/crates/gpui-fps) HUD, toggled with
 Cmd-Shift-P or **View > Performance HUD**, which reads GPUI's own frame
 trace. `--exercise` drives the gallery by itself (scroll, slide, next
-story) so a profiler such as Instruments can watch it. On iOS, launch with
-`GPUI_CN_FRAME_STATS=1` in the environment (`SIMCTL_CHILD_GPUI_CN_FRAME_STATS=1`
-for `simctl launch`) and the host prints frame counts and costs to the
-console every two seconds while the display link runs.
+story) so a profiler such as Instruments can watch it.
 
 ## Development
 
@@ -208,5 +182,3 @@ Apache-2.0. Third-party assets:
 - JetBrains Mono, used with the `jetbrains-mono` feature, comes from the
   `damascene-fonts-jetbrains-mono` crate under the SIL Open Font License
   1.1.
-- gpui-mobile, used by the iOS gallery, is available under Apache-2.0
-  among other licenses; this repository uses it under Apache-2.0.

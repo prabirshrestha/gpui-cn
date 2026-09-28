@@ -6,7 +6,7 @@ use gpui_kit::{
     AppContext as _, Entity, TestAppContext, WindowHandle, px, size, test::TestWindowExt as _,
 };
 
-fn setup(cx: &mut TestAppContext) -> (WindowHandle<gpui_cn::Root>, Entity<Gallery>) {
+fn setup(cx: &mut TestAppContext) -> (WindowHandle<gpui_kit::base::Root>, Entity<Gallery>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
@@ -16,12 +16,16 @@ fn setup(cx: &mut TestAppContext) -> (WindowHandle<gpui_cn::Root>, Entity<Galler
     let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
         let view = cx.new(|cx| Gallery::new(window, cx));
         gallery = Some(view.clone());
-        gpui_cn::Root::new(view, window, cx)
+        gpui_kit::base::Root::new(view, window, cx)
     });
     (handle, gallery.unwrap())
 }
 
-fn click(handle: &WindowHandle<gpui_cn::Root>, cx: &mut TestAppContext, id: gpui_kit::ElementId) {
+fn click(
+    handle: &WindowHandle<gpui_kit::base::Root>,
+    cx: &mut TestAppContext,
+    id: gpui_kit::ElementId,
+) {
     cx.update_window((*handle).into(), |_, window, cx| {
         window.render_frame(cx);
         window.click(id, cx);
@@ -190,4 +194,48 @@ fn the_trigger_and_the_arrows_never_move(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| window.click("trigger", cx))
         .unwrap();
     assert!(gallery.read_with(cx, |gallery, cx| gallery.sidebar().read(cx).is_open()));
+}
+
+#[gpui_kit::test]
+fn picking_a_story_keeps_the_sidebar_scrolled_where_it_was(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    let mut gallery = None;
+    // Short enough that the story list scrolls.
+    let handle = cx.open_window(size(px(1100.), px(420.)), |window, cx| {
+        let view = cx.new(|cx| Gallery::new(window, cx));
+        gallery = Some(view.clone());
+        gpui_kit::base::Root::new(view, window, cx)
+    });
+    let gallery = gallery.unwrap();
+    let row = gpui_kit::ElementId::from(("story", 12usize));
+    let scrolled = cx
+        .update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let before = window.find(row.clone()).bounds().top();
+            window.scroll(
+                "sidebar-content",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-150.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let after = window.find(row.clone()).bounds().top();
+            assert!(after < before, "the sidebar scrolled");
+            after
+        })
+        .unwrap();
+    click(&handle, cx, row.clone());
+    assert_eq!(state(&gallery, cx).0, Some(12));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(row.clone()).bounds().top(),
+            scrolled,
+            "the story list stays where it was scrolled"
+        );
+    })
+    .unwrap();
 }

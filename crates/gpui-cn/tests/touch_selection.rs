@@ -3,7 +3,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Input, InputState, Root, Textarea, TextareaState, Theme};
+use gpui_cn::{Input, InputState, Textarea, TextareaState, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, LongPressEvent, ParentElement as _, Pixels,
     PlatformInput, Point, Render, Styled as _, TestAppContext, TouchPhase, Window,

@@ -3,7 +3,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Root, Textarea, TextareaState};
+use gpui_cn::{Textarea, TextareaState};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, ElementId, Entity, IntoElement, MouseButton,
     MouseDownEvent, MouseUpEvent, ParentElement as _, PlatformInput, Render, Role, Styled as _,

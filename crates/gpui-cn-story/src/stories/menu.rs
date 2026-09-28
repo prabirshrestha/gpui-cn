@@ -325,7 +325,6 @@ impl Render for MenuStory {
             theme.radius_lg(),
             theme.text_control,
         );
-        let options_open = self.options.read(cx).is_open();
         let title_bar_height = cx.theme().metrics.title_bar;
         div()
             .key_context(CONTEXT)
@@ -403,8 +402,7 @@ impl Render for MenuStory {
                                     Button::new(Self::OPTIONS)
                                         .size(ButtonSize::Default)
                                         .icon(IconName::Ellipsis)
-                                        .label("Options")
-                                        .open(options_open),
+                                        .label("Options"),
                                 )
                                 .items(|_, _| options_entries()),
                         ),

@@ -13,7 +13,7 @@ use gpui_kit::{
     RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     Window,
     base::{
-        Align, Disableable, GlobalState, TestSupportExt as _,
+        Align, Disableable, GlobalState, Selectable as _, TestSupportExt as _,
         actions::{SelectDown, SelectLeft, SelectRight},
         h_flex,
     },

@@ -121,7 +121,7 @@ mod macos {
                     opened.elapsed().as_secs_f64() * 1000.
                 );
                 gallery = Some(view.clone());
-                cx.new(|cx| gpui_cn::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
             })
             .expect("open the gallery window");
         let gallery = gallery.expect("the gallery view");

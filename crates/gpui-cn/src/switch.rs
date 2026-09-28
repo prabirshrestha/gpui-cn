@@ -231,10 +231,14 @@ impl RenderOnce for Switch {
             cx,
         );
 
-        // Base keys the switch's focus handle by its id; reading the same
-        // key here tells whether the ring shows.
+        // The switch owns its focus handle and hands it to base, so it can
+        // tell whether the ring shows.
         let focus_handle = window
-            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+            .use_keyed_state(
+                ElementId::NamedChild(self.id.clone().into(), "focus".into()),
+                cx,
+                |_, cx| cx.focus_handle(),
+            )
             .read(cx)
             .clone();
         let focus_visible = focus_handle.is_focused(window) && window.last_input_was_keyboard();
@@ -242,6 +246,7 @@ impl RenderOnce for Switch {
         let track_id = ElementId::NamedChild(self.id.clone().into(), "track".into());
         let on_change = self.on_change;
         base::Switch::new(self.id)
+            .track_focus(&focus_handle)
             .checked(checked)
             .disabled(disabled)
             .tab_index(self.tab_index)

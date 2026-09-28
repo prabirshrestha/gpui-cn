@@ -2,7 +2,7 @@
 //! bar, to compare with the reference app.
 
 use gpui_cn::{
-    ActiveTheme as _, Button, Root, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+    ActiveTheme as _, Button, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
     SidebarMenuButton, SidebarState, SidebarTrigger, Tab, Tabs, TabsEvent, TabsState, TitleBar,
     gpui_kit::assets::IconName,
     gpui_kit::base::{Disableable as _, Selectable as _, transition},
@@ -195,22 +195,15 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..TitleBar::window_options(cx)
             };
-            let mut shell = None;
-            let handle = cx
-                .open_window(options, |window, cx| {
-                    let view = cx.new(Shell::new);
-                    shell = Some(view.clone());
-                    cx.new(|cx| Root::new(view, window, cx))
-                })
+            let (handle, shell) = gpui_kit::open_window(options, cx, |_, cx| cx.new(Shell::new))
                 .expect("open the window");
-            let shell = shell.expect("the shell");
             cx.on_action(move |_: &CloseTab, cx: &mut App| {
                 let tabs = shell.read(cx).tabs.clone();
                 let selected = tabs.read(cx).selected().cloned();
                 match selected {
                     Some(id) => tabs.update(cx, |tabs, cx| tabs.remove(id, cx)),
                     None => {
-                        let _ = cx.update_window(handle.into(), |_, window, _| {
+                        let _ = cx.update_window(handle, |_, window, _| {
                             window.remove_window();
                         });
                     }

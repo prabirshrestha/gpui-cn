@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gpui-cn", "crates/gpui-cn-story", "crates/gpui-cn-story-ios"]
+members = ["crates/gpui-cn", "crates/gpui-cn-story"]
 # `cargo run` at the root opens the gallery.
 default-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
 resolver = "2"
@@ -14,7 +14,7 @@ homepage = "https://github.com/prabirshrestha/gpui-cn"
 
 [workspace.dependencies]
 gpui-cn = { path = "crates/gpui-cn", version = "0.3.0" }
-gpui-kit = { version = "0.6.4", default-features = false }
+gpui-kit = { version = "0.7.0", default-features = false }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

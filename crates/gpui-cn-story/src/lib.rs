@@ -14,7 +14,7 @@ use gpui_cn::{
 use gpui_kit::{
     AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId,
     Entity, InteractiveElement as _, IntoElement, ParentElement as _, PlatformInput, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, Styled as _, WeakEntity, Window, actions,
+    ScrollDelta, ScrollWheelEvent, SharedString, Styled as _, Window, actions,
     base::{Selectable as _, StyledExt as _},
     div,
     prelude::FluentBuilder as _,
@@ -96,6 +96,8 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::TextareaStory>(),
         StoryEntry::of::<stories::SelectStory>(),
         StoryEntry::of::<stories::MenuStory>(),
+        StoryEntry::of::<stories::CommandStory>(),
+        StoryEntry::of::<stories::PopoverStory>(),
         StoryEntry::of::<stories::AvatarStory>(),
         StoryEntry::of::<stories::BadgeStory>(),
         StoryEntry::of::<stories::TagStory>(),
@@ -144,6 +146,8 @@ impl Gallery {
         let settings = cx.new(|cx| SettingsPage::new(&sidebar, &stack, cx));
         let entries = stories();
         cx.observe(&stack, |_, _, cx| cx.notify()).detach();
+        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
+        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         // The actions reach the gallery through application-level
         // handlers, so they work wherever focus is and from every host:
         // the menu and the shortcuts on a desktop, a row in the sidebar on
@@ -206,11 +210,8 @@ impl Gallery {
         let view = self.story_views[ix]
             .get_or_insert_with(|| (self.entries[ix].build)(window, cx))
             .clone();
-        let gallery = cx.entity().downgrade();
-        let entries = self.entries.clone();
-        let page = cx.new(|cx| {
-            ComponentsPage::new(ix, view, entries, &self.sidebar, &self.stack, gallery, cx)
-        });
+        let entry = self.entries[ix].clone();
+        let page = cx.new(|cx| ComponentsPage::new(ix, view, entry, &self.sidebar, cx));
         self.stack.update(cx, |stack, cx| {
             stack.push(page, motion, cx);
         });
@@ -246,6 +247,14 @@ impl Gallery {
     pub fn current_story<T: 'static>(&self, cx: &App) -> Option<Entity<T>> {
         let ix = self.current_story_index(cx)?;
         self.story_views[ix].clone()?.downcast::<T>().ok()
+    }
+
+    /// Whether the settings page is the current page.
+    fn settings_showing(&self, cx: &App) -> bool {
+        self.stack
+            .read(cx)
+            .current()
+            .is_some_and(|page| page.entity_id() == self.settings.entity_id())
     }
 
     /// The navigation stack.
@@ -344,10 +353,23 @@ impl Render for Gallery {
         // The HUD reads GPUI's own frame trace, so its numbers are what a
         // frame of this window cost, not an estimate from outside.
         let _ = (&window, &cx);
+        // One sidebar for every page, so paging keeps its scroll position.
+        // Settings shows its own sections in it.
+        let sidebar = if self.settings_showing(cx) {
+            self.settings
+                .update(cx, |settings, cx| settings.render_sidebar(cx))
+        } else {
+            self.render_sidebar(cx)
+        };
         div()
             .relative()
             .size_full()
-            .child(NavStack::new(&self.stack).size_full())
+            .child(
+                SidebarLayout::new(&self.sidebar)
+                    .sidebar(sidebar)
+                    .child(NavStack::new(&self.stack).flex_1().min_h_0()),
+            )
+            .child(shell_controls(&self.sidebar, &self.stack, window, cx))
             .when(self.show_hud, |this| {
                 #[cfg(feature = "fps")]
                 {
@@ -361,40 +383,39 @@ impl Render for Gallery {
     }
 }
 
-/// A page of the gallery: the story list in the sidebar, one story beside
-/// it. Selecting another story asks the gallery to push a new page.
+/// A page of the gallery: one story, under its title. The gallery draws
+/// the sidebar beside the pages, once, so it keeps its scroll position
+/// and state while pages change.
 pub struct ComponentsPage {
     story: usize,
     page: AnyView,
-    entries: Vec<StoryEntry>,
+    entry: StoryEntry,
     sidebar: Entity<SidebarState>,
-    stack: Entity<NavStackState>,
-    gallery: WeakEntity<Gallery>,
 }
 
 impl ComponentsPage {
     fn new(
         story: usize,
         page: AnyView,
-        entries: Vec<StoryEntry>,
+        entry: StoryEntry,
         sidebar: &Entity<SidebarState>,
-        stack: &Entity<NavStackState>,
-        gallery: WeakEntity<Gallery>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(sidebar, |_, _, cx| cx.notify()).detach();
-        cx.observe(stack, |_, _, cx| cx.notify()).detach();
         Self {
             story,
             page,
-            entries,
+            entry,
             sidebar: sidebar.clone(),
-            stack: stack.clone(),
-            gallery,
         }
     }
+}
 
+impl Gallery {
+    /// The components sidebar: the story list, with the showing story
+    /// selected.
     fn render_sidebar(&self, cx: &mut Context<Self>) -> Sidebar {
+        let current = self.current_story_index(cx);
         let heading = cx.theme().text_heading;
         let open = self.sidebar.read(cx).is_open();
         Sidebar::new()
@@ -416,19 +437,9 @@ impl ComponentsPage {
                     SidebarMenuButton::new(ElementId::from(("story", ix)))
                         .icon(entry.icon)
                         .label(entry.title)
-                        .selected(ix == self.story)
+                        .selected(current == Some(ix))
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            // The gallery reads this page to see which
-                            // story shows, so the push waits until this
-                            // page's update is over.
-                            let gallery = this.gallery.clone();
-                            window.defer(cx, move |window, cx| {
-                                gallery
-                                    .update(cx, |gallery, cx| {
-                                        gallery.open_story(ix, NavMotion::Animated, window, cx)
-                                    })
-                                    .ok();
-                            });
+                            this.open_story(ix, NavMotion::Animated, window, cx)
                         }))
                 }),
             ))
@@ -442,7 +453,7 @@ impl ComponentsPage {
 }
 
 impl Render for ComponentsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (border, muted) = {
             let theme = cx.theme();
             (theme.border(), theme.muted_foreground())
@@ -451,50 +462,46 @@ impl Render for ComponentsPage {
             let state = self.sidebar.read(cx);
             (state.is_open(), state.is_icon_only())
         };
-        let entry = self.entries[self.story].clone();
+        let entry = &self.entry;
         div()
-            .relative()
+            .flex()
+            .flex_col()
             .size_full()
             .child(
-                SidebarLayout::new(&self.sidebar)
-                    .sidebar(self.render_sidebar(cx))
+                TitleBar::new()
+                    .inset(!open && !icon_only)
+                    .child(div().flex_1())
                     .child(
-                        TitleBar::new()
-                            .inset(!open && !icon_only)
-                            .child(div().flex_1())
-                            .child(
-                                Button::new("repository")
-                                    .ghost()
-                                    .icon(IconName::Github)
-                                    .accessibility_label("Repository")
-                                    .tooltip("Open the repository")
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url("https://github.com/prabirshrestha/gpui-cn")
-                                    }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_shrink_0()
-                            .px_6()
-                            .pb_4()
-                            .gap_1()
-                            .border_b_1()
-                            .border_color(border)
-                            .child(div().text_lg().font_medium().child(entry.title))
-                            .child(div().text_sm().text_color(muted).child(entry.description)),
-                    )
-                    .child(
-                        ScrollArea::new("page")
-                            .flex_1()
-                            .min_h_0()
-                            .p_6()
-                            .child(self.page.clone()),
+                        Button::new("repository")
+                            .ghost()
+                            .icon(IconName::Github)
+                            .accessibility_label("Repository")
+                            .tooltip("Open the repository")
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/prabirshrestha/gpui-cn")
+                            }),
                     ),
             )
-            .child(shell_controls(&self.sidebar, &self.stack, window, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_shrink_0()
+                    .px_6()
+                    .pb_4()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(div().text_lg().font_medium().child(entry.title))
+                    .child(div().text_sm().text_color(muted).child(entry.description)),
+            )
+            .child(
+                ScrollArea::new("page")
+                    .flex_1()
+                    .min_h_0()
+                    .p_6()
+                    .child(self.page.clone()),
+            )
     }
 }
 

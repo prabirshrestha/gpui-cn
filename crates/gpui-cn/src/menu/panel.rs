@@ -610,7 +610,11 @@ struct RowKind {
 
 /// The shortcut of `action` as the platform writes it, from the bindings
 /// that reach `context`, else from those that apply everywhere.
-fn shortcut(action: &dyn Action, context: &FocusHandle, window: &Window) -> Option<SharedString> {
+pub(crate) fn shortcut(
+    action: &dyn Action,
+    context: &FocusHandle,
+    window: &Window,
+) -> Option<SharedString> {
     let binding = window
         .highest_precedence_binding_for_action_in(action, context)
         .or_else(|| {

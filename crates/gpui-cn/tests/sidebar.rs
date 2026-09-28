@@ -3,9 +3,10 @@
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 use gpui_cn::{
-    ReduceMotion, Root, Sidebar, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarState,
+    ReduceMotion, Sidebar, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarState,
     SidebarTrigger, Theme,
 };
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, Styled as _, TestAppContext, Window, WindowHandle, base::Selectable as _,
@@ -735,4 +736,118 @@ fn rows_in_a_group_take_the_sidebar_width_at_rest_and_mid_fold(cx: &mut TestAppC
     let (_, inbox_folding, nested_folding) = widths(cx);
     assert_eq!(inbox_folding, inbox, "the same width while folding");
     assert_eq!(nested_folding, nested);
+}
+
+struct ActionHarness {
+    menu: gpui_kit::Entity<gpui_cn::MenuState>,
+    open: Rc<std::cell::Cell<bool>>,
+    clicks: Rc<std::cell::Cell<usize>>,
+}
+
+impl Render for ActionHarness {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let open = self.open.clone();
+        let clicks = self.clicks.clone();
+        let menu_open = self.menu.read(cx).is_open();
+        div().size_full().p_4().child(
+            gpui_cn::SidebarMenuButton::new("row")
+                .label("Projects")
+                .collapsible(open.get())
+                .on_toggle(move |value, _, _| open.set(*value))
+                .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                .action(
+                    gpui_cn::DropdownMenu::new("row-menu", &self.menu)
+                        .trigger(gpui_cn::Button::new("row-more").ghost().label("More"))
+                        .items(|_, _| vec![gpui_cn::MenuItem::new("rename", "Rename").into()]),
+                )
+                .show_action(menu_open),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_press_on_the_action_opens_its_menu_and_leaves_the_row_alone(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let open = Rc::new(std::cell::Cell::new(true));
+    let clicks = Rc::new(std::cell::Cell::new(0));
+    let mut menu = None;
+    let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
+        let state = cx.new(gpui_cn::MenuState::new);
+        menu = Some(state.clone());
+        let harness = cx.new(|cx| {
+            cx.observe(&state, |_, _, cx| cx.notify()).detach();
+            ActionHarness {
+                menu: state,
+                open: open.clone(),
+                clicks: clicks.clone(),
+            }
+        });
+        gpui_kit::base::Root::new(harness, window, cx)
+    });
+    let menu = menu.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("row-more", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(
+        menu.read_with(cx, |menu, _| menu.is_open()),
+        "the menu opened"
+    );
+    assert!(open.get(), "the row did not fold");
+    assert_eq!(clicks.get(), 0, "the row did not take the press");
+}
+
+struct PlainActionHarness {
+    open: Rc<std::cell::Cell<bool>>,
+    action_clicks: Rc<std::cell::Cell<usize>>,
+}
+
+impl Render for PlainActionHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let open = self.open.clone();
+        let action_clicks = self.action_clicks.clone();
+        div().size_full().p_4().child(
+            gpui_cn::SidebarMenuButton::new("plain-row")
+                .label("Projects")
+                .collapsible(open.get())
+                .on_toggle(move |value, _, _| open.set(*value))
+                .action(
+                    gpui_cn::Button::new("plain-more")
+                        .ghost()
+                        .label("More")
+                        .on_click(move |_, _, _| action_clicks.set(action_clicks.get() + 1)),
+                )
+                .show_action(true),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_press_on_a_plain_action_does_not_fold_the_row(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let open = Rc::new(std::cell::Cell::new(true));
+    let action_clicks = Rc::new(std::cell::Cell::new(0));
+    let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
+        let harness = cx.new(|_| PlainActionHarness {
+            open: open.clone(),
+            action_clicks: action_clicks.clone(),
+        });
+        gpui_kit::base::Root::new(harness, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("plain-more", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(action_clicks.get(), 1, "the action ran");
+    assert!(open.get(), "the row did not fold");
 }
