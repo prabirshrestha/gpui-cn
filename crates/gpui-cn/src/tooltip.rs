@@ -83,7 +83,7 @@ thread_local! {
 /// A short text tooltip, the content a trigger builds for the overlay.
 ///
 /// It draws the gpui-cn tooltip surface itself, so it looks the same
-/// through the [`Root`](crate::Root) overlay and as GPUI's native tooltip
+/// through the overlay gpui-cn adds to each `Root` and as GPUI's native tooltip
 /// in a window without one.
 pub struct Tooltip {
     text: SharedString,
@@ -132,7 +132,7 @@ pub fn surface(cx: &App) -> Div {
 }
 
 /// Positions and fades any tooltip view. Installed on the base overlay by
-/// [`Root`](crate::Root).
+/// the overlay gpui-cn adds to each `Root`.
 ///
 /// A new tooltip fades in over `motion.normal`. Switching between
 /// neighboring triggers is immediate. The view draws its own surface.

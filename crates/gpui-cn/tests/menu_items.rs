@@ -5,8 +5,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_cn::{
-    Button, DropdownMenu, MenuEntry, MenuItem, MenuState, MenuSubmenu, ReduceMotion, Root, Theme,
+    Button, DropdownMenu, MenuEntry, MenuItem, MenuState, MenuSubmenu, ReduceMotion, Theme,
 };
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, FocusHandle, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Render, Role, SharedString, Styled as _, TestAppContext, Window,

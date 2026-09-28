@@ -1,6 +1,7 @@
 //! UI integration tests for `NavStack` and `NavButtons`.
 
-use gpui_cn::{NavButtons, NavMotion, NavStack, NavStackState, ReduceMotion, Root, Theme};
+use gpui_cn::{NavButtons, NavMotion, NavStack, NavStackState, ReduceMotion, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AnyView, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowHandle,

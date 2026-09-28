@@ -103,25 +103,21 @@ fn main() {
         // The window opens here, not in a spawned task: a task waits
         // for the next turn of the run loop, and the Dock icon is
         // bouncing meanwhile.
-        let mut gallery = None;
-        let handle = cx
-            .open_window(options, |window, cx| {
-                mark("window created");
-                let view = cx.new(|cx| Gallery::new(window, cx));
-                let story = std::env::args().skip_while(|arg| arg != "--story").nth(1);
-                if let Some(title) = story {
-                    view.update(cx, |gallery, cx| gallery.select_story(&title, window, cx));
-                }
-                gallery = Some(view.clone());
-                window.on_next_frame(move |_, _| mark("first frame drawn"));
-                cx.new(|cx| gpui_cn::Root::new(view, window, cx))
-            })
-            .expect("failed to open window");
+        let (handle, gallery) = gpui_kit::open_window(options, cx, |window, cx| {
+            mark("window created");
+            let view = cx.new(|cx| Gallery::new(window, cx));
+            let story = std::env::args().skip_while(|arg| arg != "--story").nth(1);
+            if let Some(title) = story {
+                view.update(cx, |gallery, cx| gallery.select_story(&title, window, cx));
+            }
+            window.on_next_frame(move |_, _| mark("first frame drawn"));
+            view
+        })
+        .expect("failed to open window");
         mark("open_window returned");
         if std::env::args().any(|arg| arg == "--exercise") {
-            let gallery = gallery.expect("the gallery");
             cx.spawn(async move |cx| {
-                gpui_cn_story::exercise(gallery, handle.into(), cx).await;
+                gpui_cn_story::exercise(gallery, handle, cx).await;
             })
             .detach();
         }

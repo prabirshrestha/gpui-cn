@@ -2,7 +2,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Icon, Input, InputEvent, InputState, MenuEntry, MenuItem, Root, Theme};
+use gpui_cn::{Icon, Input, InputEvent, InputState, MenuEntry, MenuItem, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, ElementId, Entity, Focusable as _,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,

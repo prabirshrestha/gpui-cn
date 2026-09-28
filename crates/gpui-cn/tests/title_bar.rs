@@ -2,7 +2,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{ActiveTheme as _, Button, Root, TitleBar};
+use gpui_cn::{ActiveTheme as _, Button, TitleBar};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     Styled as _, TestAppContext, Window, base::TestSupportExt as _, div, px, size,

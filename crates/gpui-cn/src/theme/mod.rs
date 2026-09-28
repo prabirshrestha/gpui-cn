@@ -182,7 +182,7 @@ impl Theme {
         Self::update(cx, |theme| theme.mode = mode);
     }
 
-    /// Reads the system appearance again. [`crate::Root`] calls this when the
+    /// Reads the system appearance again. gpui-cn's root layer calls this when the
     /// window appearance changes; it matters only in [`ThemeMode::System`].
     pub fn sync_system_appearance(window: Option<&Window>, cx: &mut App) {
         let appearance = window

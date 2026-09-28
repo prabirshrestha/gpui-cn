@@ -4,7 +4,7 @@ use gpui_kit::{
     AnyElement, App, ElementId, Entity, FocusHandle, InteractiveElement as _, IntoElement, Length,
     MouseButton, ParentElement as _, RenderOnce, StyleRefinement, Styled, Window,
     base::{
-        Align, GlobalState, StyledExt as _, TestSupportExt as _,
+        Align, GlobalState, Selectable, StyledExt as _, TestSupportExt as _,
         actions::{Confirm, SelectDown},
     },
     div,
@@ -16,6 +16,8 @@ use super::{
     panel::{MenuPanels, measure},
 };
 
+/// Builds the trigger, marked open while the menu is.
+type TriggerBuilder = Box<dyn FnOnce(bool) -> AnyElement>;
 pub(crate) type EntriesBuilder = Rc<dyn Fn(&mut Window, &mut App) -> Vec<MenuEntry>>;
 /// Opens the menu, from the keyboard when the flag is set.
 type Opener = Rc<dyn Fn(bool, &mut Window, &mut App)>;
@@ -52,7 +54,7 @@ type Opener = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 pub struct DropdownMenu {
     id: ElementId,
     state: Entity<MenuState>,
-    trigger: Option<AnyElement>,
+    trigger: Option<TriggerBuilder>,
     items: Option<EntriesBuilder>,
     align: Align,
     action_context: Option<FocusHandle>,
@@ -76,9 +78,10 @@ impl DropdownMenu {
     }
 
     /// The element that opens the menu, such as a [`Button`](crate::Button)
-    /// without a click handler of its own.
-    pub fn trigger(mut self, trigger: impl IntoElement) -> Self {
-        self.trigger = Some(trigger.into_any_element());
+    /// without a click handler of its own. It is marked open while the
+    /// menu shows.
+    pub fn trigger(mut self, trigger: impl Selectable + IntoElement + 'static) -> Self {
+        self.trigger = Some(Box::new(move |open| trigger.open(open).into_any_element()));
         self
     }
 
@@ -184,7 +187,7 @@ impl RenderOnce for DropdownMenu {
                 this.on_action(move |_: &Confirm, window, cx| confirm(true, window, cx))
                     .on_action(move |_: &SelectDown, window, cx| open_menu(true, window, cx))
             })
-            .children(self.trigger)
+            .children(self.trigger.map(|trigger| trigger(open)))
             .child(MenuPanels::new(self.id, &state).width(self.menu_width))
     }
 }

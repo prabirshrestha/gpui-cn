@@ -1,7 +1,8 @@
 use gpui_cn::{
-    ActiveTheme as _, Button, ButtonSize, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
-    SidebarMenuButton, SidebarMenuSize, SidebarMenuSkeleton, SidebarMenuSub, SidebarSeparator,
-    SidebarSide, SidebarState, SidebarTrigger, gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ButtonSize, DropdownMenu, MenuItem, MenuState, Sidebar,
+    SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSize,
+    SidebarMenuSkeleton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
+    SidebarTrigger, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _,
@@ -16,6 +17,12 @@ use crate::{Story, frame, note, page, section, segmented_with};
 /// separator, skeleton rows, and the three collapse modes on either side.
 pub struct SidebarStory {
     state: Entity<SidebarState>,
+    /// The menu each row's "more" action opens, in [`ROWS`] order. One
+    /// each, so a menu opens under its own row.
+    row_menus: Vec<Entity<MenuState>>,
+    /// The two sidebars of the "Both sides" layout.
+    left: Entity<SidebarState>,
+    right: Entity<SidebarState>,
     side: SidebarSide,
     selected: &'static str,
     labels_open: bool,
@@ -54,6 +61,19 @@ impl Story for SidebarStory {
                     .with_width_range(px(180.)..px(360.))
             });
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
+            let row_menus: Vec<_> = ROWS.iter().map(|_| cx.new(MenuState::new)).collect();
+            let left = cx.new(|cx| SidebarState::new(cx).with_width(px(200.)));
+            let right = cx.new(|cx| {
+                SidebarState::new(cx)
+                    .with_width(px(200.))
+                    .with_width_range(px(160.)..px(320.))
+            });
+            for menu in &row_menus {
+                cx.observe(menu, |_, _, cx| cx.notify()).detach();
+            }
+            for state in [&left, &right] {
+                cx.observe(state, |_, _, cx| cx.notify()).detach();
+            }
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(4))
@@ -67,6 +87,9 @@ impl Story for SidebarStory {
             .detach();
             Self {
                 state,
+                row_menus,
+                left,
+                right,
                 side: SidebarSide::Left,
                 selected: "inbox",
                 labels_open: true,
@@ -212,8 +235,9 @@ impl Render for SidebarStory {
                                                         .accessibility_label("Compose")
                                                         .tooltip("Compose"),
                                                 )
-                                                .children(ROWS.into_iter().map(
-                                                    |(id, label, icon, badge)| {
+                                                .children(ROWS.into_iter().zip(self.row_menus.clone()).map(
+                                                    |((id, label, icon, badge), menu)| {
+                                                        let menu_open = menu.read(cx).is_open();
                                                         SidebarMenuButton::new(id)
                                                             .icon(icon)
                                                             .label(label)
@@ -221,16 +245,36 @@ impl Render for SidebarStory {
                                                                 this.badge(badge)
                                                             })
                                                             .action(
-                                                                Button::new(ElementId::NamedChild(
-                                                                    ElementId::from(id).into(),
-                                                                    "more".into(),
-                                                                ))
+                                                                DropdownMenu::new(
+                                                                    ElementId::NamedChild(
+                                                                        ElementId::from(id).into(),
+                                                                        "more-menu".into(),
+                                                                    ),
+                                                                    &menu,
+                                                                )
+                                                                .align(gpui_kit::base::Align::Start)
+                                                                .trigger(
+                                                                    Button::new(ElementId::NamedChild(
+                                                                        ElementId::from(id).into(),
+                                                                        "more".into(),
+                                                                    ))
                                                                     .ghost()
                                                                     .size(ButtonSize::Sm)
                                                                     .icon(IconName::Ellipsis)
                                                                     .accessibility_label("More")
                                                                     .tooltip("More"),
+                                                                )
+                                                                .items(|_, _| {
+                                                                    vec![
+                                                                        MenuItem::new("rename", "Rename").into(),
+                                                                        MenuItem::new("share", "Share").into(),
+                                                                        MenuItem::new("delete", "Delete")
+                                                                            .destructive()
+                                                                            .into(),
+                                                                    ]
+                                                                }),
                                                             )
+                                                            .show_action(menu_open)
                                                             .selected(self.selected == id)
                                                             .when(id == "projects", |this| {
                                                                 this.collapsible(projects_open)
@@ -368,8 +412,106 @@ impl Render for SidebarStory {
                     ),
             )
             .into_any_element(),
+            section(
+                "Both sides",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .w_full()
+                    .child(note(
+                        "A navigation sidebar on the left and an inspector on the right, each \
+                         with its own state: resize or close either one on its own.",
+                        cx,
+                    ))
+                    .child(both_sides(&self.left, &self.right, cx)),
+            )
+            .into_any_element(),
         ])
     }
+}
+
+/// A frame with a sidebar at each side of one content area: the left
+/// layout's content is the right layout.
+fn both_sides(
+    left: &Entity<SidebarState>,
+    right: &Entity<SidebarState>,
+    cx: &mut Context<SidebarStory>,
+) -> impl IntoElement {
+    let title_bar = cx.theme().metrics.title_bar;
+    let muted = cx.theme().muted_foreground();
+    let rail = cx.theme().metrics.icon_sidebar_width;
+    let rows = |prefix: &'static str, rows: [(&'static str, IconName); 3]| {
+        SidebarGroup::new().children(rows.into_iter().map(move |(label, icon)| {
+            SidebarMenuButton::new(ElementId::NamedChild(
+                ElementId::from(prefix).into(),
+                label.into(),
+            ))
+            .icon(icon)
+            .label(label)
+        }))
+    };
+    frame(px(320.), cx)
+        .relative()
+        .child(
+            SidebarLayout::new(left)
+                .side(SidebarSide::Left)
+                .sidebar(Sidebar::new().header(div().h(title_bar)).child(rows(
+                    "both-nav",
+                    [
+                        ("Inbox", IconName::Inbox),
+                        ("Starred", IconName::Star),
+                        ("Archive", IconName::HardDrive),
+                    ],
+                )))
+                .child(
+                    SidebarLayout::new(right)
+                        .side(SidebarSide::Right)
+                        .sidebar(Sidebar::new().header(div().h(title_bar)).child(rows(
+                            "both-inspector",
+                            [
+                                ("Details", IconName::Info),
+                                ("Activity", IconName::Calendar),
+                                ("Settings", IconName::Settings),
+                            ],
+                        )))
+                        .child(div().h(title_bar).flex_shrink_0())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .items_center()
+                                .justify_center()
+                                .text_sm()
+                                .text_color(muted)
+                                .child("Content"),
+                        ),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h(title_bar)
+                .w(rail)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(SidebarTrigger::new("both-left-trigger", left)),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .h(title_bar)
+                .w(rail)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(SidebarTrigger::new("both-right-trigger", right).icon(IconName::PanelRight)),
+        )
 }
 
 fn labeled(label: &'static str, control: impl IntoElement) -> impl IntoElement {

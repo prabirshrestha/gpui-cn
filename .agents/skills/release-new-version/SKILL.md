@@ -14,7 +14,7 @@ description: Release a new version of gpui-cn by updating main, checking CI, app
   A dry run must not commit, push, create tags, or publish.
 - Inspect `git status --short --branch`. Stop if the working tree has changes.
 - Pull with `git pull --ff-only` when `main` tracks a remote.
-- Publish only `gpui-cn`. The gallery and iOS host have `publish = false`.
+- Publish only `gpui-cn`. The gallery has `publish = false`.
 - Do not publish locally. A version tag starts the `Release` workflow in
   `.github/workflows/release.yml`.
 - That workflow uses crates.io Trusted Publishing through GitHub OIDC,
@@ -64,7 +64,7 @@ Local checks do not replace successful CI for the release commit.
    ```
 
 6. Inspect the diff. Only the two version fields in `Cargo.toml` and the package
-   versions for `gpui-cn`, `gpui-cn-story`, and `gpui-cn-story-ios` in
+   versions for `gpui-cn` and `gpui-cn-story` in
    `Cargo.lock` should change. Do not include unrelated dependency updates.
 
 ## Validate
@@ -77,12 +77,9 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features --locked
 cargo deny check licenses
-cargo check -p gpui-cn-story-ios --target aarch64-apple-ios-sim --locked
 ```
 
-Use the repository's Rust toolchain. The iOS check requires macOS, Xcode, and
-the `aarch64-apple-ios-sim` target. Follow `AGENTS.md` for simulator,
-benchmark, and snapshot checks when the release includes the relevant changes.
+Use the repository's Rust toolchain. Follow `AGENTS.md` for benchmark, and snapshot checks when the release includes the relevant changes.
 
 For a dry run, validate the package without committing:
 

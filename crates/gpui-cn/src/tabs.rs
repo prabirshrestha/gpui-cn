@@ -21,9 +21,9 @@
 use std::{fmt, sync::Arc};
 
 use gpui_kit::{
-    App, Context, Div, ElementId, Entity, EventEmitter, Hsla, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement as _, Pixels, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels, RenderOnce, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
     assets::IconName,
     base::{
         self, Disableable as _, ElementExt as _, Interpolate as _, Sequence, StyledExt as _,
@@ -353,7 +353,8 @@ fn separator_after(index: usize, selected_index: Option<usize>, len: usize) -> b
 /// ends, and the selected tab shows the focus ring.
 ///
 /// A click selects a tab. The close control removes it. The new-tab control
-/// emits [`TabsEvent::AddRequested`]. When the tabs overflow the strip,
+/// emits [`TabsEvent::AddRequested`], unless the strip hands it to the
+/// application with [`add_trigger`](Tabs::add_trigger). When the tabs overflow the strip,
 /// scroll controls appear at its start.
 ///
 /// The strip and the content below share the window surface. A hairline
@@ -377,8 +378,11 @@ pub struct Tabs {
     style: StyleRefinement,
     closable: bool,
     addable: bool,
+    add_trigger: Option<AddTrigger>,
     leading: Pixels,
 }
+
+type AddTrigger = Box<dyn FnOnce(Button) -> AnyElement>;
 
 impl Tabs {
     /// A strip for `state`, with close and new-tab controls.
@@ -389,6 +393,7 @@ impl Tabs {
             style: StyleRefinement::default(),
             closable: true,
             addable: true,
+            add_trigger: None,
             leading: px(0.),
         }
     }
@@ -410,6 +415,15 @@ impl Tabs {
     /// Whether the strip ends with a new-tab control. On by default.
     pub fn addable(mut self, addable: bool) -> Self {
         self.addable = addable;
+        self
+    }
+
+    /// Hands the new-tab control to `wrap` in place of emitting
+    /// [`TabsEvent::AddRequested`], such as to make it the trigger of a
+    /// [`Popover`](crate::Popover) of what to add. `wrap` gets the control
+    /// as the strip draws it, with no click handler.
+    pub fn add_trigger<E: IntoElement>(mut self, wrap: impl FnOnce(Button) -> E + 'static) -> Self {
+        self.add_trigger = Some(Box::new(move |button| wrap(button).into_any_element()));
         self
     }
 }
@@ -513,7 +527,7 @@ impl Overflow {
 /// A control slot at the strip's start or end. It is as tall as a tab item
 /// and starts below the surface inset, so its glyph centers on the tab
 /// labels.
-fn slot(look: &Look, button: Button) -> impl IntoElement {
+fn slot(look: &Look, control: impl IntoElement) -> impl IntoElement {
     h_flex()
         .w(look.control)
         .h_full()
@@ -522,7 +536,7 @@ fn slot(look: &Look, button: Button) -> impl IntoElement {
         .justify_center()
         .border_b_1()
         .border_color(look.outline)
-        .child(button)
+        .child(control)
 }
 
 /// Empty room in the strip, `width` wide, with its piece of the hairline.
@@ -973,18 +987,22 @@ impl RenderOnce for Tabs {
                     })
                     .child(viewport)
                     .when(self.addable, |this| {
-                        this.child(room(&look, look.edge)).child(slot(
-                            &look,
-                            Button::new(child("add"))
-                                .ghost()
-                                .size(ButtonSize::Sm)
-                                .icon(IconName::Plus)
-                                .accessibility_label("New tab")
-                                .tooltip("New tab")
+                        let button = Button::new(child("add"))
+                            .ghost()
+                            .size(ButtonSize::Sm)
+                            .icon(IconName::Plus)
+                            .accessibility_label("New tab")
+                            .tooltip("New tab");
+                        let control = match self.add_trigger {
+                            Some(wrap) => wrap(button),
+                            None => button
                                 .on_click(move |_, _, cx| {
                                     add_state.update(cx, |state, cx| state.request_add(cx))
-                                }),
-                        ))
+                                })
+                                .into_any_element(),
+                        };
+                        this.child(room(&look, look.edge))
+                            .child(slot(&look, control))
                     })
                     .child(hairline(&look)),
             )

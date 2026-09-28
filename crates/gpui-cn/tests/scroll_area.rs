@@ -1,6 +1,7 @@
 //! UI integration tests for `ScrollArea`.
 
-use gpui_cn::{Root, ScrollArea};
+use gpui_cn::ScrollArea;
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     PlatformInput, Render, ScrollDelta, ScrollWheelEvent, Styled as _, TestAppContext, TouchPhase,

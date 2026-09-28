@@ -15,11 +15,6 @@ that this repository does not name. The workspace has three crates:
   which makes it the first application that uses the library. Its
   `snapshot` binary renders the gallery to PNG files without a window, on
   macOS. `cargo run` at the root opens it.
-- `crates/gpui-cn-story-ios` runs the gallery in the iOS Simulator. It is
-  a UIKit host written in Rust with `objc2`: an application delegate, a
-  scene delegate that hosts GPUI's view controller in a `UIWindow`, and a
-  `CADisplayLink` that asks GPUI for frames. `ios/run.sh` builds and
-  launches it. Keep it Rust only; do not add Swift or Objective-C files.
 
 ## Rules
 
@@ -120,17 +115,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features
 cargo deny check licenses
-cargo check -p gpui-cn-story-ios --target aarch64-apple-ios-sim
 ```
 
 `deny.toml` lists the licenses this repository accepts. A crate that is
 only available under the GPL or the LGPL fails the check. Never add one.
-
-A change to the shell or to touch input also runs on the simulator:
-
-```bash
-crates/gpui-cn-story-ios/ios/run.sh
-```
 
 A change that touches layout, motion, or scrolling also runs the
 benchmark and compares the numbers with the last run:
@@ -141,8 +129,7 @@ cargo run --release -p gpui-cn-story --features snapshot --bin bench
 
 A frame of the heaviest page costs about 1.5 ms offscreen in release, and
 an idle window costs no frames at all: GPUI draws only when something
-changed, and the iOS host pauses its display link when GPUI asks for no
-more frames. Keep both true. Never add a timer or an animation that runs
+changed. Keep both true. Never add a timer or an animation that runs
 while nothing is visible.
 
 Then look at the result:

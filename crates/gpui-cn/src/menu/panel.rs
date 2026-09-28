@@ -155,6 +155,24 @@ fn panel_id(
     ))
 }
 
+/// The side of a trigger a menu opens on: below when its full height
+/// fits there or below has the more room, else above. Decided once as
+/// the menu opens, so a list that shortens never flips it.
+pub(crate) fn placement(
+    trigger: Bounds<Pixels>,
+    viewport_height: Pixels,
+    max_height: Pixels,
+    gap: Pixels,
+) -> Placement {
+    let below = viewport_height - trigger.bottom();
+    let above = trigger.top();
+    if below >= max_height + gap || below >= above {
+        Placement::Bottom
+    } else {
+        Placement::Top
+    }
+}
+
 /// The menu's corner that touches a trigger, and where it goes: on the
 /// side the menu is on, at the edge it lines up with, a gap away.
 pub(crate) fn corner(
@@ -610,7 +628,11 @@ struct RowKind {
 
 /// The shortcut of `action` as the platform writes it, from the bindings
 /// that reach `context`, else from those that apply everywhere.
-fn shortcut(action: &dyn Action, context: &FocusHandle, window: &Window) -> Option<SharedString> {
+pub(crate) fn shortcut(
+    action: &dyn Action,
+    context: &FocusHandle,
+    window: &Window,
+) -> Option<SharedString> {
     let binding = window
         .highest_precedence_binding_for_action_in(action, context)
         .or_else(|| {

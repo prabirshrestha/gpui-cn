@@ -7,9 +7,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use gpui_cn::{
-    ReduceMotion, Root, Select, SelectEntry, SelectEvent, SelectItem, SelectState, Theme,
-};
+use gpui_cn::{ReduceMotion, Select, SelectEntry, SelectEvent, SelectItem, SelectState, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, Focusable as _, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window,
@@ -1346,4 +1345,33 @@ fn a_search_field_without_a_menu_ignores_the_right_click(cx: &mut TestAppContext
     })
     .unwrap();
     assert!(setup.state.read_with(cx, |state, _| state.is_open()));
+}
+
+#[gpui_kit::test]
+fn on_touch_a_pointer_over_a_row_leaves_the_highlight(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |_, cx| SelectState::new(entries(), cx));
+    let highlighted = |cx: &mut TestAppContext| {
+        setup
+            .state
+            .read_with(cx, |state, _| state.highlighted().map(|item| *item.value()))
+    };
+    cx.update(|cx| Theme::update(cx, |theme| theme.touch = true));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.hover(child("cloud"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(highlighted(cx), Some("all"), "a finger has no hover");
+    cx.update(|cx| Theme::update(cx, |theme| theme.touch = false));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.hover(child("all"), cx);
+        window.hover(child("cloud"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(highlighted(cx), Some("cloud"), "a mouse highlights the row");
 }

@@ -1,6 +1,7 @@
 //! UI integration tests for `Badge`.
 
-use gpui_cn::{ActiveTheme as _, Avatar, Badge, Root};
+use gpui_cn::{ActiveTheme as _, Avatar, Badge};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     Window, WindowHandle, assets::IconName, div, px, size, test::TestWindowExt as _,

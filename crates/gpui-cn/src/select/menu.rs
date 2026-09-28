@@ -8,7 +8,7 @@ use gpui_kit::{
     MouseButton, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window,
     assets::IconName,
-    base::{self, TestSupportExt as _, h_flex, v_flex},
+    base::{TestSupportExt as _, h_flex, v_flex},
     div,
     prelude::FluentBuilder as _,
 };
@@ -21,9 +21,8 @@ use crate::{
     Icon, ScrollArea,
     menu::{
         MenuLook, MenuMotion, MenuPanels, TextMenuBuilder, label_block, line_slot, open_text_menu,
-        row_line, separator,
+        row_line, search_row, separator,
     },
-    touch_selection,
 };
 
 pub(super) type ItemRenderer<V> =
@@ -203,26 +202,9 @@ impl<V: SelectValue> Menu<V> {
             })
             .when_some(search, |this, search| {
                 this.child(
-                    h_flex()
+                    search_row(&search, look, window, cx)
                         .id(ElementId::NamedChild(id.clone().into(), "search".into()))
                         .test_support()
-                        .flex_shrink_0()
-                        .items_center()
-                        .gap_2()
-                        .h(look.search_height)
-                        .px(look.row_padding)
-                        .child(
-                            Icon::from(IconName::Search)
-                                .size_4()
-                                .text_color(look.muted_foreground),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(base::input::Input::new(&search)),
-                        )
-                        .children(touch_selection::for_state(&search, window, cx))
                         .when_some(search_menu.filter(|_| search_menu_enabled), |this, menu| {
                             let input = search.clone();
                             let opener = menu.clone();
@@ -350,9 +332,12 @@ impl<V: SelectValue> Rows<V> {
                     .children(content)
                     // A pointer that moves over a row highlights it; a row that
                     // scrolls under a resting pointer does not, so the
-                    // keyboard's highlight is not snatched back.
-                    .on_mouse_move(move |_, _, cx| {
-                        hover_state.update(cx, |state, cx| state.highlight_row(row, cx));
+                    // keyboard's highlight is not snatched back. A finger has
+                    // no hover.
+                    .when(!look.touch, |this| {
+                        this.on_mouse_move(move |_, _, cx| {
+                            hover_state.update(cx, |state, cx| state.highlight_row(row, cx));
+                        })
                     })
                     .on_click(move |_, window, cx| {
                         choose_state.update(cx, |state, cx| state.choose(&value, window, cx));

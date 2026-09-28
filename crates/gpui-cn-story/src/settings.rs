@@ -3,8 +3,8 @@
 
 use gpui_cn::{
     ActiveTheme as _, Button, ButtonSize, NavMotion, NavStackState, ReduceMotion, ScrollArea,
-    Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarState,
-    Switch, Theme, ThemeMode, ThemeModePicker, TitleBar, gpui_kit::assets::IconName,
+    Sidebar, SidebarCollapsible, SidebarGroup, SidebarMenuButton, SidebarState, Switch, Theme,
+    ThemeMode, ThemeModePicker, TitleBar, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyElement, App, Context, Div, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -12,8 +12,7 @@ use gpui_kit::{
 };
 
 use crate::{
-    PAGE_WIDTH, UI_FONT_SIZE_RANGE, segmented, segmented_from, segmented_with, shell_controls,
-    sidebar_title_bar,
+    PAGE_WIDTH, UI_FONT_SIZE_RANGE, segmented, segmented_from, segmented_with, sidebar_title_bar,
 };
 
 /// One page of settings.
@@ -79,7 +78,9 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> Sidebar {
+    /// The settings sidebar: back to the app, and the sections. The
+    /// gallery draws it in its one sidebar while this page shows.
+    pub(crate) fn render_sidebar(&self, cx: &mut Context<Self>) -> Sidebar {
         let stack = self.stack.clone();
         Sidebar::new()
             .header(sidebar_title_bar())
@@ -265,7 +266,7 @@ impl SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (open, icon_only) = {
             let state = self.sidebar.read(cx);
             (state.is_open(), state.is_icon_only())
@@ -277,42 +278,38 @@ impl Render for SettingsPage {
             SettingsSection::Appearance => self.render_appearance(cx),
         };
         div()
-            .relative()
+            .flex()
+            .flex_col()
             .size_full()
+            .child(TitleBar::new().inset(!open && !icon_only))
             .child(
-                SidebarLayout::new(&self.sidebar)
-                    .sidebar(self.render_sidebar(cx))
-                    .child(TitleBar::new().inset(!open && !icon_only))
+                ScrollArea::new("settings-scroll")
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .flex_1()
+                    .min_h_0()
+                    .px_8()
+                    .pb_10()
                     .child(
-                        ScrollArea::new("settings-scroll")
+                        div()
                             .flex()
                             .flex_col()
-                            .items_center()
-                            .flex_1()
-                            .min_h_0()
-                            .px_8()
-                            .pb_10()
+                            .w_full()
+                            .max_w(PAGE_WIDTH)
+                            .gap_4()
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
-                                    .w_full()
-                                    .max_w(PAGE_WIDTH)
-                                    .gap_4()
-                                    .child(
-                                        div()
-                                            .pt_8()
-                                            .pb_4()
-                                            .text_size(title.size)
-                                            .line_height(title.line_height)
-                                            .font_weight(title.weight)
-                                            .child(section.title()),
-                                    )
-                                    .children(content),
-                            ),
+                                    .pt_8()
+                                    .pb_4()
+                                    .text_size(title.size)
+                                    .line_height(title.line_height)
+                                    .font_weight(title.weight)
+                                    .child(section.title()),
+                            )
+                            .children(content),
                     ),
             )
-            .child(shell_controls(&self.sidebar, &self.stack, window, cx))
     }
 }
 

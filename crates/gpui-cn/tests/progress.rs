@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use gpui_cn::{Progress, ReduceMotion, Root, Spinner, Theme};
+use gpui_cn::{Progress, ReduceMotion, Spinner, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, div, px, size, test::TestWindowExt as _,

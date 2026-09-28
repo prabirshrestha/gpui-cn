@@ -27,7 +27,7 @@ use gpui_kit::{
 
 pub use gpui_kit::base::{NavMotion, NavOperation, NavPage, NavStackEvent, NavStackState};
 
-use crate::{Button, Theme};
+use crate::{Button, Icon, Theme};
 use gpui_kit::assets::IconName;
 
 /// Navigation that also frees pages.
@@ -148,6 +148,8 @@ pub struct NavButtons {
     id: ElementId,
     state: Entity<NavStackState>,
     tooltips: bool,
+    back_icon: Icon,
+    forward_icon: Icon,
 }
 
 impl NavButtons {
@@ -157,7 +159,22 @@ impl NavButtons {
             id: id.into(),
             state: state.clone(),
             tooltips: true,
+            back_icon: IconName::ArrowLeft.into(),
+            forward_icon: IconName::ArrowRight.into(),
         }
+    }
+
+    /// The back arrow, in place of Lucide's `arrow-left`, such as an
+    /// application's own SVG through [`Icon::from_bytes`].
+    pub fn back_icon(mut self, icon: impl Into<Icon>) -> Self {
+        self.back_icon = icon.into();
+        self
+    }
+
+    /// The forward arrow, in place of Lucide's `arrow-right`.
+    pub fn forward_icon(mut self, icon: impl Into<Icon>) -> Self {
+        self.forward_icon = icon.into();
+        self
     }
 
     /// Whether the arrows show their names as tooltips. On by default.
@@ -183,7 +200,7 @@ impl RenderOnce for NavButtons {
             .child(
                 Button::new(ElementId::NamedChild(self.id.clone().into(), "back".into()))
                     .ghost()
-                    .icon(IconName::ArrowLeft)
+                    .icon(self.back_icon)
                     .accessibility_label("Back")
                     .when(self.tooltips, |this| this.tooltip("Back"))
                     .disabled(!can_go_back)
@@ -196,7 +213,7 @@ impl RenderOnce for NavButtons {
             .child(
                 Button::new(ElementId::NamedChild(self.id.into(), "forward".into()))
                     .ghost()
-                    .icon(IconName::ArrowRight)
+                    .icon(self.forward_icon)
                     .accessibility_label("Forward")
                     .when(self.tooltips, |this| this.tooltip("Forward"))
                     .disabled(!can_go_forward)

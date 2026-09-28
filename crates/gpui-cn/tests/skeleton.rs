@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use gpui_cn::{ActiveTheme as _, ReduceMotion, Root, Skeleton, Theme};
+use gpui_cn::{ActiveTheme as _, ReduceMotion, Skeleton, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, WindowHandle, div, prelude::FluentBuilder as _, px, size,

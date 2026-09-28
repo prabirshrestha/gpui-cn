@@ -3,7 +3,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Root, ThemeMode, ThemeModePicker};
+use gpui_cn::{ThemeMode, ThemeModePicker};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, base::Disableable as _, div, px, size, test::TestWindowExt as _,

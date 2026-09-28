@@ -6,7 +6,8 @@ use std::{
     sync::Arc,
 };
 
-use gpui_cn::{ActiveTheme as _, Root, Tab, Tabs, TabsEvent, TabsState, Theme};
+use gpui_cn::{ActiveTheme as _, Tab, Tabs, TabsEvent, TabsState, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Pixels, Render,
     SharedString, Styled as _, TestAppContext, Window, WindowHandle, div, px, size,
@@ -698,4 +699,67 @@ fn a_mouse_wheel_step_glides_and_a_trackpad_step_is_direct(cx: &mut TestAppConte
         gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-10.), px(0.))),
     );
     assert_eq!(first_tab_x(cx), start - line * 4. - px(10.));
+}
+
+struct TriggerHarness {
+    tabs: Entity<TabsState>,
+}
+
+impl Render for TriggerHarness {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let bar = cx.theme().metrics.title_bar;
+        div().size_full().child(div().w_full().h(bar).child(
+            Tabs::new("tabs", &self.tabs).add_trigger(|button| {
+                gpui_cn::Popover::new("add-popover")
+                    .trigger(button)
+                    .content(|_, _| div().size(px(40.)))
+            }),
+        ))
+    }
+}
+
+#[gpui_kit::test]
+fn an_add_trigger_takes_the_control_in_place_of_the_request(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = gpui_cn::ReduceMotion::On);
+    });
+    let tabs = cx.new(|_| TabsState::new((0..2).map(tab)));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    cx.update({
+        let tabs = tabs.clone();
+        let events = events.clone();
+        move |cx| {
+            cx.subscribe(&tabs, move |_, event: &TabsEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        }
+    });
+    let handle = cx.open_window(size(px(600.), px(300.)), |window, cx| {
+        let tabs = tabs.clone();
+        let harness = cx.new(|_| TriggerHarness { tabs });
+        Root::new(harness, window, cx)
+    });
+    let panel = ElementId::NamedChild(ElementId::Name("add-popover".into()).into(), "panel".into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let add = window.find(child("add")).bounds();
+        window.click(child("add"), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let panel = window.find(panel).bounds();
+        assert_eq!(panel.left(), add.left(), "lined up with the leading edge");
+        assert_eq!(
+            panel.top(),
+            add.bottom() + px(2.),
+            "the menu gap under the control"
+        );
+    })
+    .unwrap();
+    assert!(
+        events.borrow().is_empty(),
+        "the control opens the popover instead of requesting a tab"
+    );
 }

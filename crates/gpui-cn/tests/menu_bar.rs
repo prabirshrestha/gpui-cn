@@ -4,9 +4,9 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_cn::{
-    Input, InputState, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, ReduceMotion, Root,
-    Theme,
+    Input, InputState, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, ReduceMotion, Theme,
 };
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, OwnedMenu, OwnedMenuItem,
     ParentElement as _, Render, Role, SharedString, Styled as _, TestAppContext, Window,

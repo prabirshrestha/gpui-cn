@@ -5,15 +5,20 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    AnyElement, App, BoxShadow, ElementId, Hsla, IntoElement, ParentElement as _, Pixels,
-    SharedString, Styled as _, Window,
-    base::{Presence, PresencePhase, Transition, h_flex, v_flex},
+    AnyElement, App, BoxShadow, Div, ElementId, Entity, Hsla, IntoElement, ParentElement as _,
+    Pixels, SharedString, Styled as _, Window,
+    assets::IconName,
+    base::{
+        Presence, PresencePhase, Transition, h_flex,
+        input::{Input, InputEditorStyle, InputState},
+        v_flex,
+    },
     div,
     prelude::FluentBuilder as _,
     px, rems,
 };
 
-use crate::{Theme, ThemeTokens};
+use crate::{Icon, Theme, ThemeTokens, touch_selection};
 
 /// Everything a menu reads from the theme, in one borrow.
 #[derive(Clone)]
@@ -212,6 +217,45 @@ pub(crate) fn separator(look: &MenuLook) -> AnyElement {
         .px(look.padding * 2.)
         .child(div().h_px().w_full().bg(look.separator))
         .into_any_element()
+}
+
+/// The search field at the top of a menu: the search icon, then the
+/// field, a control row tall. The caller gives it its id and the
+/// separator under it.
+pub(crate) fn search_row(
+    input: &Entity<InputState>,
+    look: &MenuLook,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_2()
+        .h(look.search_height)
+        .px(look.row_padding)
+        .child(
+            Icon::from(IconName::Search)
+                .size_4()
+                .text_color(look.muted_foreground),
+        )
+        .child(div().flex_1().min_w_0().child(Input::new(input)))
+        .children(touch_selection::for_state(input, window, cx))
+}
+
+/// The colors a menu's search field paints its text, caret, and
+/// selection in: the menu's, not the window's. Left unset, base paints
+/// the selection in its `accent`, which on this theme is the soft fill,
+/// invisible on the menu; the theme's selection is the accent color
+/// itself.
+pub(crate) fn search_style(theme: &ThemeTokens) -> InputEditorStyle {
+    InputEditorStyle {
+        foreground: theme.popover_foreground,
+        muted_foreground: theme.muted_foreground(),
+        selection: theme.selection(),
+        caret: theme.popover_foreground,
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

@@ -880,6 +880,7 @@ pub struct SidebarMenuButton {
     label: Option<SharedString>,
     badge: Option<SharedString>,
     action: Option<AnyElement>,
+    show_action: bool,
     sub: Option<SidebarMenuSub>,
     open: Option<bool>,
     on_toggle: Option<ToggleHandler>,
@@ -900,6 +901,7 @@ impl SidebarMenuButton {
             label: None,
             badge: None,
             action: None,
+            show_action: false,
             sub: None,
             open: None,
             on_toggle: None,
@@ -965,6 +967,13 @@ impl SidebarMenuButton {
         self
     }
 
+    /// Keeps the action shown without a hover, such as while the menu it
+    /// opens is open, so the pointer can leave the row for the menu.
+    pub fn show_action(mut self, show: bool) -> Self {
+        self.show_action = show;
+        self
+    }
+
     /// The size tier.
     pub fn size(mut self, size: SidebarMenuSize) -> Self {
         self.size = size;
@@ -1003,6 +1012,17 @@ impl Selectable for SidebarMenuButton {
 
     fn is_selected(&self) -> bool {
         self.button.is_selected()
+    }
+
+    /// Kept apart from `selected`: a row is selected while it is the
+    /// current view, and open only while its popover or menu shows.
+    fn open(mut self, open: bool) -> Self {
+        self.button = self.button.open(open);
+        self
+    }
+
+    fn is_open(&self) -> bool {
+        self.button.is_open()
     }
 }
 
@@ -1127,9 +1147,15 @@ impl RenderOnce for SidebarMenuButton {
                         .right_1()
                         .flex()
                         .items_center()
+                        // A press on the action is the action's, not the
+                        // row's: it must not select or fold the row. It
+                        // stops the press rather than blocking the mouse,
+                        // which would end the row's hover and hide the
+                        // action under the pointer.
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         // A finger cannot hover to reveal it, so on touch
                         // the action stays visible.
-                        .when(!touch, |this| {
+                        .when(!touch && !self.show_action, |this| {
                             this.opacity(0.)
                                 .group_hover(group_name, |this| this.opacity(1.))
                         })
@@ -1333,6 +1359,7 @@ pub struct SidebarTrigger {
     state: Entity<SidebarState>,
     tooltip: bool,
     size: ButtonSize,
+    icon: Icon,
 }
 
 impl SidebarTrigger {
@@ -1343,7 +1370,15 @@ impl SidebarTrigger {
             state: state.clone(),
             tooltip: true,
             size: ButtonSize::Default,
+            icon: IconName::PanelLeft.into(),
         }
+    }
+
+    /// The icon, in place of Lucide's `panel-left`, such as an
+    /// application's own SVG through [`Icon::from_bytes`].
+    pub fn icon(mut self, icon: impl Into<Icon>) -> Self {
+        self.icon = icon.into();
+        self
     }
 
     /// Whether the trigger shows its name as a tooltip. On by default.
@@ -1373,7 +1408,7 @@ impl RenderOnce for SidebarTrigger {
         Button::new(self.id)
             .ghost()
             .size(self.size)
-            .icon(IconName::PanelLeft)
+            .icon(self.icon)
             .accessibility_label(name)
             .when(self.tooltip, |this| this.tooltip(name))
             .disabled(fixed)

@@ -1,6 +1,7 @@
 //! UI integration tests for `Avatar` and `AvatarGroup`.
 
-use gpui_cn::{ActiveTheme as _, Avatar, AvatarGroup, AvatarSize, Root, Theme};
+use gpui_cn::{ActiveTheme as _, Avatar, AvatarGroup, AvatarSize, Theme};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     Window, WindowHandle, div, px, size, test::TestWindowExt as _,

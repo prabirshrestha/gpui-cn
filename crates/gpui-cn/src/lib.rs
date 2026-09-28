@@ -4,8 +4,9 @@
 //! GPUI and `gpui-base` and nothing else.
 //!
 //! Initialize `gpui-base` first (through `gpui_kit::init`), then call
-//! [`init`] once before opening windows, and put [`Root`] at the first
-//! level of each window that gpui-cn should own:
+//! [`init`] once before opening windows. gpui-cn adds itself to every
+//! window whose first level is gpui-base's `Root`, which
+//! `gpui_kit::open_window` puts there:
 //!
 //! ```no_run
 //! use gpui_kit::*;
@@ -29,14 +30,8 @@
 //!     gpui_kit::application().run(|cx| {
 //!         gpui_kit::init(cx);
 //!         gpui_cn::init(cx);
-//!         cx.spawn(async move |cx| {
-//!             cx.open_window(WindowOptions::default(), |window, cx| {
-//!                 let view = cx.new(|_| Hello);
-//!                 cx.new(|cx| gpui_cn::Root::new(view, window, cx))
-//!             })
+//!         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Hello))
 //!             .expect("failed to open window");
-//!         })
-//!         .detach();
 //!     });
 //! }
 //! ```
@@ -44,12 +39,14 @@
 mod avatar;
 mod badge;
 mod button;
+mod command;
 mod icon;
 mod input;
 mod label;
 mod looping;
 mod menu;
 mod nav;
+mod popover;
 mod progress;
 mod root;
 mod scroll_area;
@@ -70,6 +67,10 @@ mod touch_selection;
 pub use avatar::{Avatar, AvatarGroup, AvatarSize};
 pub use badge::Badge;
 pub use button::{Button, ButtonSize, ButtonVariant};
+pub use command::{
+    Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
+    CommandSearchHandler, CommandState,
+};
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
 pub use icon::{Icon, IconSource};
@@ -83,8 +84,8 @@ pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
 };
+pub use popover::Popover;
 pub use progress::Progress;
-pub use root::Root;
 pub use scroll_area::ScrollArea;
 pub use select::{
     SearchHandler, Select, SelectEntry, SelectEvent, SelectItem, SelectRow, SelectState,
@@ -114,9 +115,10 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
-        ContextMenu, DropdownMenu, Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu,
-        MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack,
-        NavStackExt, NavStackState, Progress, ReduceMotion, Root, ScrollArea, Select, SelectEntry,
+        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, DropdownMenu,
+        Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry,
+        MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
+        NavStackState, Popover, Progress, ReduceMotion, ScrollArea, Select, SelectEntry,
         SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
         SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
         SidebarTrigger, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant,
@@ -160,6 +162,7 @@ pub fn init(cx: &mut App) {
     root::init(cx);
     select::init(cx);
     menu::init(cx);
+    command::init(cx);
     cx.set_global(Initialized);
 }
 

@@ -2,7 +2,8 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gpui_cn::{Button, ButtonSize, ButtonVariant, Icon, Root, Theme, ThemeMode};
+use gpui_cn::{Button, ButtonSize, ButtonVariant, Icon, Theme, ThemeMode};
+use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     Window,
@@ -718,7 +719,7 @@ fn an_explicit_tooltip_shows_and_hides_with_the_pointer(cx: &mut TestAppContext)
     );
 }
 
-/// A button in a plain window with no `gpui_cn::Root`.
+/// A button in a plain window with no `gpui_kit::base::Root`.
 struct Bare {
     clicks: Rc<Cell<usize>>,
 }

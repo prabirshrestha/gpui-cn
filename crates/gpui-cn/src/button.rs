@@ -275,14 +275,6 @@ impl Button {
         self
     }
 
-    /// The state a popover, menu, or dropdown holds on its trigger while it
-    /// is open. Paints like `selected`, and is kept apart from it because
-    /// the two mean different things.
-    pub fn open(mut self, open: bool) -> Self {
-        self.open = open;
-        self
-    }
-
     /// Marks the button busy with work it started: a [`Spinner`] takes the
     /// leading icon's place (or comes before the label when there is no
     /// icon), and activation does nothing until the work ends. Unlike
@@ -295,11 +287,6 @@ impl Button {
     /// Whether the button is busy.
     pub fn is_loading(&self) -> bool {
         self.loading
-    }
-
-    /// Whether the button is marked open by its popup.
-    pub fn is_open(&self) -> bool {
-        self.open
     }
 
     /// A text tooltip. Icon-only buttons should have one. A button with a
@@ -398,6 +385,18 @@ impl Selectable for Button {
 
     fn is_selected(&self) -> bool {
         self.selected
+    }
+
+    /// The state a popover, menu, or dropdown holds on its trigger while it
+    /// is open. Paints like `selected`, and is kept apart from it because
+    /// the two mean different things.
+    fn open(mut self, open: bool) -> Self {
+        self.open = open;
+        self
+    }
+
+    fn is_open(&self) -> bool {
+        self.open
     }
 }
 
