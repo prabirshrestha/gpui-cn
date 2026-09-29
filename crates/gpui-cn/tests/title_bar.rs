@@ -173,7 +173,6 @@ fn check_caption_dispatch(cx: &mut TestAppContext, target: &'static str, on_cont
         window.render_frame(cx);
         let position = window.find(target).bounds().center();
         for click_count in [1, 2] {
-            // No preceding hover: a control must claim the initial press too.
             let result = window.dispatch_event(
                 PlatformInput::MouseDown(MouseDownEvent {
                     button: MouseButton::Left,
@@ -230,7 +229,6 @@ fn check_caption_dispatch(cx: &mut TestAppContext, target: &'static str, on_cont
                 usize::from(!on_control && click_count == 2),
                 "only a blank double-click invokes the bar callback"
             );
-            // Releasing either region must clear any pending bar drag.
             window.dispatch_event(
                 PlatformInput::MouseMove(MouseMoveEvent {
                     position: release_position + point(px(1.), px(1.)),
