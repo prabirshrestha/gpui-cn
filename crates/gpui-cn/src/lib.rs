@@ -40,6 +40,7 @@ mod avatar;
 mod badge;
 mod button;
 mod command;
+mod dialog;
 mod icon;
 mod input;
 mod label;
@@ -71,6 +72,7 @@ pub use command::{
     Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
     CommandSearchHandler, CommandState,
 };
+pub use dialog::Dialog;
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
 pub use icon::{Icon, IconSource};
@@ -115,9 +117,9 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
-        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, DropdownMenu,
-        Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry,
-        MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
+        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, Dialog,
+        DropdownMenu, Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState,
+        MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
         NavStackState, Popover, Progress, ReduceMotion, ScrollArea, Select, SelectEntry,
         SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
         SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,

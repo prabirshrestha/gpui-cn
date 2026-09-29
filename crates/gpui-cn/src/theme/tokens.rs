@@ -46,6 +46,11 @@ pub struct ThemeTokens {
     /// phone: black at half opacity in both appearances, shadcn's
     /// `bg-black/50` sheet overlay.
     pub scrim: Hsla,
+    /// The dim behind a dialog: black at 25% alpha in both appearances.
+    /// Measured from the reference app on dark: the backdrop is #121212
+    /// over the #181818 window, which is 25% black. The light value is
+    /// derived from the same alpha and was not sampled.
+    pub dialog_overlay: Hsla,
     /// The sidebar surface: a step above the window on dark, a hair below
     /// it on light, so the rail reads as a different plane.
     pub sidebar: Hsla,
@@ -287,6 +292,13 @@ pub struct MetricTokens {
     /// The tallest a menu grows before it scrolls: 390px, the reference
     /// app's language list.
     pub menu_max_height: Pixels,
+    /// The width of a dialog: 480px. Measured from the reference app's
+    /// folder dialog at 2.2x, where the 32px field is 71px and the dialog
+    /// is 1040px wide (473px), rounded to shadcn's usual step.
+    pub dialog_width: Pixels,
+    /// The padding around a dialog's content: 20px. Measured from the same
+    /// screenshot (about 18.5px), rounded to the 20px step.
+    pub dialog_padding: Pixels,
     /// The gap between the top of a tab item and its surface: 4px,
     /// measured from the tab reference app. On touch the tab fills its bar.
     pub tab_surface_inset: Pixels,
@@ -416,6 +428,8 @@ impl MetricTokens {
             menu_search_min_width: scaled(240.),
             menu_max_width: scaled(360.),
             menu_max_height: scaled(390.),
+            dialog_width: scaled(480.),
+            dialog_padding: scaled(20.),
             tab_surface_inset: px(if touch { 0. } else { 4. }),
             tab_width: px(160.),
             tab_min_width: px(112.),
@@ -633,6 +647,7 @@ impl ThemeTokens {
             tooltip,
             tooltip_foreground,
             scrim: gpui_kit::hsla(0., 0., 0., 0.5),
+            dialog_overlay: gpui_kit::hsla(0., 0., 0., 0.25),
             sidebar,
             sidebar_border,
             sidebar_accent,
@@ -1121,6 +1136,21 @@ mod tests {
         );
         assert_eq!(large.metrics.menu_max_height, px(487.5));
         assert_eq!(large.metrics.menu_gap, px(2.5));
+    }
+
+    #[test]
+    fn dialog_tokens_reproduce_the_reference_values() {
+        // The backdrop is #121212 over the #181818 dark window: black at
+        // 25% alpha.
+        let dark = dark();
+        assert_eq!(to_hex(dark.dialog_overlay), "#00000040");
+        assert_eq!(to_hex(dark.background()), "#181818");
+        let over = (f32::from(0x18u8) * (1. - dark.dialog_overlay.a)).round() as u8;
+        assert_eq!(over, 0x12);
+        assert_eq!(to_hex(light().dialog_overlay), "#00000040");
+        let default = light();
+        assert_eq!(default.metrics.dialog_width, px(480.));
+        assert_eq!(default.metrics.dialog_padding, px(20.));
     }
 
     #[test]

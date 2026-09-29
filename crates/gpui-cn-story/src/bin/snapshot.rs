@@ -131,6 +131,7 @@ mod macos {
                 "Menu",
                 "Command",
                 "Popover",
+                "Dialog",
                 "Avatar",
                 "Badge",
                 "Tag",
@@ -277,6 +278,21 @@ mod macos {
                         window.press("escape", cx);
                     })
                     .expect("close the palette");
+                }
+                if story == "Dialog" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(gpui_cn_story::stories::DialogStory::TRIGGER, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the dialog");
+                    capture(&mut cx, &format!("story-{slug}-open-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the dialog");
                 }
                 if story == "Tabs" {
                     let add = gpui_kit::ElementId::NamedChild(
