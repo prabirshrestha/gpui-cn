@@ -99,6 +99,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::CommandStory>(),
         StoryEntry::of::<stories::PopoverStory>(),
         StoryEntry::of::<stories::DialogStory>(),
+        StoryEntry::of::<stories::FolderPickerStory>(),
         StoryEntry::of::<stories::AvatarStory>(),
         StoryEntry::of::<stories::BadgeStory>(),
         StoryEntry::of::<stories::TagStory>(),

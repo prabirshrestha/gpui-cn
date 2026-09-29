@@ -299,6 +299,11 @@ pub struct MetricTokens {
     /// The padding around a dialog's content: 20px. Measured from the same
     /// screenshot (about 18.5px), rounded to the 20px step.
     pub dialog_padding: Pixels,
+    /// The height of the folder picker's list: 6.5 rows, so the last row
+    /// peeks over the edge and shows that the list scrolls. Measured from
+    /// the reference app's folder dialog: the list is 181px tall at 2.2x
+    /// beside 28px rows.
+    pub folder_list_height: Pixels,
     /// The gap between the top of a tab item and its surface: 4px,
     /// measured from the tab reference app. On touch the tab fills its bar.
     pub tab_surface_inset: Pixels,
@@ -430,6 +435,7 @@ impl MetricTokens {
             menu_max_height: scaled(390.),
             dialog_width: scaled(480.),
             dialog_padding: scaled(20.),
+            folder_list_height: row_sm * 6.5,
             tab_surface_inset: px(if touch { 0. } else { 4. }),
             tab_width: px(160.),
             tab_min_width: px(112.),
@@ -1151,6 +1157,7 @@ mod tests {
         let default = light();
         assert_eq!(default.metrics.dialog_width, px(480.));
         assert_eq!(default.metrics.dialog_padding, px(20.));
+        assert_eq!(default.metrics.folder_list_height, px(182.));
     }
 
     #[test]

@@ -132,6 +132,7 @@ mod macos {
                 "Command",
                 "Popover",
                 "Dialog",
+                "Folder picker",
                 "Avatar",
                 "Badge",
                 "Tag",
@@ -293,6 +294,40 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the dialog");
+                }
+                if story == "Folder picker" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(gpui_cn_story::stories::FolderPickerStory::TRIGGER, cx);
+                    })
+                    .expect("open the picker");
+                    for (suffix, text) in [
+                        // The gallery is reused per appearance, so the path is set again.
+                        ("open", Some("/home/prabirshrestha/")),
+                        ("filtered", Some("/home/prabirshrestha/co")),
+                        ("error", Some("/home/prabirshrestha/code/psl/")),
+                        ("empty", Some("/home/prabirshrestha/.zed_server/")),
+                    ] {
+                        if let Some(text) = text {
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.press("cmd-a", cx);
+                                window.input(text, cx);
+                            })
+                            .expect("type a path");
+                        }
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("draw the picker");
+                        capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the picker");
                 }
                 if story == "Tabs" {
                     let add = gpui_kit::ElementId::NamedChild(
