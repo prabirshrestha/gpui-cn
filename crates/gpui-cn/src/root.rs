@@ -1,8 +1,8 @@
 //! gpui-cn's part of every window: a plugin on gpui-base's [`Root`].
 
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Div, Entity, FocusHandle, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Stateful, Styled as _, Subscription, Window,
+    App, AppContext as _, Context, Div, Entity, FocusHandle, InteractiveElement as _, IntoElement,
+    Render, Stateful, Styled as _, Subscription, Window,
     base::{Root, RootPlugin, TooltipOverlay},
     div,
 };
@@ -60,27 +60,21 @@ impl RootPlugin for RootLayer {
     /// The focus goes on the root surface itself, where gpui-base's Tab
     /// and copy handlers are, so a key pressed while nothing else is
     /// focused reaches them.
-    fn style(&self, surface: &mut Stateful<Div>, _: &mut Window, _: &mut App) {
+    ///
+    /// The theme's font and colors go on that same surface, so styles set
+    /// on the [`Root`] instance, which gpui-base refines over this hook,
+    /// take precedence: a window can clear its background and keep every
+    /// component's colors.
+    fn style(&self, surface: &mut Stateful<Div>, _: &mut Window, cx: &mut App) {
         // The hook lends the surface, and `track_focus` takes it by value:
         // swap in an empty element for the moment it takes.
         let taken = std::mem::replace(surface, div().id("placeholder"));
-        *surface = taken.track_focus(&self.focus);
-    }
-
-    fn decorate(
-        &self,
-        surface: AnyElement,
-        _: &Root,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> impl IntoElement {
         let tokens = cx.theme();
-        div()
-            .size_full()
+        *surface = taken
+            .track_focus(&self.focus)
             .font_family(tokens.font_family().clone())
             .bg(tokens.background())
-            .text_color(tokens.foreground())
-            .child(surface)
+            .text_color(tokens.foreground());
     }
 }
 
