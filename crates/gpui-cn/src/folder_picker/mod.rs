@@ -269,8 +269,6 @@ impl FolderPickerState {
         let overdraw = cx.theme().metrics.folder_list_height;
         let list = ListState::new(0, ListAlignment::Top, overdraw);
         let weak = cx.weak_entity();
-        // The list reports each scroll: reaching the last row, the "Load
-        // more" one, loads the next page. No timer runs.
         list.set_scroll_handler(move |event, _, cx| {
             if event.count > 0 && event.visible_range.end >= event.count {
                 weak.update(cx, |state, cx| state.load_more_on_scroll(cx))
@@ -944,7 +942,6 @@ impl RenderOnce for FolderPicker {
                 div()
                     .id(child("list"))
                     .test_support()
-                    // The rows take the full height, so the last one peeks.
                     .h(list_height + look.padding * 2. + gpui_kit::px(2.))
                     .p(look.padding)
                     .rounded(look.radius)

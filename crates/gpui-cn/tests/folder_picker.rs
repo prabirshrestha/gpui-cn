@@ -336,8 +336,6 @@ fn a_listing_for_a_directory_the_path_left_is_dropped(cx: &mut TestAppContext) {
     assert_eq!(text(&setup, cx), "/home/");
     assert_eq!(setup.fake.requested(), ["/home/me", "/home"]);
 
-    // The newer directory answers first, and then the older one, out of
-    // order: the older answer changes nothing.
     setup.fake.resolve("/home", ready(&["me", "you"]));
     settle(&setup, cx);
     setup.fake.resolve("/home/me", ready(&["stale"]));
@@ -346,7 +344,6 @@ fn a_listing_for_a_directory_the_path_left_is_dropped(cx: &mut TestAppContext) {
     assert!(!present(&setup, part("stale"), cx));
     assert_eq!(rows(&setup, cx), 2);
 
-    // Going back to a listing that finished is instant.
     press(&setup, "enter", cx);
     assert_eq!(text(&setup, cx), "/home/me/");
     assert_eq!(setup.fake.requested(), ["/home/me", "/home", "/home/me"]);
@@ -410,20 +407,16 @@ fn the_arrow_keys_move_the_highlight_and_wrap(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn use_folder_needs_a_listed_directory_or_an_exact_folder(cx: &mut TestAppContext) {
     let setup = setup(cx, "/home/me");
-    // Loading: disabled.
     click(&setup, part("use"), cx);
     assert!(events(&setup).is_empty());
     assert_eq!(cx.update(|cx| setup.state.read(cx).selected()), None);
 
     setup.fake.resolve("/home/me", ready(HOME));
     settle(&setup, cx);
-    // A partial name: disabled.
     type_text(&setup, "co", cx);
     click(&setup, part("use"), cx);
     assert!(events(&setup).is_empty());
 
-    // An exact name: enabled, and the folder is chosen with no trailing
-    // separator.
     press(&setup, "cmd-a", cx);
     type_text(&setup, "/home/me/docs", cx);
     click(&setup, part("use"), cx);
@@ -596,7 +589,6 @@ const SUBMIT: &str = if cfg!(target_os = "macos") {
 #[gpui_kit::test]
 fn the_submit_shortcut_chooses_like_use_folder_from_the_path_field(cx: &mut TestAppContext) {
     let setup = setup(cx, "/home/me");
-    // Loading: disabled, as the button is.
     press(&setup, SUBMIT, cx);
     assert!(events(&setup).is_empty());
 
@@ -655,7 +647,6 @@ fn a_page_with_a_next_token_ends_in_a_load_more_row_that_appends_the_next_page(
     assert!(present(&setup, part("more-spinner"), cx));
     assert_eq!(rows(&setup, cx), 2, "the rows stay while it loads");
 
-    // A repeated name shows once, and the last page ends the row.
     setup
         .fake
         .resolve_page("/home/me", "2", folders(&["b", "c", "d"]));
@@ -686,7 +677,6 @@ fn a_page_for_a_directory_the_path_left_is_ignored(cx: &mut TestAppContext) {
     setup.fake.resolve("/home", folders(&["me", "you"]));
     settle(&setup, cx);
 
-    // The answer of the request that was cancelled changes nothing.
     setup
         .fake
         .resolve_page("/home/me", "2", folders(&["stale"]));
@@ -694,8 +684,6 @@ fn a_page_for_a_directory_the_path_left_is_ignored(cx: &mut TestAppContext) {
     assert_eq!(rows(&setup, cx), 2);
     assert!(!present(&setup, part("stale"), cx));
 
-    // Back in the directory, the listing kept its first page and can ask
-    // for the second again.
     click(&setup, part("me"), cx);
     assert_eq!(more_state(&setup, cx), Some(MoreState::Idle));
     assert!(present(&setup, part("a"), cx));
