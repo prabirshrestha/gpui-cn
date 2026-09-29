@@ -40,6 +40,8 @@ mod avatar;
 mod badge;
 mod button;
 mod command;
+mod dialog;
+mod folder_picker;
 mod icon;
 mod input;
 mod label;
@@ -70,6 +72,11 @@ pub use button::{Button, ButtonSize, ButtonVariant};
 pub use command::{
     Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
     CommandSearchHandler, CommandState,
+};
+pub use dialog::Dialog;
+pub use folder_picker::{
+    FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
+    Listing, Loaded, LocalFolders, MoreState, PageToken,
 };
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
@@ -115,14 +122,15 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
-        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, DropdownMenu,
-        Field, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry,
-        MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
-        NavStackState, Popover, Progress, ReduceMotion, ScrollArea, Select, SelectEntry,
-        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
-        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
-        SidebarTrigger, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant,
-        Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
+        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, Dialog,
+        DropdownMenu, Field, FolderPicker, FolderPickerState, Icon, Input, InputState, Label,
+        MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu,
+        NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, Popover, Progress,
+        ReduceMotion, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
+        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
+        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner, Switch, Tab, Tabs,
+        TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme, ThemeMode,
+        ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -163,6 +171,7 @@ pub fn init(cx: &mut App) {
     select::init(cx);
     menu::init(cx);
     command::init(cx);
+    folder_picker::init(cx);
     cx.set_global(Initialized);
 }
 
