@@ -542,3 +542,32 @@ fn a_separator_typed_before_the_filter_finishes_waits_for_it(cx: &mut TestAppCon
     assert_eq!(text(&setup, cx), "/home/me/.codex/");
     assert_eq!(dir(&setup, cx), PathBuf::from("/home/me/.codex"));
 }
+
+const SUBMIT: &str = if cfg!(target_os = "macos") {
+    "cmd-enter"
+} else {
+    "ctrl-enter"
+};
+
+#[gpui_kit::test]
+fn the_submit_shortcut_chooses_like_use_folder_from_the_path_field(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    // Loading: disabled, as the button is.
+    press(&setup, SUBMIT, cx);
+    assert!(events(&setup).is_empty());
+
+    setup.fake.resolve("/home/me", ready(HOME));
+    settle(&setup, cx);
+    type_text(&setup, "co", cx);
+    press(&setup, SUBMIT, cx);
+    assert!(events(&setup).is_empty(), "a partial name is no folder");
+    assert_eq!(text(&setup, cx), "/home/me/co", "it does not descend");
+
+    press(&setup, "cmd-a", cx);
+    type_text(&setup, "/home/me/docs", cx);
+    press(&setup, SUBMIT, cx);
+    assert_eq!(
+        events(&setup),
+        [FolderPickerEvent::Chosen(PathBuf::from("/home/me/docs"))]
+    );
+}

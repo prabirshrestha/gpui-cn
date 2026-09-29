@@ -21,7 +21,7 @@ use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement,
     KeyBinding, ListAlignment, ListState, ParentElement as _, RenderOnce, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task, Window,
+    StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task, Window, actions,
     assets::IconName,
     base::{
         Disableable as _, TestSupportExt as _,
@@ -51,8 +51,24 @@ const EMPTY: &str = "No folders found in this directory.";
 const FAILED: &str = "Unable to load this folder";
 const NO_MATCH: &str = "No folders match.";
 
+actions!(
+    gpui_cn_folder_picker,
+    [
+        /// Chooses the folder, as the "Use folder" button does.
+        Submit
+    ]
+);
+
+/// The shortcut that submits: Cmd+Enter on macOS, Ctrl+Enter elsewhere.
+const SUBMIT_KEY: &str = if cfg!(target_os = "macos") {
+    "cmd-enter"
+} else {
+    "ctrl-enter"
+};
+
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new(SUBMIT_KEY, Submit, Some(CONTEXT)),
         KeyBinding::new("up", SelectUp, Some(CONTEXT)),
         KeyBinding::new("down", SelectDown, Some(CONTEXT)),
         KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
@@ -736,6 +752,10 @@ impl RenderOnce for FolderPicker {
             })
             .on_action(move |_: &SelectDown, _, cx| {
                 down_key.update(cx, |state, cx| state.move_highlight(1, cx));
+            })
+            .on_action({
+                let state = state.clone();
+                move |_: &Submit, _, cx| state.update(cx, |state, cx| state.choose(cx))
             })
             .on_action(move |_: &Confirm, window, cx| {
                 confirm_key.update(cx, |state, cx| state.confirm(window, cx));

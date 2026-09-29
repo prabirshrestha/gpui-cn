@@ -122,7 +122,7 @@ impl Render for FolderPickerStory {
                      that is listed, and the text after it filters that folder's \
                      sub-folders. A slash after the filter goes inside the best match. \
                      Enter or a click on a row goes inside it, and the arrow button goes \
-                     up.",
+                     up. Cmd+Enter (Ctrl+Enter elsewhere) chooses the folder.",
                     cx,
                 ))
                 .child(
