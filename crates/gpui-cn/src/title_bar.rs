@@ -213,12 +213,17 @@ impl RenderOnce for TitleBar {
             .refine_style(&self.style)
             .on_mouse_down(
                 MouseButton::Left,
-                window.listener_for(&drag, |drag, _, window, _| {
+                window.listener_for(&drag, |drag, _, window, cx| {
                     // A control in the bar takes the press for itself and
                     // prevents the default; only a press on the bar moves
                     // the window.
                     drag.on_control = window.default_prevented();
                     drag.pending = !drag.on_control;
+                    if drag.on_control {
+                        // Windows checks propagation, not prevented default,
+                        // before passing a caption press to DefWindowProcW.
+                        cx.stop_propagation();
+                    }
                 }),
             )
             .on_mouse_up(
