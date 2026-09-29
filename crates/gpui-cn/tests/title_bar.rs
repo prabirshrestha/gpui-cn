@@ -5,8 +5,9 @@ use std::{cell::Cell, rc::Rc};
 use gpui_cn::{ActiveTheme as _, Button, TitleBar};
 use gpui_kit::base::Root;
 use gpui_kit::{
-    AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Styled as _, TestAppContext, Window, base::TestSupportExt as _, div, px, size,
+    AppContext as _, Context, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, PlatformInput, Render, Styled as _,
+    TestAppContext, Window, base::TestSupportExt as _, div, point, px, size,
     test::TestWindowExt as _,
 };
 
@@ -148,4 +149,107 @@ fn a_double_click_on_a_control_is_not_a_double_click_on_the_bar(cx: &mut TestApp
         assert_eq!(bar.get(), 1, "a double-click on the bar itself does");
     })
     .unwrap();
+}
+
+// Windows gpui-pre 0.3.7 checks propagate, not default_prevented, before
+// forwarding a caption press to DefWindowProcW. These tests cover that
+// dispatch contract, not native WM_NCHITTEST or Windows mouse-up delivery.
+fn check_caption_dispatch(cx: &mut TestAppContext, target: &'static str, on_control: bool) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let bar = Rc::new(Cell::new(0));
+    let button = Rc::new(Cell::new(0));
+    let handle = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+        let view = cx.new(|_| DoubleClicks {
+            bar: bar.clone(),
+            button: button.clone(),
+        });
+        Root::new(view, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let position = window.find(target).bounds().center();
+        for click_count in [1, 2] {
+            // No preceding hover: a control must claim the initial press too.
+            let result = window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    click_count,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            if on_control {
+                assert!(result.default_prevented, "the control claimed the press");
+            }
+            assert_eq!(
+                result.propagate, !on_control,
+                "{target} press {click_count} has the wrong native caption propagation"
+            );
+            assert_eq!(button.get(), if on_control { click_count - 1 } else { 0 });
+            assert_eq!(bar.get(), 0, "mouse-down must not invoke the bar callback");
+            window.render_frame(cx);
+
+            let release_position = if on_control {
+                let moved = position + point(px(1.), px(1.));
+                assert!(window.find(target).bounds().contains(&moved));
+                // TestWindow::start_window_move is unimplemented. This would
+                // panic if a control press incorrectly armed the bar's drag.
+                window.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position: moved,
+                        pressed_button: Some(MouseButton::Left),
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+                window.render_frame(cx);
+                moved
+            } else {
+                // A live blank-region drag needs a native window. Do not call
+                // the test platform's unimplemented start_window_move.
+                position
+            };
+            window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: release_position,
+                    click_count,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            window.render_frame(cx);
+            assert_eq!(button.get(), if on_control { click_count } else { 0 });
+            assert_eq!(
+                bar.get(),
+                usize::from(!on_control && click_count == 2),
+                "only a blank double-click invokes the bar callback"
+            );
+            // Releasing either region must clear any pending bar drag.
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: release_position + point(px(1.), px(1.)),
+                    ..Default::default()
+                }),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn control_presses_stop_native_caption_propagation(cx: &mut TestAppContext) {
+    check_caption_dispatch(cx, "action", true);
+}
+
+#[gpui_kit::test]
+fn blank_presses_keep_native_caption_propagation(cx: &mut TestAppContext) {
+    check_caption_dispatch(cx, "blank", false);
 }
