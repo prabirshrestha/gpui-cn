@@ -3,53 +3,15 @@
 //! a typed separator goes into. It works on plain strings, so it needs no
 //! window and no file system.
 
-use std::{io, ops::Range, path::PathBuf, rc::Rc};
+use std::{ops::Range, path::PathBuf};
 
-use gpui_kit::{App, SharedString, Task};
+use gpui_kit::SharedString;
 use nucleo_matcher::{
     Config, Matcher, Utf32Str,
     pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 
-/// A folder in a listing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct FolderEntry {
-    name: SharedString,
-    hidden: bool,
-}
-
-impl FolderEntry {
-    /// A folder with a name. A name that starts with a dot is hidden.
-    pub fn new(name: impl Into<SharedString>) -> Self {
-        let name = name.into();
-        let hidden = name.starts_with('.');
-        Self { name, hidden }
-    }
-
-    /// Whether the folder is hidden, which sorts it after the others.
-    pub fn with_hidden(mut self, hidden: bool) -> Self {
-        self.hidden = hidden;
-        self
-    }
-
-    /// The folder's name, without a path.
-    pub fn name(&self) -> &SharedString {
-        &self.name
-    }
-
-    /// Whether the folder is hidden.
-    pub fn hidden(&self) -> bool {
-        self.hidden
-    }
-}
-
-/// Lists the folders of a directory. The task can read a local disk, or
-/// ask a remote machine; the picker never waits for it, and it drops the
-/// task to cancel it.
-///
-/// See [`FolderPickerState::with_lister`](super::FolderPickerState::with_lister).
-pub type FolderLister = Rc<dyn Fn(PathBuf, &mut App) -> Task<io::Result<Vec<FolderEntry>>>>;
+use super::source::FolderEntry;
 
 /// A folder that matches the query, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,17 +165,6 @@ pub(crate) fn resolve_descend(
         .map(|entry| entry.name().clone())
 }
 
-/// Sorts a listing as the picker shows it: the visible folders first, then
-/// the hidden ones, each in alphabetical order without regard to case.
-pub(crate) fn sort_entries(entries: &mut [FolderEntry]) {
-    entries.sort_by(|a, b| {
-        a.hidden()
-            .cmp(&b.hidden())
-            .then_with(|| a.name().to_lowercase().cmp(&b.name().to_lowercase()))
-            .then_with(|| a.name().cmp(b.name()))
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,13 +289,5 @@ mod tests {
         let all = entries(&["cooking", "co"]);
         let found = filter(&all, "co");
         assert_eq!(resolve_descend(&all, &found, "co").as_deref(), Some("co"));
-    }
-
-    #[test]
-    fn a_listing_sorts_visible_folders_first_then_hidden_ones() {
-        let mut all = entries(&["b", ".zed", "A", ".Cache", "code"]);
-        sort_entries(&mut all);
-        let sorted: Vec<_> = all.iter().map(|entry| entry.name().to_string()).collect();
-        assert_eq!(sorted, ["A", "b", "code", ".Cache", ".zed"]);
     }
 }

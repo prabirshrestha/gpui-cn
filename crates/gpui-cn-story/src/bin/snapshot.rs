@@ -307,6 +307,7 @@ mod macos {
                         ("filtered", Some("/home/prabirshrestha/co")),
                         ("error", Some("/home/prabirshrestha/code/psl/")),
                         ("empty", Some("/home/prabirshrestha/.zed_server/")),
+                        ("more", Some("/home/prabirshrestha/code/")),
                     ] {
                         if let Some(text) = text {
                             cx.update_window(handle.into(), |_, window, cx| {

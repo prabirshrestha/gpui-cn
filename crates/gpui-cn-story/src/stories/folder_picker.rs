@@ -1,12 +1,15 @@
-use std::{io, path::PathBuf, rc::Rc};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use gpui_cn::{
-    Button, FolderEntry, FolderLister, FolderPicker, FolderPickerEvent, FolderPickerState,
-    gpui_kit::assets::IconName,
+    Button, FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState,
+    FolderSource, PageToken, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Window, div,
+    SharedString, Styled as _, Task, Window, div,
 };
 
 use crate::{Story, note, page, section};
@@ -27,28 +30,46 @@ impl FolderPickerStory {
 }
 
 /// A fixed set of folders, so the snapshot does not depend on the disk
-/// it runs on.
-fn fixture_lister() -> FolderLister {
-    Rc::new(|dir: PathBuf, cx: &mut App| {
+/// it runs on. The code folder answers in two pages.
+struct Fixture;
+
+impl FolderSource for Fixture {
+    fn list(
+        &self,
+        dir: &Path,
+        page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<io::Result<FolderPage>> {
+        let dir = dir.to_path_buf();
         cx.background_spawn(async move {
-            let names: &[&str] = match dir.to_str() {
-                Some(FIXTURE_HOME) => &[
-                    "code",
-                    ".cache",
-                    ".codex",
-                    ".config",
-                    ".docker-stack-deploy",
-                    ".local",
-                    ".npm",
-                    ".ssh",
-                ],
-                Some("/home/prabirshrestha/.zed_server") => &[],
-                Some("/home/prabirshrestha/code") => &["gpui-cn", "gpui-kit", "psl-tools"],
+            let (names, next): (&[&str], Option<&str>) = match (dir.to_str(), page.as_ref()) {
+                (Some(FIXTURE_HOME), _) => (
+                    &[
+                        "code",
+                        ".cache",
+                        ".codex",
+                        ".config",
+                        ".docker-stack-deploy",
+                        ".local",
+                        ".npm",
+                        ".ssh",
+                    ],
+                    None,
+                ),
+                (Some("/home/prabirshrestha/.zed_server"), _) => (&[], None),
+                (Some("/home/prabirshrestha/code"), None) => {
+                    (&["gpui-cn", "gpui-kit", "psl-tools"], Some("2"))
+                }
+                (Some("/home/prabirshrestha/code"), Some(_)) => (&["website", "zed"], None),
                 _ => return Err(io::Error::other("not in the fixture")),
             };
-            Ok(names.iter().map(|name| FolderEntry::new(*name)).collect())
+            let page = FolderPage::new(names.iter().map(|name| FolderEntry::new(*name)));
+            Ok(match next {
+                Some(token) => page.with_next(PageToken::new(token)),
+                None => page,
+            })
         })
-    })
+    }
 }
 
 /// The folder the picker opens in: the fixture's in the snapshot build,
@@ -82,7 +103,7 @@ impl Story for FolderPickerStory {
             let state = cx.new(|cx| {
                 let state = FolderPickerState::new(window, cx);
                 let state = if cfg!(feature = "snapshot") {
-                    state.with_lister(fixture_lister(), cx)
+                    state.with_source(Fixture, cx)
                 } else {
                     state
                 };

@@ -75,8 +75,8 @@ pub use command::{
 };
 pub use dialog::Dialog;
 pub use folder_picker::{
-    FolderEntry, FolderLister, FolderPicker, FolderPickerEvent, FolderPickerState, Listing,
-    local_lister,
+    FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
+    Listing, Loaded, LocalFolders, MoreState, PageToken,
 };
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};

@@ -1,53 +1,74 @@
 //! UI integration tests for `FolderPicker`: real input through a headless
 //! window, over a fake lister whose answers arrive when the test says.
 
-use std::{cell::Cell, cell::RefCell, io, path::PathBuf, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    io,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use gpui_cn::{
-    FolderEntry, FolderLister, FolderPicker, FolderPickerEvent, FolderPickerState, Listing,
-    ReduceMotion, Theme,
+    FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
+    Listing, LocalFolders, MoreState, PageToken, ReduceMotion, Theme,
 };
 use gpui_kit::{
-    AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
-    Styled as _, TestAppContext, Window, WindowHandle, base::Root, div, px, size,
+    App, AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
+    Styled as _, Task, TestAppContext, Window, WindowHandle, base::Root, div, px, size,
     test::TestWindowExt as _,
 };
 
-type Reply = io::Result<Vec<FolderEntry>>;
-type Pending = Vec<(PathBuf, smol::channel::Sender<Reply>)>;
+type Reply = io::Result<FolderPage>;
+type Pending = Vec<(PathBuf, Option<String>, smol::channel::Sender<Reply>)>;
 
-/// A lister that answers when told to.
+/// A source that answers when told to.
 #[derive(Clone, Default)]
 struct Fake {
     pending: Rc<RefCell<Pending>>,
     log: Rc<RefCell<Vec<String>>>,
 }
 
-impl Fake {
-    fn lister(&self) -> FolderLister {
-        let this = self.clone();
-        Rc::new(move |dir, cx| {
-            let (tx, rx) = smol::channel::bounded(1);
-            this.log.borrow_mut().push(dir.display().to_string());
-            this.pending.borrow_mut().push((dir, tx));
-            cx.spawn(async move |_| {
-                rx.recv()
-                    .await
-                    .unwrap_or_else(|_| Err(io::Error::other("cancelled")))
-            })
+impl FolderSource for Fake {
+    fn list(&self, dir: &Path, page: Option<PageToken>, cx: &mut App) -> Task<Reply> {
+        let (tx, rx) = smol::channel::bounded(1);
+        let token = page.map(|token| token.as_str().to_string());
+        let label = match &token {
+            Some(token) => format!("{}@{token}", dir.display()),
+            None => dir.display().to_string(),
+        };
+        self.log.borrow_mut().push(label);
+        self.pending
+            .borrow_mut()
+            .push((dir.to_path_buf(), token, tx));
+        cx.spawn(async move |_| {
+            rx.recv()
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("cancelled")))
         })
     }
+}
 
-    /// Answers the latest request for `dir`. A request whose task was
-    /// dropped has nobody listening, which is how a cancel shows.
-    fn resolve(&self, dir: &str, reply: Reply) {
+impl Fake {
+    /// Answers the latest request for a page of `dir`. A request whose
+    /// task was dropped has nobody listening, which is how a cancel shows.
+    fn answer(&self, dir: &str, token: Option<&str>, reply: Reply) {
         let mut pending = self.pending.borrow_mut();
         let at = pending
             .iter()
-            .rposition(|(path, _)| path == &PathBuf::from(dir))
-            .unwrap_or_else(|| panic!("no request for {dir}"));
-        let (_, sender) = pending.remove(at);
+            .rposition(|(path, page, _)| path == &PathBuf::from(dir) && page.as_deref() == token)
+            .unwrap_or_else(|| panic!("no request for {dir} {token:?}"));
+        let (_, _, sender) = pending.remove(at);
         sender.try_send(reply).ok();
+    }
+
+    /// Answers the request for the first page of `dir`.
+    fn resolve(&self, dir: &str, reply: Reply) {
+        self.answer(dir, None, reply);
+    }
+
+    /// Answers the request for the page of `dir` that starts at `token`.
+    fn resolve_page(&self, dir: &str, token: &str, reply: Reply) {
+        self.answer(dir, Some(token), reply);
     }
 
     fn requested(&self) -> Vec<String> {
@@ -55,8 +76,16 @@ impl Fake {
     }
 }
 
+fn page(names: &[&str]) -> FolderPage {
+    FolderPage::new(names.iter().map(|name| FolderEntry::new(*name)))
+}
+
 fn folders(names: &[&str]) -> Reply {
-    Ok(names.iter().map(|name| FolderEntry::new(*name)).collect())
+    Ok(page(names))
+}
+
+fn more(names: &[&str], token: &str) -> Reply {
+    Ok(page(names).with_next(PageToken::new(token)))
 }
 
 struct Harness {
@@ -97,7 +126,7 @@ fn setup(cx: &mut TestAppContext, initial: &str) -> Setup {
     let handle = cx.open_window(size(px(800.), px(800.)), |window, cx| {
         let entity = cx.new(|cx| {
             FolderPickerState::new(window, cx)
-                .with_lister(fake.lister(), cx)
+                .with_source(fake.clone(), cx)
                 .with_initial(initial, window, cx)
         });
         let recorded = events.clone();
@@ -209,7 +238,12 @@ fn a_listing_shows_a_spinner_while_it_loads_and_then_the_rows(cx: &mut TestAppCo
     assert_eq!(setup.fake.requested(), ["/home/me"]);
     assert!(present(&setup, part("loading"), cx));
     assert!(!present(&setup, part("code"), cx));
-    cx.update(|cx| assert_eq!(setup.state.read(cx).listing(), Some(&Listing::Loading)));
+    cx.update(|cx| {
+        assert!(matches!(
+            setup.state.read(cx).listing(),
+            Some(Listing::Loading)
+        ))
+    });
 
     setup.fake.resolve("/home/me", ready(HOME));
     settle(&setup, cx);
@@ -286,7 +320,12 @@ fn a_separator_after_no_match_keeps_the_text_and_the_listing_fails(cx: &mut Test
         .fake
         .resolve("/home/me/zzz", Err(io::Error::other("missing")));
     settle(&setup, cx);
-    cx.update(|cx| assert_eq!(setup.state.read(cx).listing(), Some(&Listing::Failed)));
+    cx.update(|cx| {
+        assert!(matches!(
+            setup.state.read(cx).listing(),
+            Some(Listing::Failed)
+        ))
+    });
     assert!(present(&setup, part("message"), cx));
 }
 
@@ -432,7 +471,12 @@ fn a_failed_listing_and_an_empty_one_show_a_message(cx: &mut TestAppContext) {
         .fake
         .resolve("/home/me", Err(io::Error::other("denied")));
     settle(&setup, cx);
-    cx.update(|cx| assert_eq!(setup.state.read(cx).listing(), Some(&Listing::Failed)));
+    cx.update(|cx| {
+        assert!(matches!(
+            setup.state.read(cx).listing(),
+            Some(Listing::Failed)
+        ))
+    });
     assert!(present(&setup, part("message"), cx));
     assert!(!present(&setup, part("loading"), cx));
     click(&setup, part("use"), cx);
@@ -444,7 +488,7 @@ fn a_failed_listing_and_an_empty_one_show_a_message(cx: &mut TestAppContext) {
     cx.update(|cx| {
         assert!(matches!(
             setup.state.read(cx).listing(),
-            Some(Listing::Ready(entries)) if entries.is_empty()
+            Some(Listing::Ready(loaded)) if loaded.entries().is_empty()
         ))
     });
     assert!(present(&setup, part("message"), cx));
@@ -507,9 +551,9 @@ fn the_local_lister_lists_folders_only_sorted_with_hidden_last(cx: &mut TestAppC
         std::os::unix::fs::symlink(root.join("file.txt"), root.join("filelink")).unwrap();
     }
     cx.executor().allow_parking();
-    let lister = gpui_cn::local_lister();
-    let task = cx.update(|cx| lister(root.clone(), cx));
+    let task = cx.update(|cx| LocalFolders.list(&root, None, cx));
     let listed = cx.foreground_executor().block_test(task).unwrap();
+    let listed = listed.entries();
     let names: Vec<_> = listed
         .iter()
         .map(|entry| entry.name().to_string())
@@ -524,7 +568,7 @@ fn the_local_lister_lists_folders_only_sorted_with_hidden_last(cx: &mut TestAppC
             .any(|entry| entry.name() == ".zed" && entry.hidden())
     );
 
-    let task = cx.update(|cx| lister(root.join("missing"), cx));
+    let task = cx.update(|cx| LocalFolders.list(&root.join("missing"), None, cx));
     assert!(cx.foreground_executor().block_test(task).is_err());
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -570,4 +614,221 @@ fn the_submit_shortcut_chooses_like_use_folder_from_the_path_field(cx: &mut Test
         events(&setup),
         [FolderPickerEvent::Chosen(PathBuf::from("/home/me/docs"))]
     );
+}
+
+fn more_state(setup: &Setup, cx: &mut TestAppContext) -> Option<MoreState> {
+    cx.update(|cx| match setup.state.read(cx).listing() {
+        Some(Listing::Ready(loaded)) => Some(loaded.more()),
+        _ => None,
+    })
+}
+
+fn scroll_rows(setup: &Setup, dy: f32, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.scroll(
+            part("rows"),
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(dy))),
+            cx,
+        )
+    })
+    .unwrap();
+    settle(setup, cx);
+}
+
+#[gpui_kit::test]
+fn a_page_with_a_next_token_ends_in_a_load_more_row_that_appends_the_next_page(
+    cx: &mut TestAppContext,
+) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", more(&["a", "b"], "2"));
+    settle(&setup, cx);
+    assert!(present(&setup, part("more"), cx));
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        assert_eq!(window.find(part("more")).bounds().size.height, px(28.));
+    })
+    .unwrap();
+    assert_eq!(setup.fake.requested(), ["/home/me"]);
+
+    click(&setup, part("more"), cx);
+    assert_eq!(setup.fake.requested(), ["/home/me", "/home/me@2"]);
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Loading));
+    assert!(present(&setup, part("more-spinner"), cx));
+    assert_eq!(rows(&setup, cx), 2, "the rows stay while it loads");
+
+    // A repeated name shows once, and the last page ends the row.
+    setup
+        .fake
+        .resolve_page("/home/me", "2", folders(&["b", "c", "d"]));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 4);
+    for name in ["a", "b", "c", "d"] {
+        assert!(present(&setup, part(name), cx), "{name}");
+    }
+    assert!(!present(&setup, part("more"), cx), "no more pages");
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Idle));
+}
+
+#[gpui_kit::test]
+fn a_last_page_has_no_load_more_row(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", folders(&["a", "b"]));
+    settle(&setup, cx);
+    assert!(!present(&setup, part("more"), cx));
+}
+
+#[gpui_kit::test]
+fn a_page_for_a_directory_the_path_left_is_ignored(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", more(&["a"], "2"));
+    settle(&setup, cx);
+    click(&setup, part("more"), cx);
+    click(&setup, part("up"), cx);
+    setup.fake.resolve("/home", folders(&["me", "you"]));
+    settle(&setup, cx);
+
+    // The answer of the request that was cancelled changes nothing.
+    setup
+        .fake
+        .resolve_page("/home/me", "2", folders(&["stale"]));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 2);
+    assert!(!present(&setup, part("stale"), cx));
+
+    // Back in the directory, the listing kept its first page and can ask
+    // for the second again.
+    click(&setup, part("me"), cx);
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Idle));
+    assert!(present(&setup, part("a"), cx));
+    click(&setup, part("more"), cx);
+    assert_eq!(
+        setup.fake.requested(),
+        ["/home/me", "/home/me@2", "/home", "/home/me@2"]
+    );
+    setup
+        .fake
+        .resolve_page("/home/me", "2", folders(&["fresh"]));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 2);
+}
+
+#[gpui_kit::test]
+fn a_failed_page_keeps_the_rows_and_the_row_retries(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", more(&["a", "b"], "2"));
+    settle(&setup, cx);
+    click(&setup, part("more"), cx);
+    setup
+        .fake
+        .resolve_page("/home/me", "2", Err(io::Error::other("offline")));
+    settle(&setup, cx);
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Failed));
+    assert_eq!(rows(&setup, cx), 2, "the loaded folders stay");
+    assert!(present(&setup, part("a"), cx));
+    assert!(present(&setup, part("more"), cx));
+    assert!(!present(&setup, part("more-spinner"), cx));
+
+    click(&setup, part("more"), cx);
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Loading));
+    setup.fake.resolve_page("/home/me", "2", folders(&["c"]));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 3);
+    assert!(!present(&setup, part("more"), cx));
+}
+
+#[gpui_kit::test]
+fn enter_on_the_load_more_row_loads_the_next_page(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", more(&["a"], "2"));
+    settle(&setup, cx);
+    press(&setup, "down", cx);
+    assert_eq!(highlighted(&setup, cx), None, "the row is no folder");
+    press(&setup, "enter", cx);
+    assert_eq!(setup.fake.requested(), ["/home/me", "/home/me@2"]);
+}
+
+#[gpui_kit::test]
+fn the_filter_reaches_a_folder_that_only_a_later_page_has(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup
+        .fake
+        .resolve("/home/me", more(&["alpha", "beta"], "2"));
+    settle(&setup, cx);
+    type_text(&setup, "zu", cx);
+    assert_eq!(rows(&setup, cx), 0);
+    assert!(
+        present(&setup, part("more"), cx),
+        "the row stays while a query has no match and more follow"
+    );
+    assert!(!present(&setup, part("message"), cx));
+
+    click(&setup, part("more"), cx);
+    setup.fake.resolve_page("/home/me", "2", folders(&["zulu"]));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 1);
+    assert_eq!(highlighted(&setup, cx).as_deref(), Some("zulu"));
+    assert!(present(&setup, part("zulu"), cx));
+}
+
+#[gpui_kit::test]
+fn reaching_the_end_loads_one_page_and_not_again_while_it_loads(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    let names: Vec<String> = (0..30).map(|n| format!("folder-{n:02}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    setup.fake.resolve("/home/me", more(&names, "2"));
+    settle(&setup, cx);
+    assert_eq!(setup.fake.requested(), ["/home/me"], "no load at the top");
+
+    for _ in 0..3 {
+        scroll_rows(&setup, -2000., cx);
+    }
+    assert_eq!(
+        setup.fake.requested(),
+        ["/home/me", "/home/me@2"],
+        "exactly one request, and none while it loads"
+    );
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Loading));
+
+    setup
+        .fake
+        .resolve_page("/home/me", "2", more(&["next-page"], "3"));
+    settle(&setup, cx);
+    assert_eq!(rows(&setup, cx), 31);
+    assert_eq!(
+        setup.fake.requested().len(),
+        2,
+        "the row asks nothing by itself"
+    );
+}
+
+#[gpui_kit::test]
+fn a_failed_page_is_not_retried_by_scrolling(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    let names: Vec<String> = (0..30).map(|n| format!("folder-{n:02}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    setup.fake.resolve("/home/me", more(&names, "2"));
+    settle(&setup, cx);
+    for _ in 0..3 {
+        scroll_rows(&setup, -2000., cx);
+    }
+    setup
+        .fake
+        .resolve_page("/home/me", "2", Err(io::Error::other("offline")));
+    settle(&setup, cx);
+    scroll_rows(&setup, -2000., cx);
+    scroll_rows(&setup, 50., cx);
+    scroll_rows(&setup, -2000., cx);
+    assert_eq!(setup.fake.requested().len(), 2);
+    assert_eq!(more_state(&setup, cx), Some(MoreState::Failed));
+}
+
+#[gpui_kit::test]
+fn a_page_that_never_answers_leaves_the_dialog_alive(cx: &mut TestAppContext) {
+    let setup = setup(cx, "/home/me");
+    setup.fake.resolve("/home/me", more(&["a", "b"], "2"));
+    settle(&setup, cx);
+    click(&setup, part("more"), cx);
+    type_text(&setup, "a", cx);
+    assert_eq!(rows(&setup, cx), 1);
+    press(&setup, "escape", cx);
+    assert_eq!(events(&setup), [FolderPickerEvent::Cancelled]);
 }
