@@ -67,7 +67,7 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
     let program = options
         .program
         .clone()
-        .unwrap_or_else(crate::terminal::shell::default_shell);
+        .unwrap_or_else(crate::shell::default_shell);
     let integration = match options.shell_integration {
         ShellIntegration::Detect => detect_shell(&program),
         other => other,
@@ -94,7 +94,7 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
         }
     }
 
-    for name in crate::terminal::shell::FOREIGN_TERMINAL_ENV {
+    for name in crate::shell::FOREIGN_TERMINAL_ENV {
         cmd.env_remove(name);
     }
     for name in &options.env_remove {
@@ -175,14 +175,14 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
     // log in through their integration instead of `-l`.
     let (program, args) = if options.login && options.program.is_none() {
         if cfg!(target_os = "macos") {
-            crate::terminal::shell::login_command(&program, &args)
+            crate::shell::login_command(&program, &args).into_parts()
         } else if matches!(
             integration,
             ShellIntegration::Bash | ShellIntegration::Nushell
         ) {
             (program, args)
         } else {
-            crate::terminal::shell::login_command(&program, &args)
+            crate::shell::login_command(&program, &args).into_parts()
         }
     } else {
         (program, args)

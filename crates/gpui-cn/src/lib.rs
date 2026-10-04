@@ -54,6 +54,7 @@ mod progress;
 mod root;
 mod scroll_area;
 mod select;
+pub mod shell;
 mod sidebar;
 mod skeleton;
 mod spinner;

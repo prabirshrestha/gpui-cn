@@ -13,8 +13,8 @@
 //!   desktop targets) is the byte source for a local program; [`StreamSource`]
 //!   is one the application feeds itself, such as a remote session or its
 //!   own pty; [`FixtureSource`] parses canned bytes for tests and galleries.
-//! - [`shell`] resolves the user's shell, its login command and the
-//!   environment the way Ghostty does, for applications that start the
+//! - [`crate::shell`] resolves the user's shell, its login command and
+//!   the environment the way Ghostty does, for applications that start the
 //!   program themselves.
 //!
 //! # Use it
@@ -163,7 +163,6 @@ mod process;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod pty;
 mod selection;
-pub mod shell;
 mod source;
 mod state;
 mod stream;

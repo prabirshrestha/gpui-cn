@@ -28,7 +28,7 @@ jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
 # engine, a local shell in a pty on desktop targets, any other byte source,
 # and parking of idle terminals, which is on by default at runtime.
 # Building it needs Zig 0.16; see the `ghostty-vt-sys` crate.
-ghostty = ["dep:ghostty-vt", "dep:libc", "dep:portable-pty"]
+ghostty = ["dep:ghostty-vt", "dep:portable-pty"]
 # Headless UI testing through `gpui_kit::test`.
 test-support = ["gpui-kit/test-support"]
 
@@ -40,8 +40,9 @@ smol = "2"
 ghostty-vt = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-# The passwd entry, for the user's default shell.
-libc = { version = "0.2", optional = true }
+# The passwd entry, for the user's default shell, and the terminal's
+# processes.
+libc = "0.2"
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 portable-pty = { version = "0.9", optional = true }
