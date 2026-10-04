@@ -120,8 +120,10 @@ The terminal's engine runs on its own thread and publishes frames; the
 element paints the latest frame and never blocks on the engine. Keep a
 terminal that is not painted at zero work: it gets no frame credit, so it
 builds no frames, and its cursor blink stops. A test drives a terminal
-through `FixtureSource`, never a real shell, except the pty test in
-`tests/terminal_pty.rs`.
+through `FixtureSource` or `StreamSource`, never a real shell, except the
+pty test in `tests/terminal_pty.rs`. A test that runs the engine thread
+reads frames from a `FrameSink`, as `tests/terminal_stream.rs` does: the
+engine's wake from another thread trips GPUI's test scheduler.
 
 Icons come from the Lucide set in the gpui-kit-assets crate, as
 `IconName` values. The application registers `gpui_kit::assets::Assets`,

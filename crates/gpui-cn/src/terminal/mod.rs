@@ -10,8 +10,12 @@
 //!   pointer and the input method to it.
 //! - A [`FrameSource`] produces frames. [`Engine`] runs a [`ByteSource`]
 //!   through a Ghostty terminal on an owner thread; [`LocalPty`] (feature
-//!   `ghostty-pty`) is the byte source for a local program; [`FixtureSource`]
-//!   parses canned bytes for tests and galleries.
+//!   `ghostty-pty`) is the byte source for a local program; [`StreamSource`]
+//!   is one the application feeds itself, such as a remote session or its
+//!   own pty; [`FixtureSource`] parses canned bytes for tests and galleries.
+//! - [`shell`] resolves the user's shell, its login command and the
+//!   environment the way Ghostty does, for applications that start the
+//!   program themselves.
 //!
 //! [`crate::init`] registers the default key bindings in the [`KEY_CONTEXT`]
 //! key context.
@@ -51,8 +55,10 @@ mod options;
 ))]
 mod pty;
 mod selection;
+pub mod shell;
 mod source;
 mod state;
+mod stream;
 mod theme;
 
 pub use appearance::TerminalAppearance;
@@ -71,6 +77,7 @@ pub use options::{EngineOptions, LocalTerminalOptions, ShellIntegration, Working
 pub use pty::LocalPty;
 pub use source::{FixtureSource, FrameHandle, FrameSink, FrameSource, StartOptions};
 pub use state::{TerminalConfig, TerminalEvent, TerminalState};
+pub use stream::{StreamEvent, StreamPeer, StreamSource};
 pub use theme::ThemeError;
 
 /// Actions dispatched in the [`KEY_CONTEXT`] key context.

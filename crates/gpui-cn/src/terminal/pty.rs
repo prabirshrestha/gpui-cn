@@ -43,24 +43,6 @@ fn size(viewport: Viewport) -> PtySize {
     }
 }
 
-/// The user's shell: `SHELL`, then the passwd entry, then `sh`.
-fn default_shell() -> PathBuf {
-    if let Some(shell) = std::env::var_os("SHELL").filter(|s| !s.is_empty()) {
-        return PathBuf::from(shell);
-    }
-    #[cfg(windows)]
-    {
-        if let Some(comspec) = std::env::var_os("ComSpec") {
-            return PathBuf::from(comspec);
-        }
-        return PathBuf::from("cmd.exe");
-    }
-    #[cfg(not(windows))]
-    {
-        PathBuf::from("/bin/sh")
-    }
-}
-
 fn detect_shell(program: &Path) -> ShellIntegration {
     match program.file_name().and_then(|n| n.to_str()) {
         Some("bash") => ShellIntegration::Bash,
@@ -82,7 +64,10 @@ fn prepend_path_list(existing: Option<std::ffi::OsString>, dir: &Path, default: 
 
 /// Build the command, following Ghostty's environment rules.
 fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) -> CommandBuilder {
-    let program = options.program.clone().unwrap_or_else(default_shell);
+    let program = options
+        .program
+        .clone()
+        .unwrap_or_else(crate::terminal::shell::default_shell);
     let integration = match options.shell_integration {
         ShellIntegration::Detect => detect_shell(&program),
         other => other,
@@ -109,18 +94,7 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
         }
     }
 
-    for name in [
-        "VTE_VERSION",
-        "WT_SESSION",
-        "TERM_SESSION_ID",
-        "TERMINFO",
-        "GHOSTTY_RESOURCES_DIR",
-        "GHOSTTY_SHELL_FEATURES",
-        "GHOSTTY_SHELL_INTEGRATION_XDG_DIR",
-        "GHOSTTY_BASH_INJECT",
-        "GHOSTTY_BASH_ENV",
-        "GHOSTTY_ZSH_ZDOTDIR",
-    ] {
+    for name in crate::terminal::shell::FOREIGN_TERMINAL_ENV {
         cmd.env_remove(name);
     }
     for name in &options.env_remove {
@@ -193,19 +167,29 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
             }
         }
     }
-    if options.login
-        && options.program.is_none()
-        && !matches!(
-            integration,
-            ShellIntegration::Bash | ShellIntegration::Nushell
-        )
-    {
-        args.insert(0, "-l".to_owned());
-    }
     for (name, value) in &options.env {
         cmd.env(name, value);
     }
-    cmd.args(args);
+    // The user's shell starts as a login shell the way Ghostty starts it:
+    // through login(1) on macOS, with `-l` elsewhere. Bash and Nushell
+    // log in through their integration instead of `-l`.
+    let (program, args) = if options.login && options.program.is_none() {
+        if cfg!(target_os = "macos") {
+            crate::terminal::shell::login_command(&program, &args)
+        } else if matches!(
+            integration,
+            ShellIntegration::Bash | ShellIntegration::Nushell
+        ) {
+            (program, args)
+        } else {
+            crate::terminal::shell::login_command(&program, &args)
+        }
+    } else {
+        (program, args)
+    };
+    let mut argv = vec![program.into_os_string()];
+    argv.extend(args.into_iter().map(Into::into));
+    *cmd.get_argv_mut() = argv;
     cmd
 }
 
