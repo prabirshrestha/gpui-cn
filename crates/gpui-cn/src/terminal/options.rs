@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Engine limits, with Ghostty's defaults.
+/// Engine limits, with Ghostty's defaults: 10,000,000 bytes of scrollback
+/// (`scrollback-limit` in `ghostty +show-config --default`), so a busy
+/// terminal holds as much history as Ghostty's and no more.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EngineOptions {
@@ -21,7 +23,7 @@ pub struct EngineOptions {
 impl Default for EngineOptions {
     fn default() -> Self {
         Self {
-            scrollback_bytes: 50 << 20,
+            scrollback_bytes: 10_000_000,
             scrollback_lines: None,
             terminfo_name: ghostty_vt::terminfo::TERM.to_owned(),
             clipboard_write_max_bytes: 64 << 20,
@@ -293,5 +295,16 @@ impl LocalTerminalOptions {
     /// The run time under which an exit is reported as abnormal.
     pub fn abnormal_exit_runtime(&self) -> Duration {
         self.abnormal_exit_runtime
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_scrollback_limit_is_ghosttys_default() {
+        assert_eq!(
+            super::EngineOptions::default().scrollback_bytes(),
+            10_000_000
+        );
     }
 }

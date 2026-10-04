@@ -96,3 +96,90 @@ fn a_custom_stream_renders_output_gets_input_and_sizes_and_reports_exit() {
     handle.close();
     wait_event(&peer, &StreamEvent::Closed);
 }
+
+/// Starts an engine on a stream, takes its first frame and grants credit
+/// for the next, as a painted terminal does.
+fn started(viewport: Viewport) -> (StreamPeer, FrameSink, Box<dyn FrameHandle>) {
+    let (source, peer) = StreamSource::new();
+    let (sink, _wake) = FrameSink::new();
+    let handle = Box::new(Engine::new(source, EngineOptions::default()))
+        .start(
+            sink.clone(),
+            StartOptions::default().with_viewport(viewport),
+        )
+        .unwrap();
+    wait_for(&sink, handle.as_ref(), |_| true);
+    (peer, sink, handle)
+}
+
+/// Fails if the engine publishes a frame within `window`.
+fn assert_no_frame(sink: &FrameSink, window: Duration, why: &str) {
+    let deadline = Instant::now() + window;
+    while Instant::now() < deadline {
+        assert!(sink.take().is_none(), "{why}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Program output: `lines` numbered lines, the last one marked.
+fn flood(lines: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in 0..lines {
+        bytes.extend_from_slice(format!("line {line} the quick brown fox\r\n").as_bytes());
+    }
+    bytes.extend_from_slice(b"LAST");
+    bytes
+}
+
+#[test]
+fn an_idle_terminal_builds_no_frames() {
+    let (_peer, sink, handle) = started(Viewport::new(80, 24, 8, 16).unwrap());
+    assert_no_frame(&sink, Duration::from_millis(400), "nothing changed");
+    handle.close();
+}
+
+#[test]
+fn a_hidden_terminal_drains_output_without_frames_and_shows_it_when_revealed() {
+    let (peer, sink, handle) = started(Viewport::new(80, 24, 8, 16).unwrap());
+    handle.set_visible(false);
+    peer.output(&flood(50_000));
+    assert_no_frame(
+        &sink,
+        Duration::from_millis(400),
+        "a hidden terminal draws nothing",
+    );
+    handle.set_visible(true);
+    let shown = wait_for(&sink, handle.as_ref(), |s| s.frame.text().contains("LAST"));
+    assert!(
+        shown.frame.text().contains("line 49999"),
+        "the output was parsed"
+    );
+    handle.close();
+}
+
+#[test]
+fn a_terminal_that_is_not_painted_builds_no_more_frames() {
+    // The first frame is taken but never painted, so no credit comes back:
+    // what a terminal on a page that is not shown, or in a window that is
+    // minimized, sees.
+    let (source, peer) = StreamSource::new();
+    let (sink, _wake) = FrameSink::new();
+    let handle = Box::new(Engine::new(source, EngineOptions::default()))
+        .start(
+            sink.clone(),
+            StartOptions::default().with_viewport(Viewport::new(80, 24, 8, 16).unwrap()),
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while sink.take().is_none() {
+        assert!(Instant::now() < deadline, "no first frame");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    peer.output(&flood(20_000));
+    assert_no_frame(&sink, Duration::from_millis(400), "no credit, no frame");
+    // A paint grants one frame, and it is current.
+    handle.request_frame();
+    let shown = wait_for(&sink, handle.as_ref(), |s| s.frame.text().contains("LAST"));
+    assert!(shown.frame.text().contains("line 19999"));
+    handle.close();
+}

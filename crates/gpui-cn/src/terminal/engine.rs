@@ -390,9 +390,11 @@ pub(crate) fn spawn(
     sink: FrameSink,
 ) -> io::Result<EngineHandle> {
     let shared = Arc::new(Shared {
+        // The first frame is published as the source starts, so there is no
+        // credit until the UI paints it, the same as for every later frame.
         mailbox: Mutex::new(Mailbox {
             visible: config.visible,
-            credit: true,
+            credit: false,
             ..Mailbox::default()
         }),
         wake: Condvar::new(),

@@ -227,6 +227,8 @@ mod macos {
 
         cx.update(|cx| Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On));
         select(&mut cx, handle, &gallery, frames);
+        #[cfg(feature = "terminal")]
+        terminal();
     }
 
     /// The select: what a menu costs to open, to keep open, to scroll, to
@@ -378,5 +380,103 @@ mod macos {
             cpu_ms() - cpu_start,
             wall_start.elapsed().as_secs_f64() * 1000.
         );
+    }
+
+    /// The terminal engine with no window: a second of steady output (64
+    /// KB every millisecond) through a stream, to a pane that is painted
+    /// (a frame granted after every frame, more than a display grants), one
+    /// that is hidden, and one that is never painted, as on a page that is
+    /// not shown. Then what a quiet terminal costs.
+    #[cfg(feature = "terminal")]
+    fn terminal() {
+        use std::time::Duration;
+
+        use gpui_cn::terminal::{
+            Engine, EngineOptions, FrameSink, FrameSource as _, StartOptions, StreamSource,
+            Viewport,
+        };
+
+        println!("terminal engine:");
+        let mut chunk = Vec::new();
+        let mut line = 0;
+        while chunk.len() < 64 << 10 {
+            chunk.extend_from_slice(
+                format!("line {line} the quick brown fox jumps over the lazy dog\r\n").as_bytes(),
+            );
+            line += 1;
+        }
+        for mode in ["painted", "hidden", "not painted"] {
+            let (source, peer) = StreamSource::new();
+            let (sink, _wake) = FrameSink::new();
+            let viewport = Viewport::new(120, 40, 16, 32).expect("a grid");
+            let handle = Box::new(Engine::new(source, EngineOptions::default()))
+                .start(
+                    sink.clone(),
+                    StartOptions::default().with_viewport(viewport),
+                )
+                .expect("start");
+            while sink.take().is_none() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            match mode {
+                "painted" => handle.request_frame(),
+                "hidden" => handle.set_visible(false),
+                _ => {}
+            }
+            let cpu_start = cpu_ms();
+            let start = Instant::now();
+            let mut sent = 0usize;
+            let mut frames = 0;
+            while start.elapsed() < Duration::from_secs(1) {
+                peer.output(&chunk);
+                sent += chunk.len();
+                if sink.take().is_some() {
+                    frames += 1;
+                    if mode == "painted" {
+                        handle.request_frame();
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            peer.output(b"LAST");
+            let cpu = cpu_ms() - cpu_start;
+            // One frame proves the output was parsed, not dropped.
+            match mode {
+                "hidden" => handle.set_visible(true),
+                _ => handle.request_frame(),
+            }
+            let parsed = loop {
+                if let Some(snapshot) = sink.take() {
+                    if snapshot.frame.text().contains("LAST") {
+                        break true;
+                    }
+                    handle.request_frame();
+                }
+                if start.elapsed() > Duration::from_secs(10) {
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            };
+            println!(
+                "  {mode:<11} {:>5.1} MB in 1 s: {frames:>4} frames, cpu {cpu:>4.0} ms, all parsed: {parsed}",
+                sent as f64 / (1 << 20) as f64,
+            );
+            let idle_cpu = cpu_ms();
+            let idle = Instant::now();
+            let mut idle_frames = 0;
+            while idle.elapsed() < Duration::from_millis(500) {
+                if sink.take().is_some() {
+                    idle_frames += 1;
+                    handle.request_frame();
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            println!(
+                "  {:<11} then 500 ms quiet: {idle_frames} frames, cpu {:.1} ms",
+                "",
+                cpu_ms() - idle_cpu
+            );
+            handle.close();
+        }
     }
 }
