@@ -65,10 +65,9 @@ that this repository does not name. The workspace has four crates:
    window under it does not scroll too. Every such component has a
    headless test that puts it in a `ScrollArea` taller than the window,
    sends a wheel step over it, and asserts that the component scrolled
-   and the page did not. A
-   region that shows or hides content animates with `transition` from
-   `gpui_base` and the theme's motion; nothing appears or vanishes in one
-   frame unless motion is reduced.
+   and the page did not. A region that shows or hides content animates
+   with `transition` from `gpui_base` and the theme's motion; nothing
+   appears or vanishes in one frame unless motion is reduced.
 6. Every component works with touch. A tap is a mouse down and up at one
    point, so nothing may depend on a hover that came first, and a hover
    state paints as rest while `theme.touch` is set. Sizes come from

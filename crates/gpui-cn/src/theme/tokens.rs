@@ -375,9 +375,11 @@ pub struct MetricTokens {
     pub avatar_group_overlap: Pixels,
     /// The ring that parts overlapped avatars: 2px, shadcn's `ring-2`.
     pub avatar_group_ring: Pixels,
-    /// The room around a terminal's grid: 6px, the padding the
-    /// gpui-ghostty terminal app shipped with (Ghostty's own default is
-    /// 2px). Not measured from the reference app. Fixed, because the grid
+    /// The room around a terminal's grid: 2px, Ghostty's default
+    /// `window-padding-x` and `window-padding-y`, from
+    /// `src/config/Config.zig` and `ghostty +show-config --default`. The
+    /// room is painted in the terminal's background, as Ghostty's default
+    /// `window-padding-color = background` does. Fixed, because the grid
     /// follows the code font size, not the UI font size.
     pub terminal_padding: Pixels,
     /// The width of a bar cursor and the height of an underline cursor in
@@ -475,7 +477,7 @@ impl MetricTokens {
             avatar_initials_lg: scaled(14.),
             avatar_group_overlap: scaled(8.),
             avatar_group_ring: px(2.),
-            terminal_padding: px(6.),
+            terminal_padding: px(2.),
             terminal_cursor_thickness: px(2.),
         }
     }
@@ -1277,10 +1279,10 @@ mod tests {
         assert_eq!(default.metrics.badge_dot, px(6.));
         assert_eq!(large.metrics.avatar_md, px(40.));
         assert_eq!(large.metrics.avatar_group_ring, px(2.), "a hairline stays");
-        assert_eq!(default.metrics.terminal_padding, px(6.));
+        assert_eq!(default.metrics.terminal_padding, px(2.));
         assert_eq!(
             large.metrics.terminal_padding,
-            px(6.),
+            px(2.),
             "the grid's room stays"
         );
         assert_eq!(large.metrics.terminal_cursor_thickness, px(2.));

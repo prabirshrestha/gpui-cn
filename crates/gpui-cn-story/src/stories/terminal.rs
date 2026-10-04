@@ -1,19 +1,22 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use std::path::PathBuf;
 
+use gpui_cn::prelude::Disableable as _;
 use gpui_cn::terminal::{
     FixtureSource, LocalTerminalOptions, Terminal, TerminalColors, TerminalConfig, TerminalEvent,
-    TerminalState, WorkingDirectory,
+    TerminalState, WorkingDirectory, actions,
 };
 use gpui_cn::{
-    ActiveTheme as _, Select, SelectEvent, SelectItem, SelectState, Tab, Tabs, TabsEvent,
-    TabsState, Theme, ThemeScope, ThemeTokens, gpui_kit::assets::IconName,
+    ActiveTheme as _, ContextMenu, MenuEntry, MenuItem, MenuState, Select, SelectEvent, SelectItem,
+    SelectState, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeScope, ThemeTokens,
+    gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     Action, AnyView, App, AppContext as _, Axis, Context, ElementId, Entity, Global,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
-    Styled as _, Window, actions, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, actions, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{Story, frame, note, page, section};
@@ -31,6 +34,10 @@ actions!(
         SplitRight,
         /// Splits the focused pane, the new one below.
         SplitDown,
+        /// Splits the focused pane, the new one on the left.
+        SplitLeft,
+        /// Splits the focused pane, the new one above.
+        SplitUp,
         /// Focuses the pane on the left.
         FocusLeft,
         /// Focuses the pane on the right.
@@ -202,13 +209,19 @@ impl Node {
         }
     }
 
-    /// Puts `new` after `target` along `axis`.
-    fn split(&mut self, target: PaneId, axis: Axis, new: PaneId) -> bool {
+    /// Puts `new` beside `target` along `axis`: after it, or before it
+    /// with `before`.
+    fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, before: bool) -> bool {
         match self {
             Node::Leaf(id) if *id == target => {
+                let pair = if before {
+                    vec![Node::Leaf(new), Node::Leaf(target)]
+                } else {
+                    vec![Node::Leaf(target), Node::Leaf(new)]
+                };
                 *self = Node::Split {
                     axis,
-                    children: vec![Node::Leaf(target), Node::Leaf(new)],
+                    children: pair,
                 };
                 true
             }
@@ -222,12 +235,12 @@ impl Node {
                         .iter()
                         .position(|c| matches!(c, Node::Leaf(id) if *id == target))
                 {
-                    children.insert(index + 1, Node::Leaf(new));
+                    children.insert(index + usize::from(!before), Node::Leaf(new));
                     return true;
                 }
                 children
                     .iter_mut()
-                    .any(|child| child.split(target, axis, new))
+                    .any(|child| child.split(target, axis, new, before))
             }
         }
     }
@@ -293,24 +306,41 @@ struct TabPanes {
     focused: PaneId,
 }
 
-/// Where Ghostty keeps theme files: the user's own, then the ones the
-/// application ships.
-fn theme_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        dirs.push(home.join(".config/ghostty/themes"));
-        dirs.push(home.join(".local/share/ghostty/themes"));
+/// Where Ghostty looks for theme files, in its order: the user's config
+/// directory, then the application's resources, as Ghostty's
+/// `src/config/theme.zig` does. A test can name its own directories.
+fn theme_dirs(cx: &App) -> Vec<PathBuf> {
+    if let Some(ThemeDirs(dirs)) = cx.try_global::<ThemeDirs>() {
+        return dirs.clone();
     }
-    dirs.push(PathBuf::from(
-        "/Applications/Ghostty.app/Contents/Resources/ghostty/themes",
-    ));
-    dirs.push(PathBuf::from("/usr/share/ghostty/themes"));
+    let mut dirs = Vec::new();
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
+    if let Some(config) = config {
+        dirs.push(config.join("ghostty/themes"));
+    }
+    let resources = std::env::var_os("GHOSTTY_RESOURCES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(if cfg!(target_os = "macos") {
+                "/Applications/Ghostty.app/Contents/Resources/ghostty"
+            } else {
+                "/usr/share/ghostty"
+            })
+        });
+    dirs.push(resources.join("themes"));
     dirs
 }
 
+/// Theme directories a test uses instead of the machine's.
+struct ThemeDirs(Vec<PathBuf>);
+
+impl Global for ThemeDirs {}
+
 /// The Ghostty theme names on this machine, sorted, without duplicates.
-fn installed_themes() -> Vec<String> {
-    let mut names: Vec<String> = theme_dirs()
+fn installed_themes(cx: &App) -> Vec<String> {
+    let mut names: Vec<String> = theme_dirs(cx)
         .into_iter()
         .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flatten()
@@ -324,8 +354,8 @@ fn installed_themes() -> Vec<String> {
 
 /// Reads the Ghostty theme `name` from the first theme directory that has
 /// it.
-fn read_theme(name: &str) -> Option<TerminalColors> {
-    theme_dirs()
+fn read_theme(name: &str, cx: &App) -> Option<TerminalColors> {
+    theme_dirs(cx)
         .into_iter()
         .find_map(|dir| std::fs::read_to_string(dir.join(name)).ok())
         .and_then(|text| TerminalColors::from_ghostty_theme(&text).ok())
@@ -342,6 +372,13 @@ pub struct TerminalStory {
     themes: Entity<SelectState<SharedString>>,
     layouts: HashMap<SharedString, TabPanes>,
     panes: HashMap<PaneId, Entity<TerminalState>>,
+    /// Tabs the user named. The others follow their focused pane's title.
+    named: HashSet<SharedString>,
+    /// Set while the story itself renames a tab to a title, so the
+    /// `Renamed` it causes is not taken for the user's.
+    titling: bool,
+    pane_menu: Entity<MenuState>,
+    tab_menu: Entity<MenuState>,
     next_pane: u64,
     next_tab: u64,
 }
@@ -363,11 +400,11 @@ impl Story for TerminalStory {
         bind_keys(cx);
         cx.new(|cx| {
             // A fixture run lists no themes, so its pictures do not depend
-            // on the machine.
-            let names = if cx.has_global::<Fixtures>() {
+            // on the machine, unless a test names its own directories.
+            let names = if cx.has_global::<Fixtures>() && !cx.has_global::<ThemeDirs>() {
                 Vec::new()
             } else {
-                installed_themes()
+                installed_themes(cx)
             };
             let themes = cx.new(|cx| {
                 SelectState::new(
@@ -393,7 +430,7 @@ impl Story for TerminalStory {
                     let colors = if name.is_empty() {
                         TerminalColors::default()
                     } else {
-                        read_theme(name).unwrap_or_default()
+                        read_theme(name, cx).unwrap_or_default()
                     };
                     this.set_colors(colors, cx);
                 }
@@ -408,6 +445,9 @@ impl Story for TerminalStory {
                     TabsEvent::Selected(_) => this.show_selected(window, cx),
                     TabsEvent::Closed(id) => this.tab_closed(id, window, cx),
                     TabsEvent::AddRequested => this.new_tab(window, cx),
+                    TabsEvent::Renamed(id) if !this.titling => {
+                        this.named.insert(id.clone());
+                    }
                     _ => {}
                 },
             )
@@ -418,6 +458,10 @@ impl Story for TerminalStory {
                 themes,
                 layouts: HashMap::new(),
                 panes: HashMap::new(),
+                named: HashSet::new(),
+                titling: false,
+                pane_menu: cx.new(MenuState::new),
+                tab_menu: cx.new(MenuState::new),
                 next_pane: 0,
                 next_tab: 0,
             };
@@ -469,6 +513,51 @@ impl TerminalStory {
         cx.set_global(Fixtures);
     }
 
+    /// Makes the theme picker list the Ghostty themes in `dirs` instead of
+    /// the machine's, for a test.
+    pub fn use_theme_dirs(dirs: impl IntoIterator<Item = PathBuf>, cx: &mut App) {
+        cx.set_global(ThemeDirs(dirs.into_iter().collect()));
+    }
+
+    /// The tab strip's state.
+    pub fn tabs(&self) -> &Entity<TabsState> {
+        &self.tabs
+    }
+
+    /// The theme picker's state.
+    pub fn themes(&self) -> &Entity<SelectState<SharedString>> {
+        &self.themes
+    }
+
+    /// The tab that holds pane `id`.
+    fn tab_of(&self, id: PaneId) -> Option<SharedString> {
+        self.layouts
+            .iter()
+            .find(|(_, layout)| layout.root.leaves().contains(&id))
+            .map(|(tab, _)| tab.clone())
+    }
+
+    /// Names tab `tab` after its focused pane's title, unless the user
+    /// named it.
+    fn follow_title(&mut self, tab: &SharedString, cx: &mut Context<Self>) {
+        if self.named.contains(tab) {
+            return;
+        }
+        let Some(title) = self
+            .layouts
+            .get(tab)
+            .and_then(|layout| self.panes.get(&layout.focused))
+            .map(|terminal| terminal.read(cx).title().clone())
+            .filter(|title| !title.is_empty())
+        else {
+            return;
+        };
+        self.titling = true;
+        let id = tab.clone();
+        self.tabs.update(cx, |tabs, cx| tabs.rename(id, title, cx));
+        self.titling = false;
+    }
+
     fn selected_tab(&self, cx: &App) -> Option<SharedString> {
         self.tabs.read(cx).selected().cloned()
     }
@@ -502,12 +591,31 @@ impl TerminalStory {
         });
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&terminal, window, move |this, _, event, window, cx| {
-            // A shell that ended normally takes its pane with it. One that
-            // failed or ended at once stays, so its status shows.
-            if let TerminalEvent::Exited(status) = event
-                && !status.is_abnormal()
-            {
-                this.close_pane(id, window, cx);
+            match event {
+                // A shell that ended normally takes its pane with it. One
+                // that failed or ended at once stays, so its status shows.
+                TerminalEvent::Exited(status) if !status.is_abnormal() => {
+                    this.close_pane(id, window, cx);
+                }
+                // A click focuses a pane too, and the splits and the tab's
+                // name follow the pane with focus.
+                TerminalEvent::Focused => {
+                    if let Some(tab) = this.tab_of(id)
+                        && let Some(layout) = this.layouts.get_mut(&tab)
+                    {
+                        layout.focused = id;
+                        this.follow_title(&tab, cx);
+                        cx.notify();
+                    }
+                }
+                TerminalEvent::TitleChanged => {
+                    if let Some(tab) = this.tab_of(id)
+                        && this.layouts.get(&tab).is_some_and(|l| l.focused == id)
+                    {
+                        this.follow_title(&tab, cx);
+                    }
+                }
+                _ => {}
             }
         })
         .detach();
@@ -579,7 +687,7 @@ impl TerminalStory {
         }
     }
 
-    fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+    fn split(&mut self, axis: Axis, before: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.selected_tab(cx) else {
             return;
         };
@@ -588,7 +696,7 @@ impl TerminalStory {
         };
         let pane = self.spawn_pane(window, cx);
         if let Some(layout) = self.layouts.get_mut(&tab)
-            && layout.root.split(target, axis, pane)
+            && layout.root.split(target, axis, pane, before)
         {
             self.focus_pane(pane, window, cx);
         }
@@ -679,6 +787,122 @@ impl TerminalStory {
         }
     }
 
+    /// Closes every tab but `keep`, or only the tabs after it with
+    /// `right_only`.
+    fn close_others(&mut self, keep: &SharedString, right_only: bool, cx: &mut Context<Self>) {
+        let ids: Vec<SharedString> = self
+            .tabs
+            .read(cx)
+            .tabs()
+            .iter()
+            .map(|tab| tab.id().clone())
+            .collect();
+        let Some(at) = ids.iter().position(|id| id == keep) else {
+            return;
+        };
+        let doomed: Vec<SharedString> = ids
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                if right_only {
+                    *index > at
+                } else {
+                    *index != at
+                }
+            })
+            .map(|(_, id)| id)
+            .collect();
+        self.tabs.update(cx, |tabs, cx| {
+            tabs.select(keep.clone(), cx);
+            for id in doomed {
+                tabs.remove(id, cx);
+            }
+        });
+    }
+
+    /// The rows of a tab's context menu.
+    fn tab_entries(story: &WeakEntity<Self>, tab: &SharedString, cx: &App) -> Vec<MenuEntry> {
+        let Some(this) = story.upgrade() else {
+            return Vec::new();
+        };
+        let ids: Vec<SharedString> = this
+            .read(cx)
+            .tabs
+            .read(cx)
+            .tabs()
+            .iter()
+            .map(|tab| tab.id().clone())
+            .collect();
+        let at = ids.iter().position(|id| id == tab).unwrap_or(0);
+        let item =
+            |key: &'static str,
+             label: &'static str,
+             run: fn(&mut Self, SharedString, &mut Window, &mut Context<Self>)| {
+                let story = story.clone();
+                let tab = tab.clone();
+                MenuItem::new(key, label).on_select(move |window, cx| {
+                    let tab = tab.clone();
+                    let _ = story.update(cx, |this, cx| run(this, tab, window, cx));
+                })
+            };
+        vec![
+            item("close-tab", "Close Tab", |this, tab, _, cx| {
+                this.tabs.update(cx, |tabs, cx| tabs.remove(tab, cx));
+            })
+            .into(),
+            item(
+                "close-other-tabs",
+                "Close Other Tabs",
+                |this, tab, _, cx| {
+                    this.close_others(&tab, false, cx);
+                },
+            )
+            .disabled(ids.len() < 2)
+            .into(),
+            item(
+                "close-tabs-right",
+                "Close Tabs to the Right",
+                |this, tab, _, cx| {
+                    this.close_others(&tab, true, cx);
+                },
+            )
+            .disabled(at + 1 >= ids.len())
+            .into(),
+            MenuEntry::Separator,
+            item("rename-tab", "Rename Tab...", |this, tab, window, cx| {
+                this.tabs
+                    .update(cx, |tabs, cx| tabs.start_rename(tab, window, cx));
+            })
+            .into(),
+        ]
+    }
+
+    /// The rows of a pane's context menu. Copy and Paste go to the pane,
+    /// the splits to the story, through the pane's focus.
+    fn pane_entries(terminal: &Entity<TerminalState>, cx: &App) -> Vec<MenuEntry> {
+        let has_selection = terminal.read(cx).has_selection();
+        vec![
+            MenuItem::new("copy", "Copy")
+                .action(actions::Copy)
+                .disabled(!has_selection)
+                .into(),
+            MenuItem::new("paste", "Paste")
+                .action(actions::Paste)
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::new("split-right", "Split Right")
+                .action(SplitRight)
+                .into(),
+            MenuItem::new("split-left", "Split Left")
+                .action(SplitLeft)
+                .into(),
+            MenuItem::new("split-down", "Split Down")
+                .action(SplitDown)
+                .into(),
+            MenuItem::new("split-up", "Split Up").action(SplitUp).into(),
+        ]
+    }
+
     fn send_leader(&mut self, cx: &mut Context<Self>) {
         if let Some(terminal) = self.focused_terminal(cx).cloned() {
             terminal.update(cx, |terminal, cx| terminal.send_text("\u{1}", cx));
@@ -701,11 +925,21 @@ impl TerminalStory {
                         theme.border()
                     })
                 })
-                .children(
-                    self.panes
-                        .get(id)
-                        .map(|terminal| Terminal::new(id.element_id(), terminal)),
-                ),
+                .children(self.panes.get(id).map(|terminal| {
+                    let focus = terminal.read(cx).focus_handle().clone();
+                    let entries = terminal.clone();
+                    // A right click focuses the pane first, so its menu's
+                    // commands go to that pane. A program that reports the
+                    // mouse gets the click instead, as in Ghostty.
+                    ContextMenu::new(
+                        ElementId::NamedChild(Arc::new(id.element_id()), "menu".into()),
+                        &self.pane_menu,
+                    )
+                    .action_context(&focus)
+                    .items(move |_, cx| Self::pane_entries(&entries, cx))
+                    .size_full()
+                    .child(Terminal::new(id.element_id(), terminal))
+                })),
             Node::Split { axis, children } => div()
                 .flex()
                 .flex_1()
@@ -760,10 +994,9 @@ impl Render for TerminalStory {
                 ))
                 .child(note(leader, cx))
                 .child(
-                    div().w(px(280.)).child(
-                        Select::new("terminal-theme", &self.themes)
-                            .accessibility_label("Terminal theme"),
-                    ),
+                    Select::new("terminal-theme", &self.themes)
+                        .accessibility_label("Terminal theme")
+                        .w(px(280.)),
                 )
                 .child(
                     frame(px(480.), cx)
@@ -784,10 +1017,16 @@ impl Render for TerminalStory {
                             this.select_tab(action.0.saturating_sub(1), cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitRight, window, cx| {
-                            this.split(Axis::Horizontal, window, cx);
+                            this.split(Axis::Horizontal, false, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitDown, window, cx| {
-                            this.split(Axis::Vertical, window, cx);
+                            this.split(Axis::Vertical, false, window, cx);
+                        }))
+                        .on_action(cx.listener(|this, _: &SplitLeft, window, cx| {
+                            this.split(Axis::Horizontal, true, window, cx);
+                        }))
+                        .on_action(cx.listener(|this, _: &SplitUp, window, cx| {
+                            this.split(Axis::Vertical, true, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &FocusLeft, window, cx| {
                             this.focus_direction(Axis::Horizontal, false, window, cx);
@@ -817,11 +1056,14 @@ impl Render for TerminalStory {
                         // both.
                         .child(ThemeScope::new(
                             Self::SCOPE,
-                            div()
-                                .h(bar)
-                                .w_full()
-                                .flex_shrink_0()
-                                .child(Tabs::new("terminal-tabs", &self.tabs)),
+                            div().h(bar).w_full().flex_shrink_0().child({
+                                let story = cx.entity().downgrade();
+                                Tabs::new("terminal-tabs", &self.tabs)
+                                    .renamable(true)
+                                    .context_menu(&self.tab_menu, move |tab, _, cx| {
+                                        Self::tab_entries(&story, tab, cx)
+                                    })
+                            }),
                         ))
                         .child(div().flex().flex_1().min_h_0().children(body)),
                 ),
@@ -840,9 +1082,9 @@ mod tests {
     #[test]
     fn splits_nest_across_axes_and_flatten_along_one() {
         let mut root = Node::Leaf(pane(0));
-        assert!(root.split(pane(0), Axis::Horizontal, pane(1)));
-        assert!(root.split(pane(1), Axis::Horizontal, pane(2)));
-        assert!(root.split(pane(2), Axis::Vertical, pane(3)));
+        assert!(root.split(pane(0), Axis::Horizontal, pane(1), false));
+        assert!(root.split(pane(1), Axis::Horizontal, pane(2), false));
+        assert!(root.split(pane(2), Axis::Vertical, pane(3), false));
         assert_eq!(root.leaves(), [pane(0), pane(1), pane(2), pane(3)]);
         let Node::Split { axis, children } = &root else {
             panic!("a split");
@@ -856,10 +1098,20 @@ mod tests {
     }
 
     #[test]
+    fn a_split_before_puts_the_new_pane_first() {
+        let mut root = Node::Leaf(pane(0));
+        assert!(root.split(pane(0), Axis::Horizontal, pane(1), true));
+        assert!(root.split(pane(0), Axis::Horizontal, pane(2), true));
+        assert_eq!(root.leaves(), [pane(1), pane(2), pane(0)]);
+        assert!(root.split(pane(0), Axis::Vertical, pane(3), true));
+        assert_eq!(root.leaves(), [pane(1), pane(2), pane(3), pane(0)]);
+    }
+
+    #[test]
     fn neighbors_follow_the_split_axes() {
         let mut root = Node::Leaf(pane(0));
-        root.split(pane(0), Axis::Horizontal, pane(1));
-        root.split(pane(1), Axis::Vertical, pane(2));
+        root.split(pane(0), Axis::Horizontal, pane(1), false);
+        root.split(pane(1), Axis::Vertical, pane(2), false);
         assert_eq!(
             root.neighbor(pane(0), Axis::Horizontal, true),
             Some(pane(1))
@@ -876,8 +1128,8 @@ mod tests {
     #[test]
     fn removing_a_pane_collapses_a_split_of_one() {
         let mut root = Node::Leaf(pane(0));
-        root.split(pane(0), Axis::Horizontal, pane(1));
-        root.split(pane(1), Axis::Vertical, pane(2));
+        root.split(pane(0), Axis::Horizontal, pane(1), false);
+        root.split(pane(1), Axis::Vertical, pane(2), false);
         assert!(root.remove(pane(2)));
         assert_eq!(
             root,

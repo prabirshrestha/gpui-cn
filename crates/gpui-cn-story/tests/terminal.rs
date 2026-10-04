@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use gpui_cn::terminal::{TerminalColors, frame::Rgb};
+use gpui_cn::terminal::{TerminalColors, TerminalSnapshot, frame::Rgb};
 use gpui_cn::{ActiveTheme as _, ReduceMotion, Theme};
 use gpui_cn_story::{Gallery, stories::TerminalStory};
 use gpui_kit::{
@@ -140,4 +140,196 @@ fn a_theme_change_reaches_every_pane_and_the_tab_strip(cx: &mut TestAppContext) 
     assert_eq!(strip.0, gpui_kit::rgb(0xfdf6e3).into());
     assert_eq!(strip.1, gpui_kit::rgb(0x073642).into());
     assert!(!strip.2, "a light terminal gives a light strip");
+}
+
+fn story(gallery: &Entity<Gallery>, cx: &mut TestAppContext) -> Entity<TerminalStory> {
+    gallery
+        .read_with(cx, |gallery, cx| gallery.current_story::<TerminalStory>(cx))
+        .expect("the Terminal story")
+}
+
+fn named(parent: ElementId, child: &str) -> ElementId {
+    ElementId::NamedChild(Arc::new(parent), child.to_owned().into())
+}
+
+fn label(story: &Entity<TerminalStory>, id: &str, cx: &mut TestAppContext) -> String {
+    story.read_with(cx, |story, cx| {
+        story
+            .tabs()
+            .read(cx)
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == id)
+            .map(|tab| tab.label().to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[gpui_kit::test]
+fn typing_in_the_theme_picker_finds_a_theme_and_picking_it_applies_it(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("gpui-cn-themes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, background) in [
+        ("Dracula", "#282a36"),
+        ("Nord", "#2e3440"),
+        ("Solarized Light", "#fdf6e3"),
+    ] {
+        std::fs::write(dir.join(name), format!("background = {background}\n")).unwrap();
+    }
+    cx.update(|cx| TerminalStory::use_theme_dirs([dir.clone()], cx));
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    let trigger = named(ElementId::Name("terminal-theme".into()), "trigger");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click(trigger, cx);
+        window.render_frame(cx);
+        window.input("drac", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let highlighted = story.read_with(cx, |story, cx| {
+        story
+            .themes()
+            .read(cx)
+            .highlighted()
+            .map(|item| item.value().to_string())
+    });
+    assert_eq!(highlighted.as_deref(), Some("Dracula"), "the fuzzy match");
+    press(handle, cx, &["enter"]);
+    let background = story.read_with(cx, |story, _| story.colors().background());
+    assert_eq!(background, Rgb(0x28, 0x2a, 0x36));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui_kit::test]
+fn the_pane_menu_copies_the_selection_and_splits_the_pane(cx: &mut TestAppContext) {
+    let (handle, _) = setup_gallery(cx);
+    let menu = named(pane(0), "menu");
+    let bounds = cx
+        .update_window(handle.into(), |_, window, _| window.find(pane(0)).bounds())
+        .unwrap();
+    // The first row starts with the prompt "~/gpui-cn".
+    let row = bounds.origin.y + px(10.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click(pane(0), cx);
+        window.drag(
+            gpui_kit::point(bounds.origin.x + px(1.), row),
+            gpui_kit::point(bounds.origin.x + px(200.), row),
+            cx,
+        );
+        window.right_click(pane(0), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click(named(menu.clone(), "copy"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert!(
+        copied
+            .as_deref()
+            .is_some_and(|text| text.starts_with("~/gpui-cn")),
+        "copied {copied:?}"
+    );
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.right_click(pane(0), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click(named(menu, "split-left"), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let (left, right) = cx
+        .update_window(handle.into(), |_, window, _| {
+            (window.find(pane(1)).bounds(), window.find(pane(0)).bounds())
+        })
+        .unwrap();
+    assert!(left.right() <= right.left(), "the new pane is on the left");
+}
+
+#[gpui_kit::test]
+fn the_tab_menu_closes_other_tabs_and_renames(cx: &mut TestAppContext) {
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "c"]);
+    press(handle, cx, &["ctrl-a", "c"]);
+    assert!(shows(handle, cx, tab("shell-3")));
+    let menu = named(ElementId::Name("terminal-tabs".into()), "menu");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.right_click(tab("shell-2"), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click(named(menu.clone(), "close-tabs-right"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        !shows(handle, cx, tab("shell-3")),
+        "the tab to the right closes"
+    );
+    assert!(shows(handle, cx, tab("shell-1")));
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.right_click(tab("shell-2"), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click(named(menu, "close-other-tabs"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!shows(handle, cx, tab("shell-1")), "the others close");
+    assert_eq!(label(&story, "shell-2", cx), "Shell 2");
+
+    // A double click renames the tab in place.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.double_click(tab("shell-2"), cx);
+        window.render_frame(cx);
+        window.input("Build", cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(label(&story, "shell-2", cx), "Build");
+}
+
+#[gpui_kit::test]
+fn a_tab_follows_its_pane_title_until_the_user_names_it(cx: &mut TestAppContext) {
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    let set_title = |title: &str, cx: &mut TestAppContext| {
+        let title = title.to_owned();
+        let terminal = story.read_with(cx, |story, _| story.terminals()[0].clone());
+        cx.update(|cx| {
+            terminal.update(cx, |terminal, cx| {
+                let mut snapshot = TerminalSnapshot::for_frame(terminal.frame().clone());
+                snapshot.title = title;
+                terminal.apply(&snapshot, cx);
+            })
+        });
+        cx.run_until_parked();
+    };
+    set_title("vim Cargo.lock", cx);
+    assert_eq!(label(&story, "shell-1", cx), "vim Cargo.lock");
+    cx.update(|cx| {
+        story.update(cx, |story, cx| {
+            story
+                .tabs()
+                .update(cx, |tabs, cx| tabs.rename("shell-1", "Work", cx))
+        })
+    });
+    set_title("htop", cx);
+    assert_eq!(
+        label(&story, "shell-1", cx),
+        "Work",
+        "the user's name stays"
+    );
+    let _ = handle;
 }

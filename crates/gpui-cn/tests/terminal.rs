@@ -330,3 +330,37 @@ fn the_wheel_over_the_terminal_scrolls_the_terminal_not_the_page(cx: &mut TestAp
     settle(&setup, cx);
     assert!(top(cx) < before, "the page scrolls under the pointer");
 }
+
+#[gpui_kit::test]
+fn the_grid_takes_every_whole_cell_inside_the_padding(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    let (bounds, scale, padding) = cx
+        .update_window(setup.handle.into(), |_, window, cx| {
+            (
+                window.find("terminal").bounds(),
+                window.scale_factor(),
+                gpui_cn::ActiveTheme::theme(cx).metrics.terminal_padding,
+            )
+        })
+        .unwrap();
+    let viewport = setup
+        .terminal
+        .read_with(cx, |state, _| state.frame().viewport);
+    let cell_width = viewport.cell_width() as f32 / scale;
+    let cell_height = viewport.cell_height() as f32 / scale;
+    let room_x = f32::from(bounds.size.width - padding * 2.);
+    let room_y = f32::from(bounds.size.height - padding * 2.);
+    assert_eq!(
+        f32::from(viewport.columns()),
+        (room_x / cell_width).floor(),
+        "every whole column that fits"
+    );
+    assert_eq!(
+        f32::from(viewport.rows()),
+        (room_y / cell_height).floor(),
+        "every whole row that fits"
+    );
+    // What is left over is less than a cell, as in Ghostty.
+    assert!(room_x - f32::from(viewport.columns()) * cell_width < cell_width);
+    assert!(room_y - f32::from(viewport.rows()) * cell_height < cell_height);
+}
