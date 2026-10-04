@@ -205,3 +205,58 @@ fn two_local_terminals_have_their_own_programs() {
     assert!(!shown.frame.text().contains("only-a"));
     b.close();
 }
+
+#[test]
+fn the_foreground_process_follows_the_program_the_shell_runs() {
+    let Some(shell) = shell() else {
+        eprintln!("skipping: no POSIX shell");
+        return;
+    };
+    let dir = std::env::temp_dir().canonicalize().unwrap();
+    let options = LocalTerminalOptions::default()
+        .with_program(shell, ["-c", "echo READY; read x; exec /bin/cat"])
+        .with_cwd(gpui_cn::terminal::WorkingDirectory::Path(dir.clone()))
+        .with_shell_integration(ShellIntegration::None);
+    let (sink, wake) = FrameSink::new();
+    let handle = Box::new(Engine::new(
+        LocalPty::new(options),
+        EngineOptions::default(),
+    ))
+    .start(sink.clone(), StartOptions::default())
+    .unwrap();
+    let named = |name: &'static str| {
+        move |s: &TerminalSnapshot| s.foreground.as_ref().is_some_and(|p| p.name() == name)
+    };
+    // macOS runs /bin/sh as bash, so the shell is known by its argv.
+    let at_shell = wait_for(&sink, &wake, handle.as_ref(), |s| s.foreground.is_some());
+    let process = at_shell.foreground.as_ref().unwrap();
+    assert!(process.is_shell(), "{process:?}");
+    assert_eq!(process.argv().first().map(String::as_str), Some(shell));
+    assert_eq!(
+        process.cwd().map(|cwd| cwd.canonicalize().unwrap()),
+        Some(dir),
+        "the working directory, with no shell integration to report it"
+    );
+
+    // The shell execs cat; each line cat echoes is output, which is what
+    // makes the engine look again.
+    handle
+        .input(gpui_cn::terminal::TerminalInput::Text("go\r".into()))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let in_cat = loop {
+        handle
+            .input(gpui_cn::terminal::TerminalInput::Text("ping\r".into()))
+            .unwrap();
+        let snapshot = wait_for(&sink, &wake, handle.as_ref(), |_| true);
+        if named("cat")(&snapshot) {
+            break snapshot;
+        }
+        assert!(Instant::now() < deadline, "cat never took the foreground");
+        std::thread::sleep(Duration::from_millis(60));
+    };
+    let process = in_cat.foreground.as_ref().unwrap();
+    assert!(!process.is_shell(), "{process:?}");
+    assert_eq!(process.argv(), ["/bin/cat"]);
+    handle.close();
+}

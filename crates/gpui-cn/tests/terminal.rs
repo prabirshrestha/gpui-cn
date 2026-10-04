@@ -558,3 +558,58 @@ fn without_the_defaults_the_zoom_keys_do_nothing(cx: &mut TestAppContext) {
         theme_size
     );
 }
+
+#[gpui_kit::test]
+fn a_new_foreground_process_is_an_event_and_asks_before_close(cx: &mut TestAppContext) {
+    use gpui_cn::terminal::ForegroundProcess;
+    let setup = setup(cx);
+    let publish = |foreground: ForegroundProcess, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            setup.terminal.update(cx, |state, cx| {
+                let mut snapshot = TerminalSnapshot::for_frame(state.frame().clone());
+                snapshot.foreground = Some(foreground);
+                state.apply(&snapshot, cx);
+            });
+        });
+    };
+    let changes = |setup: &Setup| {
+        setup
+            .events
+            .borrow()
+            .iter()
+            .filter(|event| **event == TerminalEvent::ForegroundChanged)
+            .count()
+    };
+
+    publish(
+        ForegroundProcess::new(10, "zsh")
+            .with_argv(["-zsh"])
+            .with_cwd("/tmp/project")
+            .with_shell(true),
+        cx,
+    );
+    assert_eq!(changes(&setup), 1);
+    assert!(setup.events.borrow().contains(&TerminalEvent::CwdChanged));
+    setup.terminal.read_with(cx, |state, _| {
+        assert_eq!(state.foreground().map(|p| p.name()), Some("zsh"));
+        assert_eq!(
+            state.cwd(),
+            Some(std::path::Path::new("/tmp/project")),
+            "the process's directory, with nothing reported"
+        );
+        assert!(!state.needs_confirm_close(), "the shell");
+    });
+
+    publish(
+        ForegroundProcess::new(11, "vim").with_argv(["vim", "notes.md"]),
+        cx,
+    );
+    assert_eq!(changes(&setup), 2);
+    setup.terminal.read_with(cx, |state, _| {
+        assert_eq!(
+            state.foreground().map(|p| p.argv()[1].as_str()),
+            Some("notes.md")
+        );
+        assert!(state.needs_confirm_close(), "closing would end vim");
+    });
+}

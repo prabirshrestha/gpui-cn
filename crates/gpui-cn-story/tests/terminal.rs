@@ -385,3 +385,93 @@ fn the_leader_and_the_menu_zoom_a_pane_and_a_split_unzooms_it(cx: &mut TestAppCo
         "the split put the layout back"
     );
 }
+
+/// Reports `name` as the foreground process of every pane, as a local pty
+/// would once a program took over, or the shell with `shell`.
+fn run_in_panes(story: &Entity<TerminalStory>, name: &str, shell: bool, cx: &mut TestAppContext) {
+    let terminals = story.read_with(cx, |story, _| story.terminals());
+    cx.update(|cx| {
+        for terminal in terminals {
+            terminal.update(cx, |state, cx| {
+                let mut snapshot = TerminalSnapshot::for_frame(state.frame().clone());
+                snapshot.foreground =
+                    Some(gpui_cn::terminal::ForegroundProcess::new(42, name).with_shell(shell));
+                state.apply(&snapshot, cx);
+            });
+        }
+    });
+}
+
+fn click(handle: WindowHandle<Root>, cx: &mut TestAppContext, id: &str) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click(ElementId::Name(id.to_owned().into()), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn asking(handle: WindowHandle<Root>, cx: &mut TestAppContext) -> bool {
+    shows(handle, cx, ElementId::Name("terminal-close-confirm".into()))
+}
+
+#[gpui_kit::test]
+fn closing_a_pane_that_runs_a_program_asks_first(cx: &mut TestAppContext) {
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "%"]);
+    assert!(shows(handle, cx, pane(1)));
+
+    // The shell at its prompt closes at once.
+    run_in_panes(&story, "zsh", true, cx);
+    press(handle, cx, &["ctrl-a", "x"]);
+    assert!(!asking(handle, cx));
+    assert!(!shows(handle, cx, pane(1)), "closed without asking");
+
+    // A program in the foreground asks, and Cancel keeps the pane.
+    run_in_panes(&story, "vim", false, cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "x"]);
+    assert!(asking(handle, cx), "asks before ending vim");
+    click(handle, cx, "terminal-close-cancel");
+    assert!(!asking(handle, cx));
+    assert!(shows(handle, cx, pane(0)), "kept");
+
+    // Close ends it.
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "x"]);
+    click(handle, cx, "terminal-close-confirm");
+    assert!(!asking(handle, cx));
+    assert!(!shows(handle, cx, pane(0)), "closed");
+}
+
+#[gpui_kit::test]
+fn closing_a_tab_that_runs_a_program_asks_first(cx: &mut TestAppContext) {
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "c"]);
+    assert!(shows(handle, cx, tab("shell-2")));
+    run_in_panes(&story, "cargo", false, cx);
+
+    let close = named(tab("shell-2"), "close");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click(close, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(asking(handle, cx), "asks before ending cargo");
+    assert!(
+        shows(handle, cx, tab("shell-2")),
+        "the tab stays while asking"
+    );
+    click(handle, cx, "terminal-close-confirm");
+    assert!(!shows(handle, cx, tab("shell-2")), "closed");
+    assert!(shows(handle, cx, tab("shell-1")));
+}

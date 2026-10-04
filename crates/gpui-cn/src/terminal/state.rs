@@ -16,7 +16,7 @@ use gpui_kit::{
 
 use crate::terminal::appearance::TerminalAppearance;
 use crate::terminal::cursor::Blink;
-use crate::terminal::engine::{ExitStatus, TerminalSnapshot, TerminalStatus};
+use crate::terminal::engine::{ExitStatus, ForegroundProcess, TerminalSnapshot, TerminalStatus};
 use crate::terminal::frame::{TerminalColors, TerminalFrame, Viewport};
 use crate::terminal::geometry::Geometry;
 use crate::terminal::input::{KeyAction, MouseAction, ScrollRequest, TerminalInput};
@@ -54,6 +54,10 @@ pub enum TerminalEvent {
     /// The font size changed through the zoom actions or
     /// [`TerminalState::set_font_size`]; read it with `font_size`.
     FontSizeChanged,
+    /// Another process took the foreground, such as an editor the shell
+    /// started, or the shell back at its prompt; read it with
+    /// `foreground`.
+    ForegroundChanged,
 }
 
 /// Colors and appearance a terminal starts with.
@@ -100,6 +104,7 @@ pub struct TerminalState {
     status: TerminalStatus,
     title: SharedString,
     cwd: Option<PathBuf>,
+    foreground: Option<ForegroundProcess>,
     bell_count: u64,
     clipboard_sequence: u64,
     notification_sequence: u64,
@@ -143,6 +148,7 @@ impl TerminalState {
             status: TerminalStatus::Starting,
             title: SharedString::default(),
             cwd: None,
+            foreground: None,
             bell_count: 0,
             clipboard_sequence: 0,
             notification_sequence: 0,
@@ -260,6 +266,14 @@ impl TerminalState {
             self.cwd.clone_from(&snapshot.cwd);
             cx.emit(TerminalEvent::CwdChanged);
         }
+        if snapshot.foreground != self.foreground {
+            let cwd = self.cwd().map(Path::to_path_buf);
+            self.foreground.clone_from(&snapshot.foreground);
+            cx.emit(TerminalEvent::ForegroundChanged);
+            if self.cwd().map(Path::to_path_buf) != cwd {
+                cx.emit(TerminalEvent::CwdChanged);
+            }
+        }
         if snapshot.bell_count != self.bell_count {
             self.bell_count = snapshot.bell_count;
             cx.emit(TerminalEvent::Bell);
@@ -317,22 +331,43 @@ impl TerminalState {
         &self.title
     }
 
-    /// The working directory the program reported.
+    /// The working directory: the one the shell reported through its
+    /// integration (OSC 7), or else the foreground process's.
     #[must_use]
     pub fn cwd(&self) -> Option<&Path> {
-        self.cwd.as_deref()
+        self.cwd
+            .as_deref()
+            .or_else(|| self.foreground.as_ref()?.cwd())
+    }
+
+    /// The process in the foreground, such as the shell at its prompt or an
+    /// editor it started, when the source reports one. A local pty does.
+    /// [`TerminalEvent::ForegroundChanged`] reports a change.
+    #[must_use]
+    pub fn foreground(&self) -> Option<&ForegroundProcess> {
+        self.foreground.as_ref()
+    }
+
+    /// Whether closing the terminal would end a program other than the one
+    /// it started, such as an editor or a build in the foreground, so an
+    /// application should ask first, as Ghostty does. Without a foreground
+    /// process, as from a stream, it is whether the cursor is away from a
+    /// shell prompt.
+    #[must_use]
+    pub fn needs_confirm_close(&self) -> bool {
+        if !matches!(self.status, TerminalStatus::Live) {
+            return false;
+        }
+        match &self.foreground {
+            Some(process) => !process.is_shell(),
+            None => !self.at_prompt,
+        }
     }
 
     /// Queued input bytes not yet delivered; the busy signal.
     #[must_use]
     pub fn input_backlog(&self) -> usize {
         self.handle.as_ref().map_or(0, |h| h.input_backlog())
-    }
-
-    /// Whether the cursor sits at a shell prompt, so closing loses nothing.
-    #[must_use]
-    pub fn needs_confirm_close(&self) -> bool {
-        matches!(self.status, TerminalStatus::Live) && !self.at_prompt
     }
 
     /// The appearance.

@@ -18,6 +18,7 @@ struct Harness {
     tabs: Entity<TabsState>,
     addable: bool,
     leading: Rc<Cell<Pixels>>,
+    confirm: Rc<Cell<bool>>,
 }
 
 impl Render for Harness {
@@ -29,6 +30,7 @@ impl Render for Harness {
                 div().w_full().h(bar).child(
                     Tabs::new("tabs", &self.tabs)
                         .addable(self.addable)
+                        .confirm_close(self.confirm.get())
                         .with_leading(self.leading.get()),
                 ),
             )
@@ -41,6 +43,7 @@ struct Setup {
     tabs: Entity<TabsState>,
     events: Rc<RefCell<Vec<TabsEvent>>>,
     leading: Rc<Cell<Pixels>>,
+    confirm: Rc<Cell<bool>>,
 }
 
 fn setup(cx: &mut TestAppContext, width: f32, count: usize, addable: bool) -> Setup {
@@ -51,6 +54,7 @@ fn setup(cx: &mut TestAppContext, width: f32, count: usize, addable: bool) -> Se
     let tabs = cx.new(|_| TabsState::new((0..count).map(tab)));
     let events = Rc::new(RefCell::new(Vec::new()));
     let leading = Rc::new(Cell::new(px(0.)));
+    let confirm = Rc::new(Cell::new(false));
     cx.update({
         let tabs = tabs.clone();
         let events = events.clone();
@@ -64,12 +68,14 @@ fn setup(cx: &mut TestAppContext, width: f32, count: usize, addable: bool) -> Se
     let handle = cx.open_window(size(px(width), px(300.)), |window, cx| {
         let tabs = tabs.clone();
         let leading = leading.clone();
+        let confirm = confirm.clone();
         let harness = cx.new(|cx| {
             cx.observe(&tabs, |_, _, cx| cx.notify()).detach();
             Harness {
                 tabs,
                 addable,
                 leading,
+                confirm,
             }
         });
         Root::new(harness, window, cx)
@@ -86,6 +92,7 @@ fn setup(cx: &mut TestAppContext, width: f32, count: usize, addable: bool) -> Se
         tabs,
         events,
         leading,
+        confirm,
     }
 }
 
@@ -147,6 +154,25 @@ fn a_click_selects_the_tab_and_reports_it(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(selected(&setup, cx).as_deref(), Some("t2"));
     assert_eq!(*setup.events.borrow(), [TabsEvent::Selected("t2".into())]);
+}
+
+#[gpui_kit::test]
+fn a_strip_that_confirms_close_asks_and_keeps_the_tab(cx: &mut TestAppContext) {
+    let setup = setup(cx, 900., 3, true);
+    setup.confirm.set(true);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(part("t0", "close"), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert_eq!(
+        *setup.events.borrow(),
+        [TabsEvent::CloseRequested("t0".into())]
+    );
+    assert_eq!(setup.tabs.read_with(cx, |tabs, _| tabs.tabs().len()), 3);
+    setup.tabs.update(cx, |tabs, cx| tabs.remove("t0", cx));
+    assert_eq!(setup.tabs.read_with(cx, |tabs, _| tabs.tabs().len()), 2);
 }
 
 #[gpui_kit::test]

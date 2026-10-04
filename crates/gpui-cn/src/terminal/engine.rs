@@ -30,6 +30,10 @@ const INPUT_COMMANDS: usize = 256;
 const WRITE_CHUNK: usize = 8192;
 const COMPRESSION_IDLE: Duration = Duration::from_millis(250);
 const COMPRESSION_STEP: Duration = Duration::from_millis(16);
+/// How long after output the engine asks its source for the foreground
+/// process. Output is what a new program or a return to the prompt
+/// produces, so the check needs no timer while the terminal is quiet.
+const FOREGROUND_CHECK: Duration = Duration::from_millis(50);
 
 /// How a program ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +78,87 @@ impl ExitStatus {
     }
 }
 
+/// The process in the foreground of a terminal: the one that reads its
+/// keys, such as the shell at its prompt or the editor it started.
+///
+/// A local pty reads it from the process table: the terminal's foreground
+/// process group (`tcgetpgrp`), then the name, arguments and working
+/// directory of that group's leader, through `proc_pidinfo` and `sysctl`
+/// on macOS and `/proc` on Linux. Another [`ByteSource`] reports its own,
+/// or none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForegroundProcess {
+    pub(crate) pid: u32,
+    pub(crate) name: String,
+    pub(crate) argv: Vec<String>,
+    pub(crate) cwd: Option<PathBuf>,
+    pub(crate) shell: bool,
+}
+
+impl ForegroundProcess {
+    /// Process `pid`, named `name`, such as `vim`.
+    pub fn new(pid: u32, name: impl Into<String>) -> Self {
+        Self {
+            pid,
+            name: name.into(),
+            argv: Vec::new(),
+            cwd: None,
+            shell: false,
+        }
+    }
+
+    /// Set the arguments, the program's own name first.
+    #[must_use]
+    pub fn with_argv(mut self, argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.argv = argv.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set the working directory.
+    #[must_use]
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
+    /// Set whether it is the program the terminal started, such as the
+    /// shell at its prompt.
+    #[must_use]
+    pub fn with_shell(mut self, shell: bool) -> Self {
+        self.shell = shell;
+        self
+    }
+
+    /// The process id.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// The executable's name, such as `vim`.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The arguments, the program's own name first, when they could be
+    /// read.
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+
+    /// The working directory, when it could be read.
+    pub fn cwd(&self) -> Option<&std::path::Path> {
+        self.cwd.as_deref()
+    }
+
+    /// Whether it is the program the terminal started, such as the shell at
+    /// its prompt, rather than a program that program runs. An application
+    /// asks before it closes a terminal where this is false.
+    pub fn is_shell(&self) -> bool {
+        self.shell
+    }
+}
+
 /// The state of a terminal's program.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -113,6 +198,8 @@ pub struct TerminalSnapshot {
     pub notification: Option<(Arc<str>, Arc<str>)>,
     /// Whether the cursor was at a shell prompt when the frame was built.
     pub at_prompt: bool,
+    /// The process in the foreground, when the source reports one.
+    pub foreground: Option<ForegroundProcess>,
 }
 
 impl TerminalSnapshot {
@@ -151,6 +238,12 @@ pub trait ByteHandle: Send {
     fn try_wait(&self) -> io::Result<Option<ExitStatus>>;
     /// Stop the program and release the source.
     fn close(&self);
+    /// The process in the foreground, if the source knows it. The engine
+    /// asks on its own thread, at most every 50 ms and only after output,
+    /// so it may read the process table but must not block.
+    fn foreground(&self) -> Option<ForegroundProcess> {
+        None
+    }
 }
 
 /// Where a [`ByteSource`] writes its output.
@@ -576,6 +669,8 @@ struct Owner {
     started: Instant,
     abnormal_exit_runtime: Duration,
     compression_deadline: Option<Instant>,
+    /// When to ask the source for the foreground process again.
+    foreground_due: Option<Instant>,
     dirty: bool,
     force: bool,
     effects: Effects,
@@ -625,6 +720,7 @@ impl Owner {
             started: Instant::now(),
             abnormal_exit_runtime: config.abnormal_exit_runtime,
             compression_deadline: None,
+            foreground_due: Some(Instant::now() + FOREGROUND_CHECK),
             dirty: true,
             force: false,
             effects: Effects::default(),
@@ -718,6 +814,8 @@ impl Owner {
                 self.core.write(&chunk, &mut self.effects);
             }
             self.compression_deadline = Some(Instant::now() + COMPRESSION_IDLE);
+            self.foreground_due
+                .get_or_insert_with(|| Instant::now() + FOREGROUND_CHECK);
             self.dirty = true;
             self.apply_effects()?;
         }
@@ -784,6 +882,20 @@ impl Owner {
             self.dirty = true;
             self.force = true;
         }
+        if self.foreground_due.is_some_and(|due| Instant::now() >= due) {
+            self.foreground_due = None;
+            let foreground = if self.exit.is_some() {
+                None
+            } else {
+                self.handle.foreground()
+            };
+            if foreground != self.snapshot.foreground {
+                self.snapshot.foreground = foreground;
+                // Published with the frame already shown, so a hidden or
+                // unpainted terminal reports it too.
+                self.publish();
+            }
+        }
         let exited = self.exit.is_some();
         let held = self.core.held();
         if self.dirty && ((visible && credit && !held) || (exited && self.force)) {
@@ -816,6 +928,13 @@ impl Owner {
                 Some(Duration::from_millis(20))
             } else {
                 None
+            };
+            let delay = match self.foreground_due {
+                Some(due) => {
+                    let until = due.saturating_duration_since(Instant::now());
+                    Some(delay.map_or(until, |delay| delay.min(until)))
+                }
+                None => delay,
             };
             let delay = match self.park_after() {
                 Some(_) if self.park_if_idle() => None,

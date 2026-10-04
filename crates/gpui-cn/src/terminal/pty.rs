@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus};
+use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus, ForegroundProcess};
 use crate::terminal::frame::Viewport;
 use crate::terminal::options::{LocalTerminalOptions, ShellIntegration, WorkingDirectory};
 
@@ -197,6 +197,12 @@ struct Handle {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+    /// The file name of the program the terminal started, such as `zsh`.
+    program: Option<String>,
+    /// The last foreground process group and its process, kept while the
+    /// group has the foreground.
+    #[cfg(unix)]
+    foreground: Mutex<Option<(libc::pid_t, ForegroundProcess)>>,
 }
 
 impl ByteHandle for Handle {
@@ -251,6 +257,61 @@ impl ByteHandle for Handle {
         }
         let _ = child.kill();
     }
+
+    #[cfg(unix)]
+    fn foreground(&self) -> Option<ForegroundProcess> {
+        use crate::terminal::process;
+        let pgid = self
+            .master
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .process_group_leader()?;
+        let mut last = self
+            .foreground
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((group, known)) = last.as_mut()
+            && *group == pgid
+        {
+            let pid = libc::pid_t::try_from(known.pid).ok()?;
+            // The same group and the same program, unless it called exec.
+            if process::name(pid).as_deref() == Some(known.name.as_str()) {
+                // Only a shell at its prompt changes directory.
+                if known.shell {
+                    known.cwd = process::cwd(pid).or(known.cwd.take());
+                }
+                return Some(known.clone());
+            }
+        }
+        let described = process::describe_group(pgid)?;
+        let shell = self
+            .program
+            .as_deref()
+            .is_some_and(|program| is_program(&described, program));
+        let known = ForegroundProcess {
+            pid: u32::try_from(described.pid).ok()?,
+            name: described.name,
+            argv: described.argv,
+            cwd: described.cwd,
+            shell,
+        };
+        *last = Some((pgid, known.clone()));
+        Some(known)
+    }
+}
+
+/// Whether `process` runs `program`, by executable name, or by its first
+/// argument, which a login shell starts with a dash, as `-zsh`.
+#[cfg(unix)]
+fn is_program(process: &crate::terminal::process::Described, program: &str) -> bool {
+    // Linux keeps 15 bytes of the name.
+    let short = &program[..program.len().min(15)];
+    process.name == program
+        || process.name == short
+        || process.argv.first().is_some_and(|arg0| {
+            let arg0 = arg0.strip_prefix('-').unwrap_or(arg0);
+            Path::new(arg0).file_name().and_then(|n| n.to_str()) == Some(program)
+        })
 }
 
 impl ByteSource for LocalPty {
@@ -262,6 +323,14 @@ impl ByteSource for LocalPty {
         let resources = ghostty_vt::shell_integration::resources_dir()?;
         let terminfo = ghostty_vt::terminfo::dir()?;
         let cmd = command(&self.options, &resources, &terminfo);
+        let program = self
+            .options
+            .program
+            .clone()
+            .unwrap_or_else(crate::shell::default_shell)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned);
         let pty = native_pty_system()
             .openpty(size(viewport))
             .map_err(io::Error::other)?;
@@ -289,6 +358,9 @@ impl ByteSource for LocalPty {
             writer: Mutex::new(writer),
             master: Mutex::new(pty.master),
             child: Mutex::new(child),
+            program,
+            #[cfg(unix)]
+            foreground: Mutex::new(None),
         }))
     }
 }

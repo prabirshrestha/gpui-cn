@@ -107,6 +107,11 @@ pub enum TabsEvent {
     /// A tab's label changed, by [`rename`](TabsState::rename) or by an
     /// inline rename the user committed. The payload is its id.
     Renamed(SharedString),
+    /// A tab's close control was activated on a strip built with
+    /// [`confirm_close`](Tabs::confirm_close). The tab stays until the
+    /// application calls [`remove`](TabsState::remove). The payload is its
+    /// id.
+    CloseRequested(SharedString),
 }
 
 /// The tabs, which one is selected, and the scroll position of the strip.
@@ -487,6 +492,7 @@ pub struct Tabs {
     state: Entity<TabsState>,
     style: StyleRefinement,
     closable: bool,
+    confirm_close: bool,
     addable: bool,
     add_trigger: Option<AddTrigger>,
     leading: Pixels,
@@ -507,6 +513,7 @@ impl Tabs {
             state: state.clone(),
             style: StyleRefinement::default(),
             closable: true,
+            confirm_close: false,
             addable: true,
             add_trigger: None,
             leading: px(0.),
@@ -546,6 +553,15 @@ impl Tabs {
     /// Whether each tab shows a close control. On by default.
     pub fn closable(mut self, closable: bool) -> Self {
         self.closable = closable;
+        self
+    }
+
+    /// Whether a tab's close control asks the application first: it emits
+    /// [`TabsEvent::CloseRequested`] and leaves the tab, so the
+    /// application can confirm and then [`remove`](TabsState::remove) it.
+    /// Off by default.
+    pub fn confirm_close(mut self, confirm: bool) -> Self {
+        self.confirm_close = confirm;
         self
     }
 
@@ -874,6 +890,7 @@ impl RenderOnce for Tabs {
             let select_id = tab.id.clone();
             let close_state = state.clone();
             let close_id = tab.id.clone();
+            let confirm_close = self.confirm_close;
             let editing = renaming
                 .as_ref()
                 .filter(|(id, _)| live && id == &tab.id)
@@ -1043,7 +1060,13 @@ impl RenderOnce for Tabs {
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         close_state.update(cx, |state, cx| {
-                                                            state.remove(close_id.clone(), cx)
+                                                            if confirm_close {
+                                                                cx.emit(TabsEvent::CloseRequested(
+                                                                    close_id.clone(),
+                                                                ));
+                                                            } else {
+                                                                state.remove(close_id.clone(), cx);
+                                                            }
                                                         })
                                                     }),
                                             ),

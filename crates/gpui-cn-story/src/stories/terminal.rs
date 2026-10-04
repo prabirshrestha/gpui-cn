@@ -9,9 +9,9 @@ use gpui_cn::terminal::{
     TerminalState, WorkingDirectory, actions,
 };
 use gpui_cn::{
-    ActiveTheme as _, ContextMenu, MenuEntry, MenuItem, MenuState, Select, SelectEvent, SelectItem,
-    SelectState, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeScope, ThemeTokens,
-    gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ContextMenu, Dialog, MenuEntry, MenuItem, MenuState, Select,
+    SelectEvent, SelectItem, SelectState, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeScope,
+    ThemeTokens, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     Action, AnyView, App, AppContext as _, Axis, Context, ElementId, Entity, Global,
@@ -374,6 +374,19 @@ fn read_theme(name: &str, cx: &App) -> Option<TerminalColors> {
 /// The value of the theme picker's first row: Ghostty's built-in colors.
 const DEFAULT_THEME: &str = "";
 
+/// What a close is for, kept while the story asks to confirm it.
+#[derive(Clone, Debug)]
+enum Closing {
+    Pane(PaneId),
+    Tabs(Vec<SharedString>),
+}
+
+/// A close waiting for the user, and the programs it would end.
+struct PendingClose {
+    closing: Closing,
+    running: Vec<String>,
+}
+
 /// Terminal tabs with splits and tmux-style leader keys, each pane a shell.
 pub struct TerminalStory {
     tabs: Entity<TabsState>,
@@ -389,6 +402,8 @@ pub struct TerminalStory {
     titling: bool,
     pane_menu: Entity<MenuState>,
     tab_menu: Entity<MenuState>,
+    /// A close that would end a running program, while the story asks.
+    pending_close: Option<PendingClose>,
     /// The story itself, for menus built when they open.
     this: WeakEntity<Self>,
     next_pane: u64,
@@ -456,6 +471,9 @@ impl Story for TerminalStory {
                 |this: &mut Self, _, event, window, cx| match event {
                     TabsEvent::Selected(_) => this.show_selected(window, cx),
                     TabsEvent::Closed(id) => this.tab_closed(id, window, cx),
+                    TabsEvent::CloseRequested(id) => {
+                        this.request_close(Closing::Tabs(vec![id.clone()]), window, cx);
+                    }
                     TabsEvent::AddRequested => this.new_tab(window, cx),
                     TabsEvent::Renamed(id) if !this.titling => {
                         this.named.insert(id.clone());
@@ -474,6 +492,7 @@ impl Story for TerminalStory {
                 titling: false,
                 pane_menu: cx.new(MenuState::new),
                 tab_menu: cx.new(MenuState::new),
+                pending_close: None,
                 this: cx.weak_entity(),
                 next_pane: 0,
                 next_tab: 0,
@@ -815,8 +834,63 @@ impl TerminalStory {
             .and_then(|tab| self.layouts.get(&tab))
             .map(|layout| layout.focused);
         if let Some(focused) = focused {
-            self.close_pane(focused, window, cx);
+            self.request_close(Closing::Pane(focused), window, cx);
         }
+    }
+
+    /// The programs other than the shell that closing `closing` would end,
+    /// by name, as each pane's foreground process reports them.
+    fn running(&self, closing: &Closing, cx: &App) -> Vec<String> {
+        let panes = match closing {
+            Closing::Pane(pane) => vec![*pane],
+            Closing::Tabs(tabs) => tabs
+                .iter()
+                .filter_map(|tab| self.layouts.get(tab))
+                .flat_map(|layout| layout.root.leaves())
+                .collect(),
+        };
+        panes
+            .iter()
+            .filter_map(|pane| self.panes.get(pane))
+            .filter_map(|terminal| {
+                let terminal = terminal.read(cx);
+                let process = terminal.foreground()?;
+                (terminal.is_live() && !process.is_shell()).then(|| process.name().to_owned())
+            })
+            .collect()
+    }
+
+    /// Closes at once when only shells would end, and asks first when a
+    /// pane runs another program, as Ghostty does.
+    fn request_close(&mut self, closing: Closing, window: &mut Window, cx: &mut Context<Self>) {
+        let running = self.running(&closing, cx);
+        if running.is_empty() {
+            self.close(closing, window, cx);
+        } else {
+            self.pending_close = Some(PendingClose { closing, running });
+            cx.notify();
+        }
+    }
+
+    fn close(&mut self, closing: Closing, window: &mut Window, cx: &mut Context<Self>) {
+        match closing {
+            Closing::Pane(pane) => self.close_pane(pane, window, cx),
+            Closing::Tabs(tabs) => self.tabs.update(cx, |state, cx| {
+                for tab in tabs {
+                    state.remove(tab, cx);
+                }
+            }),
+        }
+    }
+
+    fn resolve_close(&mut self, confirmed: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_close.take() else {
+            return;
+        };
+        if confirmed {
+            self.close(pending.closing, window, cx);
+        }
+        cx.notify();
     }
 
     /// Stops a pane's program and takes it out of its tab. The last pane
@@ -866,8 +940,14 @@ impl TerminalStory {
     }
 
     /// Closes every tab but `keep`, or only the tabs after it with
-    /// `right_only`.
-    fn close_others(&mut self, keep: &SharedString, right_only: bool, cx: &mut Context<Self>) {
+    /// `right_only`, asking first when one runs a program.
+    fn close_others(
+        &mut self,
+        keep: &SharedString,
+        right_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ids: Vec<SharedString> = self
             .tabs
             .read(cx)
@@ -890,12 +970,9 @@ impl TerminalStory {
             })
             .map(|(_, id)| id)
             .collect();
-        self.tabs.update(cx, |tabs, cx| {
-            tabs.select(keep.clone(), cx);
-            for id in doomed {
-                tabs.remove(id, cx);
-            }
-        });
+        self.tabs
+            .update(cx, |tabs, cx| tabs.select(keep.clone(), cx));
+        self.request_close(Closing::Tabs(doomed), window, cx);
     }
 
     /// The rows of a tab's context menu.
@@ -924,15 +1001,15 @@ impl TerminalStory {
                 })
             };
         vec![
-            item("close-tab", "Close Tab", |this, tab, _, cx| {
-                this.tabs.update(cx, |tabs, cx| tabs.remove(tab, cx));
+            item("close-tab", "Close Tab", |this, tab, window, cx| {
+                this.request_close(Closing::Tabs(vec![tab]), window, cx);
             })
             .into(),
             item(
                 "close-other-tabs",
                 "Close Other Tabs",
-                |this, tab, _, cx| {
-                    this.close_others(&tab, false, cx);
+                |this, tab, window, cx| {
+                    this.close_others(&tab, false, window, cx);
                 },
             )
             .disabled(ids.len() < 2)
@@ -940,8 +1017,8 @@ impl TerminalStory {
             item(
                 "close-tabs-right",
                 "Close Tabs to the Right",
-                |this, tab, _, cx| {
-                    this.close_others(&tab, true, cx);
+                |this, tab, window, cx| {
+                    this.close_others(&tab, true, window, cx);
                 },
             )
             .disabled(at + 1 >= ids.len())
@@ -1072,6 +1149,70 @@ impl TerminalStory {
     }
 }
 
+impl TerminalStory {
+    /// Asks before a close that would end a running program, in Ghostty's
+    /// words.
+    fn render_close_dialog(&self, cx: &mut Context<Self>) -> Dialog {
+        let (title, description) = match &self.pending_close {
+            Some(pending) => {
+                let title = match &pending.closing {
+                    Closing::Pane(_) => "Close Terminal?",
+                    Closing::Tabs(tabs) if tabs.len() > 1 => "Close Tabs?",
+                    Closing::Tabs(_) => "Close Tab?",
+                };
+                let names = match pending.running.as_slice() {
+                    [one] => one.clone(),
+                    [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+                    [] => String::new(),
+                };
+                let verb = if pending.running.len() == 1 {
+                    "is"
+                } else {
+                    "are"
+                };
+                (
+                    title,
+                    format!("{names} {verb} still running. Closing the terminal ends it."),
+                )
+            }
+            None => ("Close Terminal?", String::new()),
+        };
+        Dialog::new("terminal-close")
+            .open(self.pending_close.is_some())
+            .title(title)
+            .description(description)
+            .on_open_change({
+                let this = self.this.clone();
+                move |open, window, cx| {
+                    if !open {
+                        let _ = this.update(cx, |this, cx| this.resolve_close(false, window, cx));
+                    }
+                }
+            })
+            .footer(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("terminal-close-cancel")
+                            .outline()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.resolve_close(false, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("terminal-close-confirm")
+                            .destructive()
+                            .label("Close")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.resolve_close(true, window, cx);
+                            })),
+                    ),
+            )
+    }
+}
+
 impl Render for TerminalStory {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bar = cx.theme().metrics.title_bar;
@@ -1181,13 +1322,15 @@ impl Render for TerminalStory {
                                 let story = cx.entity().downgrade();
                                 Tabs::new("terminal-tabs", &self.tabs)
                                     .renamable(true)
+                                    .confirm_close(true)
                                     .context_menu(&self.tab_menu, move |tab, _, cx| {
                                         Self::tab_entries(&story, tab, cx)
                                     })
                             }),
                         ))
                         .child(div().flex().flex_1().min_h_0().children(body)),
-                ),
+                )
+                .child(self.render_close_dialog(cx)),
         )])
     }
 }

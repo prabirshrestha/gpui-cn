@@ -88,6 +88,13 @@
 //! # }
 //! ```
 //!
+//! A local pty reports the process in the terminal's foreground, such as
+//! the shell or an editor it started: [`TerminalState::foreground`] reads
+//! it, [`TerminalEvent::ForegroundChanged`] reports a change, and
+//! [`TerminalState::needs_confirm_close`] says whether closing would end a
+//! program other than the shell. The engine looks after output only, so a
+//! quiet terminal costs nothing.
+//!
 //! # Key bindings
 //!
 //! `gpui_cn::init` binds no terminal keys. A focused terminal takes the
@@ -171,8 +178,8 @@ mod theme;
 pub use appearance::TerminalAppearance;
 pub use element::{KEY_CONTEXT, Terminal};
 pub use engine::{
-    ByteHandle, ByteSink, ByteSource, Engine, ExitStatus, InputRejected, TerminalSnapshot,
-    TerminalStatus,
+    ByteHandle, ByteSink, ByteSource, Engine, ExitStatus, ForegroundProcess, InputRejected,
+    TerminalSnapshot, TerminalStatus,
 };
 pub use frame::{TerminalColors, TerminalFrame, Viewport};
 pub use input::TerminalInput;
