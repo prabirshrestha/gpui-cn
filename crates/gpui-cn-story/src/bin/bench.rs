@@ -228,6 +228,8 @@ mod macos {
         cx.update(|cx| Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On));
         select(&mut cx, handle, &gallery, frames);
         #[cfg(feature = "terminal")]
+        grid(&mut cx, frames);
+        #[cfg(feature = "terminal")]
         terminal();
         #[cfg(feature = "terminal")]
         parking();
@@ -604,5 +606,95 @@ mod macos {
         for (_, _, handle) in &terminals {
             handle.close();
         }
+    }
+
+    /// A window that is one terminal with a full, colored 120-column
+    /// screen: what an unchanged frame costs (a cursor blink, a hover), and
+    /// a frame right after the font size changes, back and forth.
+    #[cfg(feature = "terminal")]
+    fn grid(cx: &mut HeadlessAppContext, frames: usize) {
+        use std::time::Duration;
+
+        use gpui_cn::terminal::{
+            Engine, EngineOptions, StreamSource, Terminal, TerminalConfig, TerminalState,
+        };
+        use gpui_kit::{IntoElement, ParentElement as _, Render, Styled as _, Window, div};
+
+        struct Grid(Entity<TerminalState>);
+        impl Render for Grid {
+            fn render(
+                &mut self,
+                _: &mut Window,
+                _: &mut gpui_kit::Context<Self>,
+            ) -> impl IntoElement {
+                div().size_full().child(Terminal::new("grid", &self.0))
+            }
+        }
+
+        println!("terminal grid (one window, 120 columns of colored text):");
+        let (source, peer) = StreamSource::new();
+        let mut text = String::new();
+        for line in 0..400 {
+            for word in 0..12 {
+                text.push_str(&format!(
+                    "\x1b[3{}m{line:04}-{word:02}\x1b[0m ",
+                    (line + word) % 7 + 1
+                ));
+            }
+            text.push_str("\r\n");
+        }
+        peer.output(text.as_bytes());
+        let mut state = None;
+        let handle = cx
+            .open_window(gpui_kit::size(px(1100.), px(760.)), |window, cx| {
+                let terminal = cx.new(|cx| {
+                    let engine = Engine::new(source, EngineOptions::default());
+                    TerminalState::new(engine, TerminalConfig::default(), window, cx)
+                });
+                state = Some(terminal.clone());
+                let view = cx.new(|cx| {
+                    cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+                    Grid(terminal)
+                });
+                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+            })
+            .expect("open the grid window");
+        let handle: AnyWindowHandle = handle.into();
+        let state = state.expect("the terminal");
+        // Let the engine parse and the window draw the full screen.
+        for _ in 0..50 {
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+                .expect("render");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (rows, columns, filled) = cx.update(|cx| {
+            let frame = state.read(cx).frame().clone();
+            let filled = frame
+                .rows
+                .iter()
+                .filter(|row| !row.text.trim().is_empty())
+                .count();
+            (frame.viewport.rows(), frame.viewport.columns(), filled)
+        });
+        println!("  grid {columns}x{rows}, {filled} rows with text");
+        let (full_p50, full_p95) = measure(cx, handle, frames, true);
+        println!("  unchanged frame: {full_p50:.2} ms p50, {full_p95:.2} ms p95");
+        let mut samples = Vec::with_capacity(frames);
+        for i in 0..frames {
+            let size = if i % 2 == 0 { px(15.) } else { px(13.) };
+            cx.update(|cx| state.update(cx, |state, cx| state.set_font_size(size, cx)));
+            cx.update_window(handle, |_, window, cx| {
+                let start = Instant::now();
+                window.render_frame(cx);
+                samples.push(start.elapsed().as_secs_f64() * 1000.);
+            })
+            .expect("render");
+        }
+        let (p50, p95) = summarize(samples);
+        println!(
+            "  frame after a font size change, 13 <-> 15 px: {p50:.2} ms p50, {p95:.2} ms p95"
+        );
+        cx.update(|cx| state.update(cx, |state, cx| state.close(cx)));
     }
 }

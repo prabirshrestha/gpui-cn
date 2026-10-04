@@ -17,8 +17,34 @@
 //!   environment the way Ghostty does, for applications that start the
 //!   program themselves.
 //!
-//! [`crate::init`] registers the default key bindings in the [`KEY_CONTEXT`]
-//! key context.
+//! # Key bindings
+//!
+//! [`crate::init`] binds these in the [`KEY_CONTEXT`] key context, to the
+//! public [`actions`]: Tab and Shift-Tab, copy and paste (Cmd-C and Cmd-V
+//! on macOS, Ctrl-Shift-C and Ctrl-Shift-V elsewhere), select all, clear,
+//! Escape to drop a selection, Shift with Page Up, Page Down, Home, End,
+//! Up and Down to scroll, and Ghostty's font zoom: Cmd-= or Cmd-+ in,
+//! Cmd-- out and Cmd-0 back (Ctrl elsewhere), one point a step.
+//!
+//! An application owns its keys. A binding it adds after `gpui_cn::init`
+//! for the same keystroke in the same context wins, and binding a
+//! keystroke to `gpui_kit::NoAction` there removes the default:
+//!
+//! ```no_run
+//! use gpui_cn::terminal::{KEY_CONTEXT, actions};
+//! use gpui_kit::{App, KeyBinding, NoAction};
+//!
+//! fn keys(cx: &mut App) {
+//!     cx.bind_keys([
+//!         // Zoom with Cmd-Up instead of Cmd-=.
+//!         KeyBinding::new("cmd-up", actions::IncreaseFontSize, Some(KEY_CONTEXT)),
+//!         KeyBinding::new("cmd-=", NoAction, Some(KEY_CONTEXT)),
+//!     ]);
+//! }
+//! ```
+//!
+//! Tabs, splits, pane zoom, a leader key and context menus are the
+//! application's to build; the gallery's Terminal story shows one way.
 //!
 //! The grid uses the theme's code font and code font size unless the
 //! [`TerminalAppearance`] names others, so the `jetbrains-mono` feature
@@ -113,6 +139,13 @@ pub mod actions {
             SendTab,
             /// Send Shift-Tab to the program.
             SendBackTab,
+            /// Zoom the font in one point, as Ghostty's `increase_font_size:1`.
+            IncreaseFontSize,
+            /// Zoom the font out one point, as Ghostty's `decrease_font_size:1`.
+            DecreaseFontSize,
+            /// Go back to the configured font size, as Ghostty's
+            /// `reset_font_size`.
+            ResetFontSize,
         ]
     );
 }
@@ -120,8 +153,9 @@ pub mod actions {
 /// Registers the default key bindings. [`crate::init`] calls it.
 pub(crate) fn init(cx: &mut gpui_kit::App) {
     use actions::{
-        Clear, ClearSelection, Copy, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
-        ScrollPageUp, ScrollToBottom, ScrollToTop, SelectAll, SendBackTab, SendTab,
+        Clear, ClearSelection, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize,
+        ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
+        SelectAll, SendBackTab, SendTab,
     };
     use gpui_kit::KeyBinding;
     let context = Some(KEY_CONTEXT);
@@ -135,6 +169,19 @@ pub(crate) fn init(cx: &mut gpui_kit::App) {
             "ctrl-shift-k",
         )
     };
+    // Ghostty binds the font size to Cmd on macOS and Ctrl elsewhere, with
+    // `+` beside `=` for keyboards that have a plus key.
+    let zoom = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys([
+        KeyBinding::new(&format!("{zoom}-="), IncreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}-+"), IncreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}--"), DecreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}-0"), ResetFontSize, context),
+    ]);
     cx.bind_keys([
         KeyBinding::new("tab", SendTab, context),
         KeyBinding::new("shift-tab", SendBackTab, context),

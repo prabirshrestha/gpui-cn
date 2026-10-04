@@ -24,6 +24,7 @@ use crate::terminal::keys::{self, ScrollAccumulator};
 use crate::terminal::links::{self, Link};
 use crate::terminal::selection::{self, Cell, Selection};
 use crate::terminal::source::{FrameHandle, FrameSink, FrameSource, StartOptions};
+use crate::theme::ActiveTheme as _;
 
 /// Events a host subscribes to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +51,9 @@ pub enum TerminalEvent {
     Exited(ExitStatus),
     /// The terminal could not start or the engine failed.
     Failed(SharedString),
+    /// The font size changed through the zoom actions or
+    /// [`TerminalState::set_font_size`]; read it with `font_size`.
+    FontSizeChanged,
 }
 
 /// Colors and appearance a terminal starts with.
@@ -102,6 +106,8 @@ pub struct TerminalState {
     at_prompt: bool,
     colors: TerminalColors,
     appearance: TerminalAppearance,
+    /// The size the font was zoomed to, over the appearance's.
+    font_size: Option<Pixels>,
     focus: FocusHandle,
     focused: bool,
     visible: bool,
@@ -110,6 +116,8 @@ pub struct TerminalState {
     requested: Viewport,
     pub(crate) selection: Option<Selection>,
     pub(crate) marked_text: Option<String>,
+    /// Rows prepared in the last frame, for the element to reuse.
+    pub(crate) row_cache: crate::terminal::element::RowCache,
     pressed_keys: HashSet<String>,
     hovered_link: Option<(u16, Link)>,
     scroll: ScrollAccumulator,
@@ -140,6 +148,7 @@ impl TerminalState {
             at_prompt: false,
             colors: config.colors,
             appearance: config.appearance,
+            font_size: None,
             focus: focus.clone(),
             focused: false,
             visible: true,
@@ -148,6 +157,7 @@ impl TerminalState {
             requested: Viewport::default(),
             selection: None,
             marked_text: None,
+            row_cache: crate::terminal::element::RowCache::default(),
             pressed_keys: HashSet::new(),
             hovered_link: None,
             scroll: ScrollAccumulator::default(),
@@ -319,6 +329,56 @@ impl TerminalState {
     #[must_use]
     pub fn appearance(&self) -> &TerminalAppearance {
         &self.appearance
+    }
+
+    /// The font size the grid draws with: the zoomed size, else the
+    /// appearance's, else the theme's code font size.
+    pub fn font_size(&self, cx: &App) -> Pixels {
+        self.font_size
+            .unwrap_or_else(|| self.appearance.resolved(cx.theme()).size())
+    }
+
+    /// Draw the grid at `size`, clamped to 1-255 points as Ghostty clamps
+    /// it. The grid is measured again at the next paint, which resizes
+    /// the program's grid to fit. Emits [`TerminalEvent::FontSizeChanged`].
+    pub fn set_font_size(&mut self, size: impl Into<Pixels>, cx: &mut Context<Self>) {
+        let size = size.into().clamp(gpui_kit::px(1.), gpui_kit::px(255.));
+        if self.font_size == Some(size) {
+            return;
+        }
+        self.font_size = Some(size);
+        cx.emit(TerminalEvent::FontSizeChanged);
+        cx.notify();
+    }
+
+    /// Zoom the font in by `points`, as Ghostty's `increase_font_size`.
+    pub fn increase_font_size(&mut self, points: impl Into<Pixels>, cx: &mut Context<Self>) {
+        let size = self.font_size(cx) + points.into();
+        self.set_font_size(size, cx);
+    }
+
+    /// Zoom the font out by `points`, as Ghostty's `decrease_font_size`.
+    pub fn decrease_font_size(&mut self, points: impl Into<Pixels>, cx: &mut Context<Self>) {
+        let size = self.font_size(cx) - points.into();
+        self.set_font_size(size, cx);
+    }
+
+    /// Go back to the appearance's font size, or the theme's.
+    pub fn reset_font_size(&mut self, cx: &mut Context<Self>) {
+        if self.font_size.take().is_some() {
+            cx.emit(TerminalEvent::FontSizeChanged);
+            cx.notify();
+        }
+    }
+
+    /// The appearance with the theme's values filled in and the zoom on top,
+    /// as the grid draws with it.
+    pub(crate) fn drawn_appearance(&self, theme: &crate::theme::ThemeTokens) -> TerminalAppearance {
+        let mut appearance = self.appearance.resolved(theme);
+        if let Some(size) = self.font_size {
+            appearance.font_size = Some(size);
+        }
+        appearance
     }
 
     /// Change the appearance. The grid is measured again at the next paint.

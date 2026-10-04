@@ -364,3 +364,125 @@ fn the_grid_takes_every_whole_cell_inside_the_padding(cx: &mut TestAppContext) {
     assert!(room_x - f32::from(viewport.columns()) * cell_width < cell_width);
     assert!(room_y - f32::from(viewport.rows()) * cell_height < cell_height);
 }
+
+fn zoom_key(key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("cmd-{key}")
+    } else {
+        format!("ctrl-{key}")
+    }
+}
+
+#[gpui_kit::test]
+fn the_font_zoom_keys_resize_the_grid_and_reset_to_the_theme_size(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    let theme_size = cx.update(|cx| gpui_cn::ActiveTheme::theme(cx).base.typography.mono_md.size);
+    let grid = |cx: &mut TestAppContext| {
+        setup.terminal.read_with(cx, |state, cx| {
+            (
+                state.font_size(cx),
+                state.frame().viewport.columns(),
+                state.frame().viewport.rows(),
+            )
+        })
+    };
+    let (size, columns, rows) = grid(cx);
+    assert_eq!(size, theme_size);
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("terminal", cx);
+        window.press(&zoom_key("="), cx);
+        window.press(&zoom_key("="), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    let (bigger, fewer_columns, fewer_rows) = grid(cx);
+    assert_eq!(bigger, theme_size + px(2.), "two one-point steps");
+    assert!(
+        fewer_columns < columns && fewer_rows <= rows,
+        "the source got the smaller grid"
+    );
+    assert!(
+        setup
+            .events
+            .borrow()
+            .contains(&TerminalEvent::FontSizeChanged)
+    );
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press(&zoom_key("-"), cx);
+        window.press(&zoom_key("-"), cx);
+        window.press(&zoom_key("-"), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert_eq!(grid(cx).0, theme_size - px(1.));
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press(&zoom_key("0"), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert_eq!(
+        grid(cx),
+        (theme_size, columns, rows),
+        "back to the theme's size"
+    );
+
+    // Ghostty's limits.
+    cx.update(|cx| {
+        setup
+            .terminal
+            .update(cx, |state, cx| state.set_font_size(px(900.), cx));
+    });
+    assert_eq!(grid(cx).0, px(255.));
+}
+
+gpui_kit::actions!(
+    app,
+    [
+        /// An application's own action on a terminal key.
+        AppZoom
+    ]
+);
+
+#[gpui_kit::test]
+fn an_app_binding_overrides_or_removes_a_terminal_default(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    let theme_size = cx.update(|cx| gpui_cn::ActiveTheme::theme(cx).base.typography.mono_md.size);
+    let used = Rc::new(RefCell::new(0));
+    cx.update({
+        let used = used.clone();
+        move |cx| {
+            // Bound after gpui_cn::init, in the terminal's context, so it wins.
+            cx.bind_keys([
+                gpui_kit::KeyBinding::new(
+                    &zoom_key("="),
+                    AppZoom,
+                    Some(gpui_cn::terminal::KEY_CONTEXT),
+                ),
+                gpui_kit::KeyBinding::new(
+                    &zoom_key("-"),
+                    gpui_kit::NoAction,
+                    Some(gpui_cn::terminal::KEY_CONTEXT),
+                ),
+            ]);
+            cx.on_action(move |_: &AppZoom, _| *used.borrow_mut() += 1);
+        }
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("terminal", cx);
+        window.press(&zoom_key("="), cx);
+        window.press(&zoom_key("-"), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert_eq!(*used.borrow(), 1, "the app's action ran");
+    assert_eq!(
+        setup
+            .terminal
+            .read_with(cx, |state, cx| state.font_size(cx)),
+        theme_size,
+        "neither default ran"
+    );
+}

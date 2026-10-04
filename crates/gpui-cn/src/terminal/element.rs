@@ -16,24 +16,26 @@ use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, ElementId, ElementInputHandler, Entity,
     Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement, LineLayout,
     ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    RenderOnce, ShapedLine, StyleRefinement, Styled, TextAlign, TextRun, Window, canvas, div, fill,
-    outline, point, px, size,
+    RenderOnce, ShapedLine, Size, StyleRefinement, Styled, TextAlign, TextRun, Window, canvas, div,
+    fill, outline, point, px, size,
 };
 
 use crate::theme::ActiveTheme as _;
 
 use crate::terminal::actions::{
-    Clear, ClearSelection, Copy, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp,
-    ScrollToBottom, ScrollToTop, SelectAll, SendBackTab, SendTab,
+    Clear, ClearSelection, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize,
+    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
+    SelectAll, SendBackTab, SendTab,
 };
 use crate::terminal::block;
 use crate::terminal::colors::Palette;
 use crate::terminal::decoration;
-use crate::terminal::frame::{CursorShape, StyleRun, TerminalFrame, TerminalRow};
+use crate::terminal::frame::{CursorShape, StyleRun, TerminalColors, TerminalFrame, TerminalRow};
 use crate::terminal::geometry::Geometry;
 use crate::terminal::input::ScrollRequest;
 use crate::terminal::selection::Selection;
 use crate::terminal::state::TerminalState;
+use ghostty_vt::render::RowId;
 
 /// Zero-width non-joiner separating runs so shaping cannot form a ligature
 /// across a style boundary.
@@ -129,6 +131,15 @@ impl RenderOnce for Terminal {
                 }
             }))
             .on_action(update(&state, |s, _: &Clear, _, cx| s.clear(cx)))
+            .on_action(update(&state, |s, _: &IncreaseFontSize, _, cx| {
+                s.increase_font_size(px(1.), cx);
+            }))
+            .on_action(update(&state, |s, _: &DecreaseFontSize, _, cx| {
+                s.decrease_font_size(px(1.), cx);
+            }))
+            .on_action(update(&state, |s, _: &ResetFontSize, _, cx| {
+                s.reset_font_size(cx);
+            }))
             .on_action(update(&state, |s, _: &ScrollToTop, _, cx| {
                 s.scroll(ScrollRequest::Top, cx);
             }))
@@ -215,6 +226,66 @@ struct Painting {
     cursor_opacity: f32,
 }
 
+/// Each row's prepared glyphs and quads from the last frame, relative to
+/// the row's top left, so a row that did not change is not built again:
+/// not on a cursor blink, a hover, or a scroll that moves it.
+///
+/// A row is keyed by its stable id, its revision and its selected columns.
+/// Everything a row's look depends on beyond those (the font, its size, the
+/// cell, the scale and the colors) is the cache's `look`; a change to it
+/// clears the cache. The cache keeps only the rows the last frame drew, so
+/// it never holds more than one screen.
+#[derive(Default)]
+pub(crate) struct RowCache {
+    look: Option<RowLook>,
+    rows: HashMap<RowKey, Arc<RowPaint>>,
+}
+
+#[derive(Clone, PartialEq)]
+struct RowLook {
+    font: Font,
+    font_size: Pixels,
+    cell: Size<Pixels>,
+    columns: u16,
+    scale: f32,
+    colors: TerminalColors,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct RowKey {
+    id: RowId,
+    revision: u64,
+    selected: std::ops::Range<u16>,
+}
+
+/// One row's share of a [`Painting`], at row zero of a grid at the origin.
+#[derive(Default)]
+struct RowPaint {
+    backgrounds: Vec<(Bounds<Pixels>, Hsla)>,
+    blocks: Vec<(Bounds<Pixels>, Hsla)>,
+    decorations: Vec<(Bounds<Pixels>, Hsla)>,
+    line: Option<ShapedLine>,
+}
+
+impl RowPaint {
+    /// Moves this row's parts by `offset` into the frame's painting.
+    fn emit(&self, offset: Point<Pixels>, painting: &mut Painting) {
+        let moved = |(bounds, color): &(Bounds<Pixels>, Hsla)| {
+            (Bounds::new(bounds.origin + offset, bounds.size), *color)
+        };
+        painting
+            .backgrounds
+            .extend(self.backgrounds.iter().map(moved));
+        painting.blocks.extend(self.blocks.iter().map(moved));
+        painting
+            .decorations
+            .extend(self.decorations.iter().map(moved));
+        if let Some(line) = &self.line {
+            painting.lines.push((offset, line.clone()));
+        }
+    }
+}
+
 fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
     let paint_state = state.clone();
     canvas(
@@ -228,7 +299,7 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                 let s = state.read(cx);
                 (
                     Arc::clone(s.frame()),
-                    s.appearance().resolved(cx.theme()),
+                    s.drawn_appearance(cx.theme()),
                     s.marked_text().map(str::to_owned),
                 )
             };
@@ -269,6 +340,7 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                     cx.notify();
                 });
             });
+            let mut rows = state.update(cx, |s, _| std::mem::take(&mut s.row_cache));
             let s = state.read(cx);
             let mut painting = prepare(
                 &frame,
@@ -280,6 +352,7 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                 marked.as_deref(),
                 &font,
                 font_size,
+                &mut rows,
                 window,
             );
             if let Some((row, columns)) = s.hovered_link_span()
@@ -294,6 +367,7 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                     ));
                 }
             }
+            state.update(cx, |s, _| s.row_cache = rows);
             (painting, geometry)
         },
         move |_bounds, (painting, geometry), window, cx| {
@@ -369,6 +443,7 @@ fn prepare(
     marked: Option<&str>,
     font: &Font,
     font_size: Pixels,
+    cache: &mut RowCache,
     window: &mut Window,
 ) -> Painting {
     let palette = Palette::new(&frame.colors);
@@ -381,6 +456,25 @@ fn prepare(
     };
     let scale = window.scale_factor();
 
+    let row_look = RowLook {
+        font: font.clone(),
+        font_size,
+        cell: geometry.cell,
+        columns: geometry.columns,
+        scale,
+        colors: frame.colors.clone(),
+    };
+    if cache.look.as_ref() != Some(&row_look) {
+        cache.look = Some(row_look);
+        cache.rows.clear();
+    }
+    // Rows are prepared at row zero of a grid at the origin and moved into
+    // place, so a cached row fits wherever it is now.
+    let at_origin = Geometry {
+        origin: point(px(0.0), px(0.0)),
+        ..geometry
+    };
+    let mut drawn = HashMap::with_capacity(usize::from(geometry.rows));
     let visible = usize::from(geometry.rows).min(frame.rows.len());
     for (index, row) in frame.rows.iter().take(visible).enumerate() {
         #[allow(clippy::cast_possible_truncation)]
@@ -393,19 +487,30 @@ fn prepare(
                 .selections
                 .push(geometry.span_bounds(selected.clone(), row_index));
         }
-        prepare_row(
-            row,
-            row_index,
-            geometry,
-            palette,
-            selected,
-            font,
-            font_size,
-            scale,
-            window,
-            &mut painting,
-        );
+        let key = RowKey {
+            id: row.id,
+            revision: row.revision,
+            selected: selected.clone(),
+        };
+        let row_paint = cache.rows.remove(&key).unwrap_or_else(|| {
+            let mut row_paint = RowPaint::default();
+            prepare_row(
+                row,
+                at_origin,
+                palette,
+                selected,
+                font,
+                font_size,
+                scale,
+                window,
+                &mut row_paint,
+            );
+            Arc::new(row_paint)
+        });
+        row_paint.emit(geometry.row_origin(row_index), &mut painting);
+        drawn.insert(key, row_paint);
     }
+    cache.rows = drawn;
 
     if let Some(marked) = marked.filter(|m| !m.is_empty())
         && cursor_in_grid(frame, geometry)
@@ -455,7 +560,6 @@ fn cursor_in_grid(frame: &TerminalFrame, geometry: Geometry) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn prepare_row(
     row: &TerminalRow,
-    row_index: u16,
     geometry: Geometry,
     palette: Palette<'_>,
     selected: std::ops::Range<u16>,
@@ -463,8 +567,9 @@ fn prepare_row(
     font_size: Pixels,
     scale: f32,
     window: &mut Window,
-    painting: &mut Painting,
+    painting: &mut RowPaint,
 ) {
+    let row_index = 0;
     let mut text = String::new();
     let mut runs: Vec<TextRun> = Vec::new();
     let mut columns: Vec<u16> = Vec::new();
@@ -563,7 +668,7 @@ fn prepare_row(
             .text_system()
             .shape_line(text.into(), font_size, &runs, None);
         align_to_cells(&mut line, &columns, geometry.cell.width, last_column);
-        painting.lines.push((geometry.row_origin(row_index), line));
+        painting.line = Some(line);
     }
 }
 
