@@ -1,3 +1,4 @@
+use crate::bounds::OnPaddingBounds as _;
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
@@ -5,8 +6,8 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled as _, Window,
     base::{
-        ElementExt as _, Keyframe, Keyframes, Placement, TestSupportExt as _, Timing,
-        Tooltip as BaseTooltip, TooltipRequest, TooltipTransition, animate_keyframes,
+        Keyframe, Keyframes, Placement, TestSupportExt as _, Timing, Tooltip as BaseTooltip,
+        TooltipRequest, TooltipTransition, animate_keyframes,
     },
     div,
 };
@@ -302,7 +303,7 @@ impl<E: StatefulInteractiveElement + gpui_kit::ParentElement> TooltipExt for E {
         if TooltipHost::overlay(window, cx).is_none() {
             return self.tooltip(trigger.native());
         }
-        self.on_prepaint(trigger.track_bounds())
+        self.on_padding_bounds(trigger.track_bounds())
             .on_hover(move |hovered, window, cx| trigger.hovered(*hovered, window, cx))
             .on_mouse_down(MouseButton::Left, |_, window, cx| {
                 TooltipTrigger::pressed(window, cx);

@@ -38,6 +38,7 @@
 
 mod avatar;
 mod badge;
+mod bounds;
 mod button;
 mod command;
 mod dialog;

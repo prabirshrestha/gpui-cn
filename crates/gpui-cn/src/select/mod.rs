@@ -7,6 +7,7 @@ mod item;
 mod menu;
 mod state;
 
+use crate::bounds::OnPaddingBounds as _;
 use std::rc::Rc;
 
 use gpui_kit::{
@@ -15,8 +16,8 @@ use gpui_kit::{
     StyleRefinement, Styled, Window,
     assets::IconName,
     base::{
-        self, Align, Disableable, ElementExt as _, GlobalState, Placement, Positioner,
-        StyledExt as _, TestSupportExt as _,
+        self, Align, Disableable, GlobalState, Placement, Positioner, StyledExt as _,
+        TestSupportExt as _,
         actions::{Confirm, SelectDown, SelectFirst, SelectLast, SelectUp},
         h_flex,
         input::InputContextMenuCapabilities,
@@ -521,7 +522,9 @@ impl<V: SelectValue> Select<V> {
                         .text_color(look.indicator),
                 ),
             )
-            .on_prepaint(move |bounds, _, _| trigger_bounds.set(bounds))
+            // The canvas fills the padding box; the trigger's hairline border
+            // is outside it, and the menu lines up with the border's edges.
+            .on_padding_bounds(move |bounds, _, _| trigger_bounds.set(bounds.dilate(px(1.))))
             .on_hover({
                 let hovered = hovered.clone();
                 move |is_hovered, _, cx| {
