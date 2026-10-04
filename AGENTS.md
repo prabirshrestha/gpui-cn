@@ -56,6 +56,13 @@ that this repository does not name. The workspace has four crates:
    under the pointer, so a bare region inside a page scrolls the page
    with it. `ScrollArea` keeps the step while it has room to scroll and
    passes it on when its content fits, and it bounces at its ends. A
+   component that scrolls its own content without a `ScrollArea`, such
+   as the terminal's scrollback or a strip of tabs, must consume the
+   wheel steps it uses with `cx.stop_propagation()`, so the page or the
+   window under it does not scroll too. Every such component has a
+   headless test that puts it in a `ScrollArea` taller than the window,
+   sends a wheel step over it, and asserts that the component scrolled
+   and the page did not. A
    region that shows or hides content animates with `transition` from
    `gpui_base` and the theme's motion; nothing appears or vanishes in one
    frame unless motion is reduced.

@@ -664,6 +664,10 @@ impl TerminalState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The terminal scrolls its own content, so the wheel step is its
+        // own even at the end of the scrollback: the page around it must
+        // not scroll as well.
+        cx.stop_propagation();
         let Some(geometry) = self.geometry else {
             return;
         };

@@ -9,29 +9,40 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use gpui_cn::ScrollArea;
 use gpui_cn::terminal::input::KeyAction;
 use gpui_cn::terminal::{
     ExitStatus, FixtureSource, Terminal, TerminalConfig, TerminalEvent, TerminalInput,
     TerminalSnapshot, TerminalState, TerminalStatus,
 };
-use gpui_kit::base::Root;
+use gpui_kit::base::{Root, TestSupportExt as _};
 use gpui_kit::{
-    AppContext as _, Context, ElementId, Entity, EntityInputHandler as _, IntoElement,
-    ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowHandle, div, point, px,
-    size, test::TestWindowExt as _,
+    AppContext as _, Context, ElementId, Entity, EntityInputHandler as _, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext, Window,
+    WindowHandle, div, point, px, size, test::TestWindowExt as _,
 };
 
 const SCREEN: &str = "hello world\r\nsecond line";
 
 struct Harness {
     terminal: Entity<TerminalState>,
+    in_page: bool,
 }
 
 impl Render for Harness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let terminal = Terminal::new("terminal", &self.terminal);
+        if !self.in_page {
+            return div().size_full().child(terminal).into_any_element();
+        }
+        // A page taller than the window, with the terminal in it, as the
+        // gallery shows one.
+        ScrollArea::new("page")
             .size_full()
-            .child(Terminal::new("terminal", &self.terminal))
+            .child(div().id("above").test_support().h(px(120.)).w_full())
+            .child(div().h(px(160.)).w_full().child(terminal))
+            .child(div().h(px(1000.)).w_full())
+            .into_any_element()
     }
 }
 
@@ -43,6 +54,10 @@ struct Setup {
 }
 
 fn setup(cx: &mut TestAppContext) -> Setup {
+    setup_with(cx, false)
+}
+
+fn setup_with(cx: &mut TestAppContext, in_page: bool) -> Setup {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
@@ -65,7 +80,10 @@ fn setup(cx: &mut TestAppContext) -> Setup {
             terminal.replace(Some(state.clone()));
             let harness = cx.new(|cx| {
                 cx.observe(&state, |_, _, cx| cx.notify()).detach();
-                Harness { terminal: state }
+                Harness {
+                    terminal: state,
+                    in_page,
+                }
             });
             Root::new(harness, window, cx)
         }
@@ -277,4 +295,38 @@ fn an_exit_stops_input_and_shows_the_status(cx: &mut TestAppContext) {
         assert!(window.try_find(status).is_some(), "the exit status shows");
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_wheel_over_the_terminal_scrolls_the_terminal_not_the_page(cx: &mut TestAppContext) {
+    let setup = setup_with(cx, true);
+    let top = |cx: &mut TestAppContext| {
+        cx.update_window(setup.handle.into(), |_, window, _| {
+            window.find("terminal").bounds().origin.y
+        })
+        .unwrap()
+    };
+    let before = top(cx);
+    for delta in [px(-120.), px(120.)] {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.scroll("terminal", ScrollDelta::Pixels(point(px(0.), delta)), cx);
+        })
+        .unwrap();
+        settle(&setup, cx);
+        assert_eq!(top(cx), before, "the page stays put");
+    }
+    let scrolls = inputs(&setup)
+        .into_iter()
+        .filter(|input| matches!(input, TerminalInput::Scroll(_)))
+        .count();
+    assert_eq!(scrolls, 2, "both steps scroll the terminal");
+
+    // The same step beside the terminal scrolls the page, so the page
+    // could have moved.
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.scroll("above", ScrollDelta::Pixels(point(px(0.), px(-120.))), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert!(top(cx) < before, "the page scrolls under the pointer");
 }
