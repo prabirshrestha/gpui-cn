@@ -97,6 +97,30 @@ component. `theme.touch`, on by default on iOS and Android, grows controls
 and rows to the 44pt hit target of Apple's Human Interface Guidelines,
 sets text to its body size, and turns hover states off.
 
+## Using the terminal
+
+The `ghostty` feature adds `gpui_cn::terminal`, a terminal on Ghostty's
+libghostty-vt. It is off by default, so `cargo add gpui-cn` needs nothing
+new.
+
+```bash
+cargo add gpui-cn --features ghostty
+```
+
+Building it needs [Zig](https://ziglang.org/download/) 0.16 on `PATH` (or
+in `ZIG`). The first build downloads Ghostty's pinned source, about 4 MB,
+and the Zig packages it fetches, about 30 MB, into Zig's cache. For an
+offline build, set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout or the
+extracted tarball and `GHOSTTY_ZIG_SYSTEM_DIR` to the unpacked Zig
+packages; `ghostty-vt-sys` describes both.
+
+Everything else is decided at runtime: a local shell in a pty
+(`TerminalState::local`, on desktop targets), a remote session or any
+other byte stream (`StreamSource`), and parking of idle terminals, which
+is on at 60 seconds and set through `ParkOptions`. The `gpui_cn::terminal`
+documentation has a complete example, and the gallery's Terminal story
+adds tabs, splits, menus and a leader key on top.
+
 ## Gallery
 
 The gallery shows every component in every variant, size, and state. It
@@ -194,13 +218,15 @@ cargo run -p ghostty-vt --example shell
 cargo run -p ghostty-vt --example demo -- 'ls --color=always'
 ```
 
-To release gpui-cn, set the version in `Cargo.toml`, commit, and push a
-tag with the same version (`v0.1.0`). The `Release` workflow checks that
-the tag matches and runs `cargo publish -p gpui-cn`. The engine crates
-have their own version and release on a `ghostty-vt-v0.1.0` tag, which
-publishes `ghostty-vt-sys` and then `ghostty-vt`. Release the engine
-first when a gpui-cn release needs a new one. The gallery crate is marked
-`publish = false`.
+To release, set gpui-cn's version in `Cargo.toml`, commit, and push a tag
+with the same version (`v0.5.0`). The `Release` workflow checks that the
+tag matches, then publishes `ghostty-vt-sys`, `ghostty-vt` and `gpui-cn`
+in that order, skipping any crate whose version is already on crates.io.
+The engine crates keep their own versions, so they publish only when
+bumped. Publishing uses crates.io Trusted Publishing, which cannot create
+a crate: for the first release of a new crate, set a `CARGO_REGISTRY_TOKEN`
+repository secret, which the workflow then uses, and remove it after. The
+gallery crate is marked `publish = false`.
 
 ## License
 

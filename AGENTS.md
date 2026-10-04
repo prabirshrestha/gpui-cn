@@ -11,9 +11,9 @@ that this repository does not name. The workspace has four crates:
 
 - `crates/gpui-cn` is the library. Never add `gpui-component` or use a
   `gpui-component` type. Its `ghostty` feature adds the terminal in
-  `src/terminal`, `ghostty-pty` adds a local pty to it, and
-  `ghostty-park` parks idle terminals as snapshots (see
-  `src/terminal/park.rs`).
+  `src/terminal`: a local shell in a pty on desktop targets, any other
+  byte source, and parking of idle terminals (`src/terminal/park.rs`),
+  which are runtime choices, not features.
 - `crates/gpui-cn-story` is the gallery. It uses gpui-cn components only,
   which makes it the first application that uses the library. Its
   `snapshot` binary renders the gallery to PNG files without a window, on
@@ -22,7 +22,9 @@ that this repository does not name. The workspace has four crates:
 - `crates/ghostty-vt-sys` builds libghostty-vt from the pinned Ghostty
   source with Zig 0.16 and holds its raw bindings, which are generated and
   committed. `crates/ghostty-vt` is the safe API on it. They have no GPUI
-  in them, have their own version, and release on `ghostty-vt-v*` tags.
+  in them and have their own version. One `v*` release tag publishes
+  the workspace in dependency order and skips versions already on
+  crates.io.
   Never patch the Ghostty source. Move the pin with `scripts/sync.sh`,
   which keeps the submodule, `GHOSTTY.lock`, the bindings, the terminfo
   database, and the shell integration scripts in step.
@@ -121,7 +123,7 @@ Never copy a font file into the repository.
 The terminal's engine runs on its own thread and publishes frames; the
 element paints the latest frame and never blocks on the engine. Keep a
 terminal that is not painted at zero work: it gets no frame credit, so it
-builds no frames, and its cursor blink stops. With `ghostty-park`, a
+builds no frames, and its cursor blink stops. A
 terminal idle for its park period (60 seconds by default) is saved as a
 snapshot in its `ParkStore` and its state freed; anything that needs it
 restores it first. A test drives a terminal

@@ -535,7 +535,6 @@ struct PendingWrite {
 /// The owner's core: live, or parked as a snapshot in the park store.
 struct CoreSlot {
     live: Option<Core>,
-    #[cfg(feature = "ghostty-park")]
     parked: Option<crate::terminal::core::Parked>,
 }
 
@@ -558,7 +557,6 @@ impl std::ops::DerefMut for CoreSlot {
 }
 
 /// What the owner needs to park and restore its core.
-#[cfg(feature = "ghostty-park")]
 struct Parking {
     options: EngineOptions,
     key: u64,
@@ -569,7 +567,6 @@ struct Parking {
 struct Owner {
     shared: Arc<Shared>,
     core: CoreSlot,
-    #[cfg(feature = "ghostty-park")]
     parking: Parking,
     handle: Box<dyn ByteHandle>,
     sink: FrameSink,
@@ -613,10 +610,8 @@ impl Owner {
             shared,
             core: CoreSlot {
                 live: Some(core),
-                #[cfg(feature = "ghostty-park")]
                 parked: None,
             },
-            #[cfg(feature = "ghostty-park")]
             parking: Parking {
                 options: config.options.clone(),
                 key: crate::terminal::park::next_key(),
@@ -694,7 +689,6 @@ impl Owner {
             || copy.is_some()
             || cursor.is_some()
             || colors.is_some();
-        #[cfg(feature = "ghostty-park")]
         {
             // Anything that needs the terminal restores a parked one first;
             // with nothing to do, a parked terminal only waits.
@@ -706,8 +700,6 @@ impl Owner {
                 return Ok(());
             }
         }
-        #[cfg(not(feature = "ghostty-park"))]
-        let _ = painted;
         if reveal {
             self.dirty = true;
             self.force = true;
@@ -825,7 +817,6 @@ impl Owner {
             } else {
                 None
             };
-            #[cfg(feature = "ghostty-park")]
             let delay = match self.park_after() {
                 Some(_) if self.park_if_idle() => None,
                 Some(after) => Some(delay.map_or(after, |delay| delay.min(after))),
@@ -859,7 +850,6 @@ impl Owner {
 
     /// How long until a live terminal may park, when parking is on and
     /// nothing keeps it awake.
-    #[cfg(feature = "ghostty-park")]
     fn park_after(&mut self) -> Option<Duration> {
         let park = &self.parking.options.park;
         if !park.enabled
@@ -875,7 +865,6 @@ impl Owner {
 
     /// Parks the terminal when it has been idle long enough. Returns
     /// whether it parked.
-    #[cfg(feature = "ghostty-park")]
     fn park_if_idle(&mut self) -> bool {
         if self.park_after() != Some(Duration::ZERO) {
             return false;
@@ -901,7 +890,6 @@ impl Owner {
     }
 
     /// Restores a parked terminal from its store.
-    #[cfg(feature = "ghostty-park")]
     fn unpark(&mut self) -> io::Result<()> {
         let Some(parked) = self.core.parked.take() else {
             return Ok(());
@@ -981,7 +969,6 @@ impl Owner {
             mail.reads.clear();
         }
         self.pending = None;
-        #[cfg(feature = "ghostty-park")]
         if self.core.parked.take().is_some() {
             self.parking.options.park.store.remove(self.parking.key);
         }

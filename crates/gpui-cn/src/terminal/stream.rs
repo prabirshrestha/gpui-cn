@@ -6,7 +6,7 @@
 //! source goes to [`Engine`](super::Engine) like any [`ByteSource`]; the
 //! application keeps the peer, writes the program's output to it, reads
 //! the terminal's input and grid sizes from it, and reports the exit.
-//! None of it needs the `ghostty-pty` feature.
+//! It works on every target, including those with no local pty.
 //!
 //! ```no_run
 //! use gpui_cn::terminal::{

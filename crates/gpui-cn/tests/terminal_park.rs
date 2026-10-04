@@ -1,7 +1,7 @@
 //! Parking: an idle terminal saves a snapshot to its store and frees its
 //! state, then restores it, unchanged, the moment something needs it.
 
-#![cfg(feature = "ghostty-park")]
+#![cfg(feature = "ghostty")]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

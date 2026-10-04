@@ -78,11 +78,9 @@ pub(crate) struct Core {
 
 /// The largest unfinished escape sequence a parked snapshot keeps: 64 KiB,
 /// enough for any OSC or DCS a shell writes between two reads.
-#[cfg(feature = "ghostty-park")]
 const PARK_CONTINUATION_BYTES: usize = 64 << 10;
 
 /// What a parked core keeps beside its snapshot.
-#[cfg(feature = "ghostty-park")]
 #[derive(Debug)]
 pub(crate) struct Parked {
     viewport: Viewport,
@@ -203,7 +201,6 @@ impl Core {
         // A terminal parked in the middle of an escape sequence keeps the
         // unfinished bytes in its snapshot, so its parser resumes as if it
         // never stopped.
-        #[cfg(feature = "ghostty-park")]
         terminal
             .set_continuation_max_bytes(PARK_CONTINUATION_BYTES)
             .map_err(fault)?;
@@ -242,7 +239,6 @@ impl Core {
     /// Encodes the whole terminal, scrollback included, and keeps what the
     /// snapshot does not carry, so the core can be dropped and rebuilt
     /// later with [`Core::restore`].
-    #[cfg(feature = "ghostty-park")]
     pub(crate) fn park(&self) -> io::Result<(Vec<u8>, Parked)> {
         let bytes = vt::snapshot::encode(&self.terminal)
             .map_err(fault)?
@@ -263,7 +259,6 @@ impl Core {
 
     /// Rebuilds a parked core from its snapshot. The first frame after it
     /// is built in full.
-    #[cfg(feature = "ghostty-park")]
     pub(crate) fn restore(
         bytes: &[u8],
         parked: Parked,

@@ -10,12 +10,83 @@
 //!   pointer and the input method to it.
 //! - A [`FrameSource`] produces frames. [`Engine`] runs a [`ByteSource`]
 //!   through a Ghostty terminal on an owner thread; [`LocalPty`] (feature
-//!   `ghostty-pty`) is the byte source for a local program; [`StreamSource`]
+//!   desktop targets) is the byte source for a local program; [`StreamSource`]
 //!   is one the application feeds itself, such as a remote session or its
 //!   own pty; [`FixtureSource`] parses canned bytes for tests and galleries.
 //! - [`shell`] resolves the user's shell, its login command and the
 //!   environment the way Ghostty does, for applications that start the
 //!   program themselves.
+//!
+//! # Use it
+//!
+//! Enable the `ghostty` feature, with `cargo add gpui-cn --features ghostty`
+//! or in `Cargo.toml`:
+//!
+//! ```toml
+//! gpui-cn = { version = "0.5", features = ["ghostty", "jetbrains-mono"] }
+//! ```
+//!
+//! Building it needs Zig 0.16 on `PATH`; the first build downloads
+//! Ghostty's pinned source. Whether a terminal runs a local shell or another
+//! source, and whether idle terminals park, are runtime choices.
+//! After `gpui_cn::init`, a view holds a [`TerminalState`] and renders a
+//! [`Terminal`] for it:
+//!
+//! ```no_run
+//! # #[cfg(not(any(target_os = "ios", target_os = "android")))]
+//! # mod example {
+//! use gpui_cn::terminal::{LocalTerminalOptions, Terminal, TerminalConfig, TerminalState};
+//! use gpui_kit::*;
+//!
+//! struct Shell {
+//!     terminal: Entity<TerminalState>,
+//! }
+//!
+//! impl Render for Shell {
+//!     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+//!         div().size_full().child(Terminal::new("shell", &self.terminal))
+//!     }
+//! }
+//!
+//! pub fn main() {
+//!     gpui_kit::application()
+//!         .with_assets(gpui_kit::assets::Assets)
+//!         .run(|cx| {
+//!             gpui_kit::init(cx);
+//!             gpui_cn::init(cx);
+//!             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+//!                 cx.new(|cx| {
+//!                     // The user's login shell, picked as Ghostty picks it.
+//!                     let terminal = cx.new(|cx| {
+//!                         TerminalState::local(
+//!                             LocalTerminalOptions::default(),
+//!                             TerminalConfig::default(),
+//!                             window,
+//!                             cx,
+//!                         )
+//!                     });
+//!                     cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+//!                     Shell { terminal }
+//!                 })
+//!             })
+//!             .expect("failed to open window");
+//!         });
+//! }
+//! # }
+//! # fn main() {}
+//! ```
+//!
+//! A remote session or an application's own pty feeds a [`StreamSource`]
+//! instead of a local pty:
+//!
+//! ```no_run
+//! # use gpui_cn::terminal::*;
+//! # fn remote(window: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<TerminalState>) -> TerminalState {
+//! let (source, peer) = StreamSource::new();
+//! peer.output(b"$ "); // the program's output; input arrives on peer.events()
+//! TerminalState::new(Engine::new(source, EngineOptions::default()), TerminalConfig::default(), window, cx)
+//! # }
+//! ```
 //!
 //! # Key bindings
 //!
@@ -75,12 +146,8 @@ pub mod input;
 mod keys;
 mod links;
 mod options;
-#[cfg(feature = "ghostty-park")]
 pub mod park;
-#[cfg(all(
-    feature = "ghostty-pty",
-    not(any(target_os = "ios", target_os = "android"))
-))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod pty;
 mod selection;
 pub mod shell;
@@ -98,10 +165,7 @@ pub use engine::{
 pub use frame::{TerminalColors, TerminalFrame, Viewport};
 pub use input::TerminalInput;
 pub use options::{EngineOptions, LocalTerminalOptions, ShellIntegration, WorkingDirectory};
-#[cfg(all(
-    feature = "ghostty-pty",
-    not(any(target_os = "ios", target_os = "android"))
-))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub use pty::LocalPty;
 pub use source::{FixtureSource, FrameHandle, FrameSink, FrameSource, StartOptions};
 pub use state::{TerminalConfig, TerminalEvent, TerminalState};

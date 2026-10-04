@@ -124,7 +124,7 @@ use gpui_kit::{App, Global};
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
     #[cfg(all(
-        feature = "ghostty-pty",
+        feature = "ghostty",
         not(any(target_os = "ios", target_os = "android"))
     ))]
     pub use crate::terminal::LocalTerminalOptions;

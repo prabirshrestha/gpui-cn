@@ -177,10 +177,7 @@ impl TerminalState {
     }
 
     /// A terminal running a local program in a pty.
-    #[cfg(all(
-        feature = "ghostty-pty",
-        not(any(target_os = "ios", target_os = "android"))
-    ))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub fn local(
         options: crate::terminal::options::LocalTerminalOptions,
         config: TerminalConfig,

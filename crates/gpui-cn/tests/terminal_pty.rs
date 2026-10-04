@@ -1,7 +1,7 @@
 //! The terminal engine with a real pty. Skips when no POSIX shell is
 //! available.
 
-#![cfg(all(unix, feature = "ghostty-pty"))]
+#![cfg(all(unix, feature = "ghostty"))]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
