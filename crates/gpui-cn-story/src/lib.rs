@@ -87,7 +87,8 @@ impl StoryEntry {
 
 /// Every story, in display order.
 pub fn stories() -> Vec<StoryEntry> {
-    vec![
+    #[allow(unused_mut)]
+    let mut stories = vec![
         StoryEntry::of::<stories::TypographyStory>(),
         StoryEntry::of::<stories::SpacingStory>(),
         StoryEntry::of::<stories::ButtonStory>(),
@@ -112,7 +113,10 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::ScrollAreaStory>(),
         StoryEntry::of::<stories::TitleBarStory>(),
         StoryEntry::of::<stories::TabsStory>(),
-    ]
+    ];
+    #[cfg(feature = "terminal")]
+    stories.push(StoryEntry::of::<stories::TerminalStory>());
+    stories
 }
 
 /// The gallery window content: a navigation stack of pages, one per story

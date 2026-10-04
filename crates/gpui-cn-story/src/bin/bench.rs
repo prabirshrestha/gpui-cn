@@ -108,6 +108,10 @@ mod macos {
                 kit.as_secs_f64() * 1000.,
                 (start.elapsed() - kit).as_secs_f64() * 1000.
             );
+            // Terminal panes draw canned output, so the numbers do not
+            // depend on the user's shell.
+            #[cfg(feature = "terminal")]
+            gpui_cn_story::stories::TerminalStory::use_fixtures(cx);
             Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
         });
         let mut gallery: Option<Entity<Gallery>> = None;

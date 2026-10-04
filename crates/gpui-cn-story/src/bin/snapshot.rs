@@ -52,6 +52,9 @@ mod macos {
             gpui_cn::init(cx);
             // Snapshots want final states, not a frame mid-fade.
             Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+            // Terminal panes draw canned output, not the user's shell.
+            #[cfg(feature = "terminal")]
+            gpui_cn_story::stories::TerminalStory::use_fixtures(cx);
         });
 
         let mut gallery: Option<Entity<Gallery>> = None;
@@ -145,6 +148,8 @@ mod macos {
                 "Scroll area",
                 "Title bar",
                 "Tabs",
+                #[cfg(feature = "terminal")]
+                "Terminal",
             ] {
                 cx.update_window(handle.into(), |_, window, cx| {
                     gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));
