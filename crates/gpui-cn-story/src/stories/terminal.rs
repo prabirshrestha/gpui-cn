@@ -52,6 +52,9 @@ actions!(
         ClosePane,
         /// Sends the leader key itself to the program.
         SendLeader,
+        /// Makes the focused pane fill its tab, or puts the tab's layout
+        /// back.
+        TogglePaneZoom,
     ]
 );
 
@@ -106,6 +109,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new(&leader("l"), FocusRight, context),
         KeyBinding::new(&leader("o"), FocusNext, context),
         KeyBinding::new(&leader("x"), ClosePane, context),
+        KeyBinding::new(&leader("z"), TogglePaneZoom, context),
         KeyBinding::new(&leader(LEADER), SendLeader, context),
     ];
     for number in 1..=9 {
@@ -121,6 +125,8 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new("cmd-w", ClosePane, context),
             KeyBinding::new("cmd-d", SplitRight, context),
             KeyBinding::new("cmd-shift-d", SplitDown, context),
+            // Ghostty's toggle_split_zoom.
+            KeyBinding::new("cmd-shift-enter", TogglePaneZoom, context),
             KeyBinding::new("cmd-shift-]", NextTab, context),
             KeyBinding::new("cmd-shift-[", PreviousTab, context),
             KeyBinding::new("cmd-alt-left", FocusLeft, context),
@@ -304,6 +310,8 @@ impl Node {
 struct TabPanes {
     root: Node,
     focused: PaneId,
+    /// Whether the focused pane fills the tab, the others hidden.
+    zoomed: bool,
 }
 
 /// Where Ghostty looks for theme files, in its order: the user's config
@@ -379,6 +387,8 @@ pub struct TerminalStory {
     titling: bool,
     pane_menu: Entity<MenuState>,
     tab_menu: Entity<MenuState>,
+    /// The story itself, for menus built when they open.
+    this: WeakEntity<Self>,
     next_pane: u64,
     next_tab: u64,
 }
@@ -462,6 +472,7 @@ impl Story for TerminalStory {
                 titling: false,
                 pane_menu: cx.new(MenuState::new),
                 tab_menu: cx.new(MenuState::new),
+                this: cx.weak_entity(),
                 next_pane: 0,
                 next_tab: 0,
             };
@@ -632,6 +643,7 @@ impl TerminalStory {
             TabPanes {
                 root: Node::Leaf(pane),
                 focused: pane,
+                zoomed: false,
             },
         );
         let tab = Tab::new(tab_id.clone(), format!("Shell {}", self.next_tab))
@@ -649,9 +661,11 @@ impl TerminalStory {
         let Some(selected) = self.selected_tab(cx) else {
             return;
         };
+        // A zoomed tab shows its focused pane only. The others keep their
+        // programs and drain their output, but paint nothing, and may park.
         for (tab, layout) in &self.layouts {
-            let visible = *tab == selected;
             for pane in layout.root.leaves() {
+                let visible = *tab == selected && (!layout.zoomed || pane == layout.focused);
                 if let Some(terminal) = self.panes.get(&pane) {
                     terminal.update(cx, |terminal, cx| terminal.set_visible(visible, cx));
                 }
@@ -687,6 +701,56 @@ impl TerminalStory {
         }
     }
 
+    /// Zooms the selected tab's focused pane, or unzooms it. A tab with one
+    /// pane has nothing to zoom.
+    fn toggle_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.selected_tab(cx) else {
+            return;
+        };
+        let zoomed = match self.layouts.get_mut(&tab) {
+            Some(layout) if matches!(layout.root, Node::Split { .. }) => {
+                layout.zoomed = !layout.zoomed;
+                layout.zoomed
+            }
+            _ => return,
+        };
+        self.mark_zoom(&tab, zoomed, cx);
+        self.show_selected(window, cx);
+    }
+
+    /// Puts tab `tab`'s layout back if a pane is zoomed. Splitting, closing
+    /// and moving focus do this first, as in tmux. Returns whether it did.
+    fn unzoom(&mut self, tab: &SharedString, cx: &mut Context<Self>) -> bool {
+        match self.layouts.get_mut(tab) {
+            Some(layout) if layout.zoomed => {
+                layout.zoomed = false;
+                self.mark_zoom(tab, false, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The tab's icon marks a zoomed pane.
+    fn mark_zoom(&mut self, tab: &SharedString, zoomed: bool, cx: &mut Context<Self>) {
+        let icon = if zoomed {
+            IconName::Maximize
+        } else {
+            IconName::SquareTerminal
+        };
+        let id = tab.clone();
+        self.tabs
+            .update(cx, |tabs, cx| tabs.set_icon(id, Some(icon), cx));
+        cx.notify();
+    }
+
+    /// Whether pane `id`'s tab has a zoomed pane.
+    fn zoomed(&self, id: PaneId) -> bool {
+        self.tab_of(id)
+            .and_then(|tab| self.layouts.get(&tab))
+            .is_some_and(|layout| layout.zoomed)
+    }
+
     fn split(&mut self, axis: Axis, before: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.selected_tab(cx) else {
             return;
@@ -694,6 +758,7 @@ impl TerminalStory {
         let Some(target) = self.layouts.get(&tab).map(|layout| layout.focused) else {
             return;
         };
+        self.unzoom(&tab, cx);
         let pane = self.spawn_pane(window, cx);
         if let Some(layout) = self.layouts.get_mut(&tab)
             && layout.root.split(target, axis, pane, before)
@@ -709,6 +774,11 @@ impl TerminalStory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(tab) = self.selected_tab(cx)
+            && self.unzoom(&tab, cx)
+        {
+            self.show_selected(window, cx);
+        }
         let next = self
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
@@ -719,6 +789,11 @@ impl TerminalStory {
     }
 
     fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.selected_tab(cx)
+            && self.unzoom(&tab, cx)
+        {
+            self.show_selected(window, cx);
+        }
         let next = self
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
@@ -757,6 +832,7 @@ impl TerminalStory {
         else {
             return;
         };
+        self.unzoom(&tab, cx);
         let layout = self.layouts.get_mut(&tab).expect("found above");
         if !layout.root.remove(id) {
             // The removal is reported back through `TabsEvent::Closed`.
@@ -879,8 +955,24 @@ impl TerminalStory {
 
     /// The rows of a pane's context menu. Copy and Paste go to the pane,
     /// the splits to the story, through the pane's focus.
-    fn pane_entries(terminal: &Entity<TerminalState>, cx: &App) -> Vec<MenuEntry> {
+    fn pane_entries(
+        story: &WeakEntity<Self>,
+        pane: PaneId,
+        terminal: &Entity<TerminalState>,
+        cx: &App,
+    ) -> Vec<MenuEntry> {
         let has_selection = terminal.read(cx).has_selection();
+        let (zoomed, split) = story
+            .upgrade()
+            .map(|story| {
+                let story = story.read(cx);
+                let split = story
+                    .tab_of(pane)
+                    .and_then(|tab| story.layouts.get(&tab))
+                    .is_some_and(|layout| matches!(layout.root, Node::Split { .. }));
+                (story.zoomed(pane), split)
+            })
+            .unwrap_or_default();
         vec![
             MenuItem::new("copy", "Copy")
                 .action(actions::Copy)
@@ -900,6 +992,24 @@ impl TerminalStory {
                 .action(SplitDown)
                 .into(),
             MenuItem::new("split-up", "Split Up").action(SplitUp).into(),
+            MenuEntry::Separator,
+            MenuItem::new(
+                "zoom-pane",
+                if zoomed { "Unzoom Pane" } else { "Zoom Pane" },
+            )
+            .action(TogglePaneZoom)
+            .disabled(!split)
+            .into(),
+            MenuEntry::Separator,
+            MenuItem::new("zoom-in", "Zoom In")
+                .action(actions::IncreaseFontSize)
+                .into(),
+            MenuItem::new("zoom-out", "Zoom Out")
+                .action(actions::DecreaseFontSize)
+                .into(),
+            MenuItem::new("reset-zoom", "Reset Zoom")
+                .action(actions::ResetFontSize)
+                .into(),
         ]
     }
 
@@ -928,6 +1038,8 @@ impl TerminalStory {
                 .children(self.panes.get(id).map(|terminal| {
                     let focus = terminal.read(cx).focus_handle().clone();
                     let entries = terminal.clone();
+                    let story = self.this.clone();
+                    let pane = *id;
                     // A right click focuses the pane first, so its menu's
                     // commands go to that pane. A program that reports the
                     // mouse gets the click instead, as in Ghostty.
@@ -936,7 +1048,7 @@ impl TerminalStory {
                         &self.pane_menu,
                     )
                     .action_context(&focus)
-                    .items(move |_, cx| Self::pane_entries(&entries, cx))
+                    .items(move |_, cx| Self::pane_entries(&story, pane, &entries, cx))
                     .size_full()
                     .child(Terminal::new(id.element_id(), terminal))
                 })),
@@ -969,8 +1081,12 @@ impl Render for TerminalStory {
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
             .map(|layout| {
-                let split = matches!(layout.root, Node::Split { .. });
-                self.render_node(&layout.root, layout.focused, split, cx)
+                if layout.zoomed {
+                    self.render_node(&Node::Leaf(layout.focused), layout.focused, false, cx)
+                } else {
+                    let split = matches!(layout.root, Node::Split { .. });
+                    self.render_node(&layout.root, layout.focused, split, cx)
+                }
             });
         let leader = if cfg!(target_os = "macos") {
             "Ctrl-A, then: c new tab; n, p, 1-9 select a tab; | or % split right; - or \" split \
@@ -1048,6 +1164,9 @@ impl Render for TerminalStory {
                         }))
                         .on_action(cx.listener(|this, _: &SendLeader, _, cx| {
                             this.send_leader(cx);
+                        }))
+                        .on_action(cx.listener(|this, _: &TogglePaneZoom, window, cx| {
+                            this.toggle_zoom(window, cx);
                         }))
                         .bg(background)
                         .border_color(border)

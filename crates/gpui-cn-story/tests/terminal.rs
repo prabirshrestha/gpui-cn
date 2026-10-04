@@ -333,3 +333,55 @@ fn a_tab_follows_its_pane_title_until_the_user_names_it(cx: &mut TestAppContext)
     );
     let _ = handle;
 }
+
+#[gpui_kit::test]
+fn the_leader_and_the_menu_zoom_a_pane_and_a_split_unzooms_it(cx: &mut TestAppContext) {
+    let (handle, gallery) = setup_gallery(cx);
+    let story = story(&gallery, cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "%"]);
+    assert!(shows(handle, cx, pane(0)) && shows(handle, cx, pane(1)));
+
+    // The leader zooms the focused pane, the new one, over the whole tab.
+    press(handle, cx, &["ctrl-a", "z"]);
+    assert!(shows(handle, cx, pane(1)));
+    assert!(!shows(handle, cx, pane(0)), "the other pane is hidden");
+    let hidden = story.read_with(cx, |story, cx| {
+        story
+            .terminals()
+            .iter()
+            .filter(|terminal| !terminal.read(cx).is_visible())
+            .count()
+    });
+    assert_eq!(hidden, 1, "the hidden pane stops painting");
+    press(handle, cx, &["ctrl-a", "z"]);
+    assert!(
+        shows(handle, cx, pane(0)) && shows(handle, cx, pane(1)),
+        "unzoomed"
+    );
+
+    // The pane menu zooms and unzooms too.
+    let menu = named(pane(1), "menu");
+    for _ in 0..2 {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.right_click(pane(1), cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click(named(menu.clone(), "zoom-pane"), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert!(shows(handle, cx, pane(0)), "zoomed and back");
+
+    // A split while zoomed unzooms first, as tmux does.
+    press(handle, cx, &["ctrl-a", "z"]);
+    assert!(!shows(handle, cx, pane(0)));
+    press(handle, cx, &["ctrl-a", "-"]);
+    assert!(
+        shows(handle, cx, pane(0)) && shows(handle, cx, pane(1)) && shows(handle, cx, pane(2)),
+        "the split put the layout back"
+    );
+}

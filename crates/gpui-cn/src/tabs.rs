@@ -275,6 +275,21 @@ impl TabsState {
         cx.notify();
     }
 
+    /// Sets or clears the icon of the tab with `id`, such as to mark a
+    /// state the tab is in. A no-op for an unknown id.
+    pub fn set_icon(
+        &mut self,
+        id: impl Into<SharedString>,
+        icon: Option<impl Into<Icon>>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = id.into();
+        if let Some(index) = self.index_of(&id) {
+            self.tabs[index].icon = icon.map(Into::into);
+            cx.notify();
+        }
+    }
+
     /// Asks the application for a new tab.
     pub fn request_add(&mut self, cx: &mut Context<Self>) {
         cx.emit(TabsEvent::AddRequested);
