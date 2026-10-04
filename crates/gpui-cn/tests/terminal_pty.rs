@@ -145,3 +145,63 @@ fn closing_the_terminal_ends_the_jobs_its_shell_started() {
     }
     assert!(!alive(job), "the job ended with the terminal");
 }
+
+#[test]
+fn two_local_terminals_have_their_own_programs() {
+    let Some(shell) = shell() else {
+        eprintln!("skipping: no POSIX shell");
+        return;
+    };
+    let start = || {
+        let options = LocalTerminalOptions::default()
+            .with_program(shell, ["-c", "echo PID $$; exec cat"])
+            .with_shell_integration(ShellIntegration::None);
+        let (sink, wake) = FrameSink::new();
+        let handle = Box::new(Engine::new(
+            LocalPty::new(options),
+            EngineOptions::default(),
+        ))
+        .start(sink.clone(), StartOptions::default())
+        .unwrap();
+        (sink, wake, handle)
+    };
+    let (sink_a, wake_a, a) = start();
+    let (sink_b, wake_b, b) = start();
+    let pid = |s: &TerminalSnapshot| {
+        s.frame
+            .text()
+            .split("PID ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next().map(str::to_owned))
+    };
+    let pid_a = pid(&wait_for(&sink_a, &wake_a, a.as_ref(), |s| {
+        pid(s).is_some()
+    }));
+    let pid_b = pid(&wait_for(&sink_b, &wake_b, b.as_ref(), |s| {
+        pid(s).is_some()
+    }));
+    assert_ne!(pid_a, pid_b, "a pty and a process each");
+
+    a.input(gpui_cn::terminal::TerminalInput::Text("only-a\r".into()))
+        .unwrap();
+    wait_for(&sink_a, &wake_a, a.as_ref(), |s| {
+        s.frame.text().contains("only-a")
+    });
+    a.close();
+    wait_for(&sink_a, &wake_a, a.as_ref(), |s| {
+        matches!(s.status, TerminalStatus::Exited(_))
+    });
+
+    b.input(gpui_cn::terminal::TerminalInput::Text("still-b\r".into()))
+        .unwrap();
+    let shown = wait_for(&sink_b, &wake_b, b.as_ref(), |s| {
+        s.frame.text().contains("still-b")
+    });
+    assert_eq!(
+        shown.status,
+        TerminalStatus::Live,
+        "closing one left the other"
+    );
+    assert!(!shown.frame.text().contains("only-a"));
+    b.close();
+}

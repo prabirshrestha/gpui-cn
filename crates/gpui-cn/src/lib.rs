@@ -184,8 +184,6 @@ pub fn init(cx: &mut App) {
     menu::init(cx);
     command::init(cx);
     folder_picker::init(cx);
-    #[cfg(feature = "ghostty")]
-    terminal::init(cx);
     cx.set_global(Initialized);
 }
 

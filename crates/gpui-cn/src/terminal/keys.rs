@@ -23,6 +23,32 @@ pub(crate) fn modifiers(modifiers: GpuiModifiers) -> Modifiers {
     }
 }
 
+/// What a focused terminal does with a key that a binding outside it
+/// would take.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Claim {
+    /// Let the binding run.
+    None,
+    /// Send the key to the program instead.
+    Send,
+    /// Copy the selection, when there is one, instead.
+    Copy,
+}
+
+/// Which keys `gpui-base`'s `Root` binds that belong to a terminal: Tab
+/// and Shift-Tab, which move focus there, and its copy key, which is
+/// Cmd-C on macOS and Ctrl-C, the interrupt, elsewhere. A binding an
+/// application adds in the terminal's context outranks these, so the
+/// terminal never takes it.
+pub(crate) fn claim(action: &str, keystroke: &Keystroke) -> Claim {
+    match action {
+        "root::Tab" | "root::TabPrev" => Claim::Send,
+        "input::Copy" if keystroke.modifiers.platform => Claim::Copy,
+        "input::Copy" => Claim::Send,
+        _ => Claim::None,
+    }
+}
+
 /// Translate a keystroke into terminal key input.
 ///
 /// Returns `None` for platform command chords so application shortcuts
@@ -123,6 +149,15 @@ mod tests {
 
     fn keystroke(value: &str) -> Keystroke {
         Keystroke::parse(value).expect("valid keystroke")
+    }
+
+    #[test]
+    fn a_terminal_claims_roots_focus_keys_and_its_interrupt() {
+        assert_eq!(claim("root::Tab", &keystroke("tab")), Claim::Send);
+        assert_eq!(claim("root::TabPrev", &keystroke("shift-tab")), Claim::Send);
+        assert_eq!(claim("input::Copy", &keystroke("ctrl-c")), Claim::Send);
+        assert_eq!(claim("input::Copy", &keystroke("cmd-c")), Claim::Copy);
+        assert_eq!(claim("app::NewTab", &keystroke("cmd-t")), Claim::None);
     }
 
     #[test]

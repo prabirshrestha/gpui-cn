@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use gpui_kit::{
     App, ClipboardItem, Context, ElementId, EventEmitter, FocusHandle, Focusable, IntoElement,
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Subscription, Task,
-    Window,
+    KeyDownEvent, KeyUpEvent, Keystroke, KeystrokeEvent, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    Subscription, Task, Window,
 };
 
 use crate::terminal::appearance::TerminalAppearance;
@@ -123,7 +123,7 @@ pub struct TerminalState {
     scroll: ScrollAccumulator,
     pub(crate) cursor: Blink,
     frames: Option<Task<()>>,
-    _focus_subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl TerminalState {
@@ -135,6 +135,7 @@ impl TerminalState {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
+        let this = cx.weak_entity();
         let mut state = Self {
             handle: None,
             closed: false,
@@ -163,12 +164,24 @@ impl TerminalState {
             scroll: ScrollAccumulator::default(),
             cursor: Blink::new(),
             frames: None,
-            _focus_subscriptions: [
+            _subscriptions: [
                 cx.on_focus_in(&focus, window, |state: &mut Self, _, cx| {
                     state.focus_changed(true, cx);
                 }),
                 cx.on_focus_out(&focus, window, |state: &mut Self, _, _, cx| {
                     state.focus_changed(false, cx);
+                }),
+                cx.intercept_keystrokes({
+                    let state = this;
+                    let focus = focus.clone();
+                    move |event, window, cx| {
+                        if !focus.is_focused(window) {
+                            return;
+                        }
+                        if let Some(state) = state.upgrade() {
+                            state.update(cx, |state, cx| state.claim_key(event, window, cx));
+                        }
+                    }
                 }),
             ],
         };
@@ -681,9 +694,17 @@ impl TerminalState {
         if self.marked_text.is_some() {
             return;
         }
-        if let Some(key) = keys::key(&event.keystroke, keys::key_action(event.is_held)) {
+        let keystroke = &event.keystroke;
+        if keystroke.key == "escape"
+            && keystroke.modifiers == Default::default()
+            && self.clear_selection(cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(key) = keys::key(keystroke, keys::key_action(event.is_held)) {
             self.selection = None;
-            self.pressed_keys.insert(event.keystroke.key.clone());
+            self.pressed_keys.insert(keystroke.key.clone());
             self.send(TerminalInput::Key(key), cx);
             cx.stop_propagation();
         }
@@ -704,6 +725,39 @@ impl TerminalState {
             prefer_character_input: false,
         };
         self.on_key_down(&event, window, cx);
+    }
+
+    /// Takes a key from a binding outside the terminal that would keep it
+    /// from the program, before the binding runs. The terminal is focused.
+    fn claim_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let winner = cx
+            .key_bindings()
+            .borrow()
+            .bindings_for_input(std::slice::from_ref(&event.keystroke), &event.context_stack)
+            .0
+            .into_iter()
+            .next();
+        let Some(binding) = winner else {
+            return;
+        };
+        match keys::claim(binding.action().name(), &event.keystroke) {
+            keys::Claim::None => {}
+            keys::Claim::Send => {
+                let key = KeyDownEvent {
+                    keystroke: event.keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                };
+                self.on_key_down(&key, window, cx);
+                cx.stop_propagation();
+            }
+            keys::Claim::Copy => {
+                if self.has_selection() {
+                    self.copy(cx);
+                    cx.stop_propagation();
+                }
+            }
+        }
     }
 
     pub(crate) fn on_key_up(&mut self, event: &KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {

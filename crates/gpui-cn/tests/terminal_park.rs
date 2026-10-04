@@ -265,3 +265,36 @@ fn closing_a_parked_terminal_forgets_its_snapshot() {
     assert_eq!(store.inner.len_bytes(), 0);
     let _ = Mutex::new(());
 }
+
+#[test]
+fn terminals_that_share_a_store_park_and_restore_on_their_own() {
+    let (store, options) = counting();
+    let idle = start(options.clone());
+    let busy = start(options);
+    idle.fill();
+    busy.fill();
+    let idle_screen = idle.screen();
+    // Keep one painted while the other goes idle.
+    let until = Instant::now() + IDLE * 4;
+    while Instant::now() < until {
+        let _ = busy.sink.take();
+        busy.handle.request_frame();
+        std::thread::sleep(IDLE / 3);
+    }
+    assert_eq!(store.saves(), 1, "only the idle one parked");
+
+    busy.peer.output(b"more");
+    busy.handle.request_frame();
+    busy.frame(|s| s.frame.text().contains("more"));
+    assert_eq!(
+        store.takes(),
+        0,
+        "the busy one's output left the other parked"
+    );
+
+    idle.handle.request_frame();
+    wait_until("the idle one restores", || store.takes() == 1);
+    assert_eq!(idle.screen(), idle_screen, "its own screen");
+    idle.handle.close();
+    busy.handle.close();
+}

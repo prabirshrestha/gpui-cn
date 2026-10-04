@@ -94,6 +94,12 @@ that this repository does not name. The workspace has four crates:
    `https://gpui-kit.com/docs/coding-guides.md` and
    `https://gpui-kit.com/docs/design-guides.md`, and run the design review
    checklist before you finish UI work.
+11. `init` binds only keys that a component needs to work, in its own key
+   context. Shortcuts that an application may want for something else,
+   such as the terminal's copy, paste, and font zoom, are public actions
+   with a `default_key_bindings()` that the application installs. The
+   terminal binds nothing: the focused one takes the keys a program needs
+   in its own key handling.
 
 ## Add a component
 

@@ -87,7 +87,8 @@ struct Fixtures;
 
 impl Global for Fixtures {}
 
-/// Binds the leader keys and, on macOS, the Command shortcuts, once.
+/// Binds the terminal's default keys, the leader keys and, on macOS, the
+/// Command shortcuts, once.
 fn bind_keys(cx: &mut App) {
     if cx.has_global::<Bindings>() {
         return;
@@ -142,6 +143,7 @@ fn bind_keys(cx: &mut App) {
             ));
         }
     }
+    cx.bind_keys(gpui_cn::terminal::default_key_bindings());
     cx.bind_keys(bindings);
     cx.set_global(Bindings);
 }

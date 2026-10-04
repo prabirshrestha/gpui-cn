@@ -90,22 +90,28 @@
 //!
 //! # Key bindings
 //!
-//! [`crate::init`] binds these in the [`KEY_CONTEXT`] key context, to the
-//! public [`actions`]: Tab and Shift-Tab, copy and paste (Cmd-C and Cmd-V
-//! on macOS, Ctrl-Shift-C and Ctrl-Shift-V elsewhere), select all, clear,
-//! Escape to drop a selection, Shift with Page Up, Page Down, Home, End,
-//! Up and Down to scroll, and Ghostty's font zoom: Cmd-= or Cmd-+ in,
-//! Cmd-- out and Cmd-0 back (Ctrl elsewhere), one point a step.
+//! `gpui_cn::init` binds no terminal keys. A focused terminal takes the
+//! keys a program needs on its own, without a key binding: every key it
+//! can encode goes to the program, Tab and Shift-Tab too, which
+//! `gpui-base`'s `Root` would otherwise use to move focus, and Ctrl-C,
+//! which `Root` binds to copy outside macOS. Escape drops a selection
+//! first, when there is one. Cmd-C on macOS copies the selection through
+//! `Root`'s copy key.
 //!
-//! An application owns its keys. A binding it adds after `gpui_cn::init`
-//! for the same keystroke in the same context wins, and binding a
-//! keystroke to `gpui_kit::NoAction` there removes the default:
+//! The rest are [`actions`] an application binds in the [`KEY_CONTEXT`]
+//! key context. [`default_key_bindings`] holds Ghostty's keys for them:
+//! copy and paste (Cmd-C and Cmd-V on macOS, Ctrl-Shift-C and Ctrl-Shift-V
+//! elsewhere), select all, clear, Shift with Page Up, Page Down, Home,
+//! End, Up and Down to scroll, and the font zoom: Cmd-= or Cmd-+ in, Cmd--
+//! out and Cmd-0 back (Ctrl elsewhere), one point a step. An application
+//! installs them, all or some, or binds its own:
 //!
 //! ```no_run
-//! use gpui_cn::terminal::{KEY_CONTEXT, actions};
+//! use gpui_cn::terminal::{KEY_CONTEXT, actions, default_key_bindings};
 //! use gpui_kit::{App, KeyBinding, NoAction};
 //!
 //! fn keys(cx: &mut App) {
+//!     cx.bind_keys(default_key_bindings());
 //!     cx.bind_keys([
 //!         // Zoom with Cmd-Up instead of Cmd-=.
 //!         KeyBinding::new("cmd-up", actions::IncreaseFontSize, Some(KEY_CONTEXT)),
@@ -113,6 +119,11 @@
 //!     ]);
 //! }
 //! ```
+//!
+//! A binding an application adds in [`KEY_CONTEXT`] wins over a key the
+//! terminal would take, Tab included. The bindings are per context, not
+//! per terminal: every terminal in the application has them, and only
+//! the focused one acts on a key.
 //!
 //! Tabs, splits, pane zoom, a leader key and context menus are the
 //! application's to build; the gallery's Terminal story shows one way.
@@ -185,8 +196,6 @@ pub mod actions {
             Paste,
             /// Select the viewport.
             SelectAll,
-            /// Drop the selection; propagates when there is none.
-            ClearSelection,
             /// Clear the screen through the shell.
             Clear,
             /// Scroll to the top of scrollback.
@@ -201,10 +210,6 @@ pub mod actions {
             ScrollLineUp,
             /// Scroll one line toward newer output.
             ScrollLineDown,
-            /// Send Tab to the program.
-            SendTab,
-            /// Send Shift-Tab to the program.
-            SendBackTab,
             /// Zoom the font in one point, as Ghostty's `increase_font_size:1`.
             IncreaseFontSize,
             /// Zoom the font out one point, as Ghostty's `decrease_font_size:1`.
@@ -216,12 +221,13 @@ pub mod actions {
     );
 }
 
-/// Registers the default key bindings. [`crate::init`] calls it.
-pub(crate) fn init(cx: &mut gpui_kit::App) {
+/// Ghostty's keys for the terminal [`actions`], in the [`KEY_CONTEXT`] key
+/// context, for an application to install with `cx.bind_keys(..)`. A
+/// terminal works without them; see [Key bindings](self#key-bindings).
+pub fn default_key_bindings() -> Vec<gpui_kit::KeyBinding> {
     use actions::{
-        Clear, ClearSelection, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize,
-        ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
-        SelectAll, SendBackTab, SendTab,
+        Clear, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize, ScrollLineDown,
+        ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, SelectAll,
     };
     use gpui_kit::KeyBinding;
     let context = Some(KEY_CONTEXT);
@@ -242,25 +248,20 @@ pub(crate) fn init(cx: &mut gpui_kit::App) {
     } else {
         "ctrl"
     };
-    cx.bind_keys([
-        KeyBinding::new(&format!("{zoom}-="), IncreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}-+"), IncreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}--"), DecreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}-0"), ResetFontSize, context),
-    ]);
-    cx.bind_keys([
-        KeyBinding::new("tab", SendTab, context),
-        KeyBinding::new("shift-tab", SendBackTab, context),
+    vec![
         KeyBinding::new(copy, Copy, context),
         KeyBinding::new(paste, Paste, context),
         KeyBinding::new(select_all, SelectAll, context),
         KeyBinding::new(clear, Clear, context),
-        KeyBinding::new("escape", ClearSelection, context),
         KeyBinding::new("shift-pageup", ScrollPageUp, context),
         KeyBinding::new("shift-pagedown", ScrollPageDown, context),
         KeyBinding::new("shift-home", ScrollToTop, context),
         KeyBinding::new("shift-end", ScrollToBottom, context),
         KeyBinding::new("shift-up", ScrollLineUp, context),
         KeyBinding::new("shift-down", ScrollLineDown, context),
-    ]);
+        KeyBinding::new(&format!("{zoom}-="), IncreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}-+"), IncreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}--"), DecreaseFontSize, context),
+        KeyBinding::new(&format!("{zoom}-0"), ResetFontSize, context),
+    ]
 }

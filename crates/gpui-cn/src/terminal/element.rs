@@ -23,9 +23,8 @@ use gpui_kit::{
 use crate::theme::ActiveTheme as _;
 
 use crate::terminal::actions::{
-    Clear, ClearSelection, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize,
-    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
-    SelectAll, SendBackTab, SendTab,
+    Clear, Copy, DecreaseFontSize, IncreaseFontSize, Paste, ResetFontSize, ScrollLineDown,
+    ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, SelectAll,
 };
 use crate::terminal::block;
 use crate::terminal::colors::Palette;
@@ -110,12 +109,6 @@ impl RenderOnce for Terminal {
             .overflow_hidden()
             .bg(background)
             .refine_style(&self.style)
-            .on_action(update(&state, |s, _: &SendTab, w, cx| {
-                s.send_keystroke("tab", w, cx);
-            }))
-            .on_action(update(&state, |s, _: &SendBackTab, w, cx| {
-                s.send_keystroke("shift-tab", w, cx);
-            }))
             .on_action(update(&state, |s, _: &Copy, _, cx| {
                 if s.has_selection() {
                     s.copy(cx);
@@ -125,11 +118,6 @@ impl RenderOnce for Terminal {
             }))
             .on_action(update(&state, |s, _: &Paste, _, cx| s.paste(cx)))
             .on_action(update(&state, |s, _: &SelectAll, _, cx| s.select_all(cx)))
-            .on_action(update(&state, |s, _: &ClearSelection, _, cx| {
-                if !s.clear_selection(cx) {
-                    cx.propagate();
-                }
-            }))
             .on_action(update(&state, |s, _: &Clear, _, cx| s.clear(cx)))
             .on_action(update(&state, |s, _: &IncreaseFontSize, _, cx| {
                 s.increase_font_size(px(1.), cx);

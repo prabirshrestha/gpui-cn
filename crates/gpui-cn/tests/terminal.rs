@@ -17,9 +17,9 @@ use gpui_cn::terminal::{
 };
 use gpui_kit::base::{Root, TestSupportExt as _};
 use gpui_kit::{
-    AppContext as _, Context, ElementId, Entity, EntityInputHandler as _, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext, Window,
-    WindowHandle, div, point, px, size, test::TestWindowExt as _,
+    AppContext as _, Context, ElementId, Entity, EntityInputHandler as _, Focusable as _,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollDelta, Styled as _,
+    TestAppContext, Window, WindowHandle, div, point, px, size, test::TestWindowExt as _,
 };
 
 const SCREEN: &str = "hello world\r\nsecond line";
@@ -53,14 +53,23 @@ struct Setup {
     events: Rc<RefCell<Vec<TerminalEvent>>>,
 }
 
+/// A terminal in an application that installs the default key bindings.
 fn setup(cx: &mut TestAppContext) -> Setup {
-    setup_with(cx, false)
+    setup_with(cx, false, true)
 }
 
-fn setup_with(cx: &mut TestAppContext, in_page: bool) -> Setup {
+/// A terminal in an application that binds no terminal keys.
+fn bare(cx: &mut TestAppContext) -> Setup {
+    setup_with(cx, false, false)
+}
+
+fn setup_with(cx: &mut TestAppContext, in_page: bool, defaults: bool) -> Setup {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
+        if defaults {
+            cx.bind_keys(gpui_cn::terminal::default_key_bindings());
+        }
     });
     let source = FixtureSource::new(SCREEN);
     let inputs = source.inputs();
@@ -169,17 +178,41 @@ fn a_click_focuses_the_terminal_and_reports_focus(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn init_binds_no_terminal_keys(cx: &mut TestAppContext) {
+    let _setup = bare(cx);
+    cx.update(|cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        let terminal: Vec<_> = keymap
+            .bindings()
+            .filter(|binding| binding.action().name().starts_with("terminal::"))
+            .map(|binding| binding.action().name())
+            .collect();
+        assert!(terminal.is_empty(), "bound by init: {terminal:?}");
+    });
+}
+
+#[gpui_kit::test]
 fn keys_reach_the_program_and_tab_stays_in_the_terminal(cx: &mut TestAppContext) {
-    let setup = setup(cx);
+    // No terminal bindings: Root's Tab, Shift-Tab and, outside macOS, its
+    // Ctrl-C copy key still reach the program.
+    let setup = bare(cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click("terminal", cx);
         window.press("a", cx);
         window.press("enter", cx);
         window.press("tab", cx);
+        window.press("shift-tab", cx);
         window.press("ctrl-c", cx);
     })
     .unwrap();
-    assert_eq!(keys(&setup), ["a", "enter", "tab", "c"]);
+    assert_eq!(keys(&setup), ["a", "enter", "tab", "tab", "c"]);
+    let focused = cx
+        .update_window(setup.handle.into(), |_, window, cx| {
+            setup.terminal.focus_handle(cx).is_focused(window)
+        })
+        .unwrap();
+    assert!(focused, "Tab did not move focus out of the terminal");
     let interrupt = inputs(&setup)
         .into_iter()
         .rev()
@@ -221,6 +254,19 @@ fn text_composed_in_the_input_method_is_sent_when_committed(cx: &mut TestAppCont
 #[gpui_kit::test]
 fn a_drag_selects_text_that_copy_puts_on_the_clipboard(cx: &mut TestAppContext) {
     let setup = setup(cx);
+    drag_copy_and_escape(&setup, true, cx);
+}
+
+#[gpui_kit::test]
+fn without_bindings_root_copies_the_selection_and_escape_drops_it(cx: &mut TestAppContext) {
+    let setup = bare(cx);
+    // Root binds a copy key on macOS only: Ctrl-C elsewhere is the program's.
+    drag_copy_and_escape(&setup, cfg!(target_os = "macos"), cx);
+}
+
+/// Selects "hello" with a drag, copies it when `copy` is set, and drops
+/// the selection with Escape, which reaches the program only after.
+fn drag_copy_and_escape(setup: &Setup, copy: bool, cx: &mut TestAppContext) {
     let bounds = cx
         .update_window(setup.handle.into(), |_, window, _| {
             window.find("terminal").bounds()
@@ -248,19 +294,21 @@ fn a_drag_selects_text_that_copy_puts_on_the_clipboard(cx: &mut TestAppContext) 
         .expect("a selection");
     assert!(selected.starts_with("hello"), "selected {selected:?}");
 
-    cx.update_window(setup.handle.into(), |_, window, cx| {
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-c"
-            } else {
-                "ctrl-shift-c"
-            },
-            cx,
-        );
-    })
-    .unwrap();
-    let copied = cx.read_from_clipboard().and_then(|item| item.text());
-    assert_eq!(copied.as_deref(), Some(selected.trim_end()));
+    if copy {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-c"
+                } else {
+                    "ctrl-shift-c"
+                },
+                cx,
+            );
+        })
+        .unwrap();
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some(selected.trim_end()));
+    }
 
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.press("escape", cx);
@@ -271,6 +319,12 @@ fn a_drag_selects_text_that_copy_puts_on_the_clipboard(cx: &mut TestAppContext) 
             .terminal
             .read_with(cx, |state, _| state.has_selection())
     );
+    assert!(!keys(setup).contains(&"escape".to_owned()), "kept back");
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("escape", cx);
+    })
+    .unwrap();
+    assert!(keys(setup).contains(&"escape".to_owned()), "then sent");
 }
 
 #[gpui_kit::test]
@@ -299,7 +353,7 @@ fn an_exit_stops_input_and_shows_the_status(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_wheel_over_the_terminal_scrolls_the_terminal_not_the_page(cx: &mut TestAppContext) {
-    let setup = setup_with(cx, true);
+    let setup = setup_with(cx, true, true);
     let top = |cx: &mut TestAppContext| {
         cx.update_window(setup.handle.into(), |_, window, _| {
             window.find("terminal").bounds().origin.y
@@ -484,5 +538,23 @@ fn an_app_binding_overrides_or_removes_a_terminal_default(cx: &mut TestAppContex
             .read_with(cx, |state, cx| state.font_size(cx)),
         theme_size,
         "neither default ran"
+    );
+}
+
+#[gpui_kit::test]
+fn without_the_defaults_the_zoom_keys_do_nothing(cx: &mut TestAppContext) {
+    let setup = bare(cx);
+    let theme_size = cx.update(|cx| gpui_cn::ActiveTheme::theme(cx).base.typography.mono_md.size);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click("terminal", cx);
+        window.press(&zoom_key("="), cx);
+    })
+    .unwrap();
+    settle(&setup, cx);
+    assert_eq!(
+        setup
+            .terminal
+            .read_with(cx, |state, cx| state.font_size(cx)),
+        theme_size
     );
 }

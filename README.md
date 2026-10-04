@@ -121,6 +121,15 @@ is on at 60 seconds and set through `ParkOptions`. The `gpui_cn::terminal`
 documentation has a complete example, and the gallery's Terminal story
 adds tabs, splits, menus and a leader key on top.
 
+`gpui_cn::init` binds no terminal keys. A focused terminal sends every
+key a program needs, Tab and Ctrl-C included. Copy, paste, scrolling and
+font zoom are actions; install Ghostty's keys for them, or bind your own
+in `terminal::KEY_CONTEXT`:
+
+```rust
+cx.bind_keys(gpui_cn::terminal::default_key_bindings());
+```
+
 ## Gallery
 
 The gallery shows every component in every variant, size, and state. It
