@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::terminal::engine::ForegroundProcess;
 use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus};
 use crate::terminal::frame::Viewport;
@@ -64,6 +64,17 @@ fn prepend_path_list(existing: Option<std::ffi::OsString>, dir: &Path, default: 
     format!("{}:{existing}", dir.display())
 }
 
+/// The user's home: `HOME`, or `USERPROFILE` on Windows.
+fn home_dir() -> Option<PathBuf> {
+    let var = |name| std::env::var_os(name).filter(|value| !value.is_empty());
+    let home = if cfg!(windows) {
+        var("USERPROFILE").or_else(|| var("HOME"))
+    } else {
+        var("HOME")
+    };
+    home.map(PathBuf::from)
+}
+
 /// Build the command, following Ghostty's environment rules.
 fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) -> CommandBuilder {
     let program = options
@@ -80,12 +91,12 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
     match &options.cwd {
         WorkingDirectory::Inherit => {}
         WorkingDirectory::Home => {
-            if let Some(home) = std::env::var_os("HOME") {
+            if let Some(home) = home_dir() {
                 cmd.cwd(home);
             }
         }
         WorkingDirectory::Path(path) => {
-            let fallback = std::env::var_os("HOME").map(PathBuf::from);
+            let fallback = home_dir();
             if path.is_dir() {
                 cmd.cwd(path);
             } else if let Some(home) = fallback.filter(|h| h.is_dir()) {
@@ -200,7 +211,15 @@ struct Handle {
     io: crate::terminal::pty_io::PollIo,
     #[cfg(not(unix))]
     io: crate::terminal::pty_io::WriterThread,
+    #[cfg(unix)]
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
+    /// Sends sizes to the thread that owns the pseudoconsole, since a
+    /// ConPTY resize can block, as herdr does.
+    #[cfg(windows)]
+    resizer: Mutex<std::sync::mpsc::Sender<PtySize>>,
+    /// The job the program and everything it starts run in.
+    #[cfg(windows)]
+    job: Option<crate::terminal::process_windows::Job>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     /// The file name of the program the terminal started, such as `zsh`.
     #[cfg(unix)]
@@ -216,12 +235,22 @@ impl ByteHandle for Handle {
         self.io.write(bytes)
     }
 
+    #[cfg(unix)]
     fn resize(&self, viewport: Viewport) -> io::Result<()> {
         self.master
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .resize(size(viewport))
             .map_err(io::Error::other)
+    }
+
+    #[cfg(windows)]
+    fn resize(&self, viewport: Viewport) -> io::Result<()> {
+        self.resizer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .send(size(viewport))
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
     }
 
     fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
@@ -243,10 +272,8 @@ impl ByteHandle for Handle {
             .child
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !matches!(child.try_wait(), Ok(None)) {
-            return;
-        }
-        // The shell leads its own session; its jobs end with it.
+        // The shell leads its own session; its jobs end with it, even
+        // when the shell itself has already exited, as in herdr.
         #[cfg(unix)]
         if let Some(leader) = child
             .process_id()
@@ -257,7 +284,31 @@ impl ByteHandle for Handle {
             });
             return;
         }
-        let _ = child.kill();
+        // The program and everything it started are in the job.
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.terminate();
+        }
+        if matches!(child.try_wait(), Ok(None)) {
+            let _ = child.kill();
+        }
+    }
+
+    #[cfg(windows)]
+    fn foreground(&self) -> Option<ForegroundProcess> {
+        let root = self
+            .child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .process_id()?;
+        let entry = crate::terminal::process_windows::foreground(root)?;
+        Some(ForegroundProcess {
+            pid: entry.pid,
+            name: entry.name,
+            argv: Vec::new(),
+            cwd: None,
+            shell: entry.pid == root,
+        })
     }
 
     #[cfg(unix)]
@@ -339,6 +390,15 @@ impl ByteSource for LocalPty {
             .map_err(io::Error::other)?;
         let child = pty.slave.spawn_command(cmd).map_err(io::Error::other)?;
         drop(pty.slave);
+        // Everything the program starts joins its job, so closing the
+        // terminal ends the whole tree. Without a job, close still kills
+        // the program itself.
+        #[cfg(windows)]
+        let job = child.process_id().and_then(|pid| {
+            let job = crate::terminal::process_windows::Job::new().ok()?;
+            job.assign(pid).ok()?;
+            Some(job)
+        });
         #[cfg(unix)]
         let io = crate::terminal::pty_io::PollIo::start(
             pty.master
@@ -354,9 +414,31 @@ impl ByteSource for LocalPty {
             crate::terminal::pty_io::spawn_reader(reader, sink)?;
             crate::terminal::pty_io::WriterThread::start(writer, move || writable.writable())?
         };
+        #[cfg(windows)]
+        let resizer = {
+            let (tx, rx) = std::sync::mpsc::channel::<PtySize>();
+            let master = pty.master;
+            std::thread::Builder::new()
+                .name("gpui-cn-pty-resize".to_owned())
+                .spawn(move || {
+                    while let Ok(mut size) = rx.recv() {
+                        // Only the latest size matters.
+                        while let Ok(next) = rx.try_recv() {
+                            size = next;
+                        }
+                        let _ = master.resize(size);
+                    }
+                })?;
+            Mutex::new(tx)
+        };
         Ok(Box::new(Handle {
             io,
+            #[cfg(unix)]
             master: Mutex::new(pty.master),
+            #[cfg(windows)]
+            resizer,
+            #[cfg(windows)]
+            job,
             child: Mutex::new(child),
             #[cfg(unix)]
             program,

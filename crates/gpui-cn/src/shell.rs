@@ -48,13 +48,15 @@ pub const FOREIGN_TERMINAL_ENV: &[&str] = &[
 /// In a command-line environment, one with `TERM_PROGRAM` set, it is
 /// `$SHELL`. Otherwise, such as an application opened from the Dock or
 /// the Finder, `$SHELL` is whatever the launcher had, so the shell comes
-/// from the user's passwd entry instead. Then `/bin/sh`. On Windows it is
-/// `%COMSPEC%`, then `cmd.exe`.
+/// from the user's passwd entry instead. Then `/bin/sh`.
+///
+/// Windows has no `$SHELL`, and Ghostty does not run there, so it follows
+/// herdr: the first `pwsh.exe` on `PATH`, as a full path, which is what
+/// other Windows terminals prefer, else `powershell.exe`, which every
+/// Windows has.
 pub fn default_shell() -> PathBuf {
     if cfg!(windows) {
-        return std::env::var_os("COMSPEC")
-            .filter(|value| !value.is_empty())
-            .map_or_else(|| PathBuf::from("cmd.exe"), PathBuf::from);
+        return windows_shell(std::env::var_os("PATH"));
     }
     let cli = std::env::var_os("TERM_PROGRAM").is_some_and(|value| !value.is_empty());
     resolve_shell(
@@ -62,6 +64,28 @@ pub fn default_shell() -> PathBuf {
         cli,
         passwd().and_then(|entry| entry.shell),
     )
+}
+
+/// herdr's Windows choice: the first `pwsh.exe` in an absolute `PATH`
+/// directory that is a Windows executable, else `powershell.exe`.
+fn windows_shell(path: Option<OsString>) -> PathBuf {
+    path.as_deref()
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("pwsh.exe"))
+        .find(|candidate| is_executable_image(candidate))
+        .unwrap_or_else(|| PathBuf::from("powershell.exe"))
+}
+
+/// Whether `path` is a file that starts as a Windows executable does, with
+/// the `MZ` header, so a stray file of that name is passed over.
+fn is_executable_image(path: &Path) -> bool {
+    use std::io::Read as _;
+    let mut magic = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok_and(|()| &magic == b"MZ")
 }
 
 /// Ghostty's choice between `$SHELL`, the passwd entry and `/bin/sh`.
@@ -158,8 +182,12 @@ pub fn login_shell() -> ShellCommand {
 /// /bin/bash --noprofile --norc -c "exec -l <shell> <args>"`, with `-q`
 /// when `~/.hushlogin` exists. `-p` keeps the environment, so shell
 /// integration still reaches the shell. Elsewhere, and on macOS when the
-/// user is unknown, it is the shell with `-l` first.
+/// user is unknown, it is the shell with `-l` first. Windows has no login
+/// shell, so there it is the shell and `args` as they are.
 pub fn login_command(shell: &Path, args: &[String]) -> ShellCommand {
+    if cfg!(windows) {
+        return ShellCommand::new(shell, args.iter().cloned());
+    }
     let entry = if cfg!(target_os = "macos") {
         passwd()
     } else {
@@ -375,6 +403,29 @@ mod tests {
         let entry = passwd().expect("the current user has an entry");
         assert!(entry.name.is_some_and(|name| !name.is_empty()));
         assert!(entry.home.is_some_and(|home| home.is_absolute()));
+    }
+
+    #[test]
+    fn windows_prefers_pwsh_on_the_path_then_powershell() {
+        let dir = std::env::temp_dir().join(format!("gpui-cn-pwsh-{}", std::process::id()));
+        let (empty, fake, real) = (dir.join("empty"), dir.join("fake"), dir.join("real"));
+        for d in [&empty, &fake, &real] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(fake.join("pwsh.exe"), b"#!/bin/sh").unwrap();
+        std::fs::write(real.join("pwsh.exe"), b"MZ\x90\0").unwrap();
+        let path = |dirs: &[&PathBuf]| Some(std::env::join_paths(dirs).unwrap());
+        assert_eq!(
+            windows_shell(path(&[&empty, &fake, &real])),
+            real.join("pwsh.exe"),
+            "the first real executable"
+        );
+        assert_eq!(
+            windows_shell(path(&[&empty, &fake])),
+            PathBuf::from("powershell.exe")
+        );
+        assert_eq!(windows_shell(None), PathBuf::from("powershell.exe"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

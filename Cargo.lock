@@ -2407,6 +2407,7 @@ dependencies = [
  "nucleo-matcher",
  "portable-pty",
  "smol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
