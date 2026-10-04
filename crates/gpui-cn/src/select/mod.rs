@@ -512,10 +512,14 @@ impl<V: SelectValue> Select<V> {
                             .child(value.text),
                     ),
             })
+            // At the trailing edge when the trigger is wider than its
+            // value, as shadcn's `justify-between` trigger puts it.
             .child(
-                Icon::from(IconName::ChevronDown)
-                    .size_4()
-                    .text_color(look.indicator),
+                div().ml_auto().flex_none().child(
+                    Icon::from(IconName::ChevronDown)
+                        .size_4()
+                        .text_color(look.indicator),
+                ),
             )
             .on_prepaint(move |bounds, _, _| trigger_bounds.set(bounds))
             .on_hover({
