@@ -143,7 +143,11 @@
 //! The engine never blocks the UI: frames arrive through a latest-wins slot
 //! and an async wake, input goes through a bounded queue that Ctrl+C jumps,
 //! a hidden terminal keeps parsing but publishes nothing, and synchronized
-//! output (mode 2026) holds frames for at most one second.
+//! output (mode 2026) holds frames for at most one second. The engine never
+//! waits on the program either: a write the pty cannot take yet resumes
+//! when it has room, and at most a megabyte of output waits for the parser
+//! before the pty holds the program back, so a large paste into a program
+//! that is busy writing cannot deadlock.
 //!
 //! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal, itself
 //! derived from Herdr; block, decoration and element structure adapted from
@@ -169,6 +173,8 @@ pub mod park;
 mod process;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod pty;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod pty_io;
 mod selection;
 mod source;
 mod state;

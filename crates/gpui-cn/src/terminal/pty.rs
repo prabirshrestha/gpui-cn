@@ -8,13 +8,15 @@
 //! Adapted from tt v2 (Apache-2.0), src/local_terminal/runtime.rs and
 //! src/pty, itself derived from Herdr.
 
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus, ForegroundProcess};
+#[cfg(unix)]
+use crate::terminal::engine::ForegroundProcess;
+use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus};
 use crate::terminal::frame::Viewport;
 use crate::terminal::options::{LocalTerminalOptions, ShellIntegration, WorkingDirectory};
 
@@ -194,10 +196,14 @@ fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) ->
 }
 
 struct Handle {
-    writer: Mutex<Box<dyn Write + Send>>,
+    #[cfg(unix)]
+    io: crate::terminal::pty_io::PollIo,
+    #[cfg(not(unix))]
+    io: crate::terminal::pty_io::WriterThread,
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     /// The file name of the program the terminal started, such as `zsh`.
+    #[cfg(unix)]
     program: Option<String>,
     /// The last foreground process group and its process, kept while the
     /// group has the foreground.
@@ -206,13 +212,8 @@ struct Handle {
 }
 
 impl ByteHandle for Handle {
-    fn write(&self, bytes: &[u8]) -> io::Result<()> {
-        let mut writer = self
-            .writer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        writer.write_all(bytes)?;
-        writer.flush()
+    fn write(&self, bytes: &[u8]) -> io::Result<usize> {
+        self.io.write(bytes)
     }
 
     fn resize(&self, viewport: Viewport) -> io::Result<()> {
@@ -237,6 +238,7 @@ impl ByteHandle for Handle {
     }
 
     fn close(&self) {
+        self.io.close();
         let mut child = self
             .child
             .lock()
@@ -323,6 +325,7 @@ impl ByteSource for LocalPty {
         let resources = ghostty_vt::shell_integration::resources_dir()?;
         let terminfo = ghostty_vt::terminfo::dir()?;
         let cmd = command(&self.options, &resources, &terminfo);
+        #[cfg(unix)]
         let program = self
             .options
             .program
@@ -336,28 +339,26 @@ impl ByteSource for LocalPty {
             .map_err(io::Error::other)?;
         let child = pty.slave.spawn_command(cmd).map_err(io::Error::other)?;
         drop(pty.slave);
-        let mut reader = pty.master.try_clone_reader().map_err(io::Error::other)?;
-        let writer = pty.master.take_writer().map_err(io::Error::other)?;
-        std::thread::Builder::new()
-            .name("gpui-cn-pty".to_owned())
-            .spawn(move || {
-                let mut buf = vec![0u8; 64 * 1024];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if !sink.write(&buf[..n]) {
-                                break;
-                            }
-                        }
-                    }
-                }
-                sink.finished();
-            })?;
+        #[cfg(unix)]
+        let io = crate::terminal::pty_io::PollIo::start(
+            pty.master
+                .as_raw_fd()
+                .ok_or_else(|| io::Error::other("the pty has no descriptor"))?,
+            sink,
+        )?;
+        #[cfg(not(unix))]
+        let io = {
+            let reader = pty.master.try_clone_reader().map_err(io::Error::other)?;
+            let writer = pty.master.take_writer().map_err(io::Error::other)?;
+            let writable = sink.clone();
+            crate::terminal::pty_io::spawn_reader(reader, sink)?;
+            crate::terminal::pty_io::WriterThread::start(writer, move || writable.writable())?
+        };
         Ok(Box::new(Handle {
-            writer: Mutex::new(writer),
+            io,
             master: Mutex::new(pty.master),
             child: Mutex::new(child),
+            #[cfg(unix)]
             program,
             #[cfg(unix)]
             foreground: Mutex::new(None),

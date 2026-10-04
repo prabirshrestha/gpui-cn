@@ -28,6 +28,15 @@ use crate::terminal::source::{FrameHandle, FrameSink, FrameSource, StartOptions}
 const INPUT_BYTES: usize = 1 << 20;
 const INPUT_COMMANDS: usize = 256;
 const WRITE_CHUNK: usize = 8192;
+/// The most input written in one turn, so output keeps flowing during a
+/// large paste to a program that reads as fast as it comes.
+const WRITE_BURST: usize = 64 * 1024;
+/// While a write waits for room, how often the engine tries again even
+/// without [`ByteSink::writable`], for a source that never calls it.
+const WRITE_RETRY: Duration = Duration::from_millis(50);
+/// The output a source may queue ahead of the parser before
+/// [`ByteSink::wait_for_room`] holds it back.
+const READ_QUEUE_BYTES: usize = 1 << 20;
 const COMPRESSION_IDLE: Duration = Duration::from_millis(250);
 const COMPRESSION_STEP: Duration = Duration::from_millis(16);
 /// How long after output the engine asks its source for the foreground
@@ -230,8 +239,11 @@ pub trait ByteSource: Send + 'static {
 
 /// The engine's side of a byte source.
 pub trait ByteHandle: Send {
-    /// Write input for the program. Must accept the whole slice.
-    fn write(&self, bytes: &[u8]) -> io::Result<()>;
+    /// Write input for the program without blocking: as much of `bytes` as
+    /// it takes now, and return how much that was. When that is less than
+    /// all of it, the source calls [`ByteSink::writable`] once more fits,
+    /// and the engine writes the rest then, ahead of newer input.
+    fn write(&self, bytes: &[u8]) -> io::Result<usize>;
     /// The grid changed.
     fn resize(&self, viewport: Viewport) -> io::Result<()>;
     /// Whether the program ended, and how.
@@ -253,16 +265,44 @@ pub struct ByteSink {
 }
 
 impl ByteSink {
-    /// Deliver output. Returns false once the terminal is closing.
+    /// Deliver output. Returns false once the terminal is closing. It
+    /// never blocks; a source that reads on its own thread calls
+    /// [`wait_for_room`](Self::wait_for_room) before each read so the
+    /// output waiting for the parser stays bounded.
     pub fn write(&self, bytes: &[u8]) -> bool {
         let mut mail = self.shared.lock();
         if self.shared.closing.load(Ordering::Acquire) {
             return false;
         }
         mail.reads.push_back(bytes.to_vec());
+        mail.read_bytes += bytes.len();
         mail.generation = mail.generation.wrapping_add(1);
         self.shared.wake.notify_one();
         true
+    }
+
+    /// Blocks while a megabyte of output waits for the parser, which then
+    /// holds the program back through the pty instead of filling memory.
+    /// Returns false once the terminal is closing. The engine never waits
+    /// on the source, so this always ends.
+    pub fn wait_for_room(&self) -> bool {
+        let mut mail = self.shared.lock();
+        while mail.read_bytes >= READ_QUEUE_BYTES && !self.shared.closing.load(Ordering::Acquire) {
+            mail = self
+                .shared
+                .room
+                .wait(mail)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        !self.shared.closing.load(Ordering::Acquire)
+    }
+
+    /// The program can take input again after a short
+    /// [`ByteHandle::write`]; wakes the engine to write the rest.
+    pub fn writable(&self) {
+        let mut mail = self.shared.lock();
+        mail.writable = true;
+        self.shared.bump(&mut mail);
     }
 
     /// The source reached end of file.
@@ -299,6 +339,10 @@ struct Mailbox {
     commands: VecDeque<TerminalInput>,
     bytes: usize,
     reads: VecDeque<Vec<u8>>,
+    /// The bytes in `reads`.
+    read_bytes: usize,
+    /// The source said it can take input again.
+    writable: bool,
     viewport: Option<Viewport>,
     visible: bool,
     credit: bool,
@@ -317,6 +361,8 @@ struct Mailbox {
 struct Shared {
     mailbox: Mutex<Mailbox>,
     wake: Condvar,
+    /// Signals a source in [`ByteSink::wait_for_room`].
+    room: Condvar,
     closing: AtomicBool,
 }
 
@@ -339,6 +385,12 @@ impl Shared {
     fn bump(&self, mail: &mut Mailbox) {
         mail.generation = mail.generation.wrapping_add(1);
         self.wake.notify_one();
+    }
+
+    /// Marks the terminal closing and frees a source waiting for room.
+    fn set_closing(&self) {
+        self.closing.store(true, Ordering::Release);
+        self.room.notify_all();
     }
 }
 
@@ -439,7 +491,7 @@ impl EngineHandle {
     /// Stop the program and the owner thread. Idempotent.
     pub fn close(&self) {
         let mut mail = self.shared.lock();
-        self.shared.closing.store(true, Ordering::Release);
+        self.shared.set_closing();
         self.shared.bump(&mut mail);
     }
 }
@@ -494,6 +546,7 @@ pub(crate) fn spawn(
             ..Mailbox::default()
         }),
         wake: Condvar::new(),
+        room: Condvar::new(),
         closing: AtomicBool::new(false),
     });
     let handle = EngineHandle {
@@ -508,7 +561,7 @@ pub(crate) fn spawn(
             let mut owner = match Owner::start(source, byte_sink, config, shared.clone(), &sink) {
                 Ok(owner) => owner,
                 Err(error) => {
-                    shared.closing.store(true, Ordering::Release);
+                    shared.set_closing();
                     sink.publish(Arc::new(TerminalSnapshot {
                         status: TerminalStatus::Failed(error.to_string()),
                         ..TerminalSnapshot::default()
@@ -664,7 +717,13 @@ struct Owner {
     handle: Box<dyn ByteHandle>,
     sink: FrameSink,
     snapshot: TerminalSnapshot,
+    /// Bytes that go ahead of input: replies to the program's queries and
+    /// interrupts.
+    urgent: Vec<u8>,
     pending: Option<PendingWrite>,
+    /// The source took less than it was given and has not said it has
+    /// room again.
+    write_blocked: bool,
     exit: Option<ExitStatus>,
     started: Instant,
     abnormal_exit_runtime: Duration,
@@ -692,9 +751,6 @@ impl Owner {
             .frame(true)?
             .ok_or_else(|| io::Error::other("initial terminal frame missing"))?;
         let handle = source.start(byte_sink, config.viewport)?;
-        if !config.input.is_empty() {
-            handle.write(&config.input)?;
-        }
         let snapshot = TerminalSnapshot {
             frame,
             status: TerminalStatus::Live,
@@ -715,7 +771,9 @@ impl Owner {
             handle,
             sink: sink.clone(),
             snapshot,
+            urgent: config.input.clone(),
             pending: None,
+            write_blocked: false,
             exit: None,
             started: Instant::now(),
             abnormal_exit_runtime: config.abnormal_exit_runtime,
@@ -761,6 +819,11 @@ impl Owner {
             } else {
                 None
             };
+            mail.read_bytes = 0;
+            self.shared.room.notify_all();
+            if std::mem::take(&mut mail.writable) {
+                self.write_blocked = false;
+            }
             (
                 std::mem::take(&mut mail.reads),
                 mail.viewport.take(),
@@ -833,7 +896,7 @@ impl Owner {
                 Vec::new()
             };
             bytes.extend(self.core.input(interrupt)?);
-            self.handle.write(&bytes)?;
+            self.urgent.extend(bytes);
             self.dirty = true;
         }
         if let Some(viewport) = viewport {
@@ -870,7 +933,7 @@ impl Owner {
         if let Some((selection, reply)) = copy {
             let _ = reply.try_send(self.core.copy(selection));
         }
-        self.advance_input()?;
+        self.flush()?;
         if eof
             && self.exit.is_none()
             && let Some(mut status) = self.handle.try_wait()?
@@ -915,9 +978,10 @@ impl Owner {
             let complete = self.core.compress();
             self.compression_deadline = (!complete).then(|| Instant::now() + COMPRESSION_STEP);
         }
-        if !had_work {
-            let delay = if self.pending.is_some() {
-                Some(Duration::from_millis(1))
+        let unsent = self.pending.is_some() || !self.urgent.is_empty();
+        if !had_work && !(unsent && !self.write_blocked) {
+            let delay = if unsent {
+                Some(WRITE_RETRY)
             } else if self.dirty && visible && credit {
                 self.core
                     .hold_remaining()
@@ -1023,27 +1087,51 @@ impl Owner {
         mail.bytes = mail.bytes.saturating_sub(budget);
     }
 
-    fn advance_input(&mut self) -> io::Result<()> {
-        let Some(pending) = &mut self.pending else {
+    /// Writes what the program takes now: the urgent bytes, then up to
+    /// [`WRITE_BURST`] of the pending input, resuming where the last short
+    /// write stopped.
+    fn flush(&mut self) -> io::Result<()> {
+        if self.write_blocked {
             return Ok(());
-        };
-        let end = (pending.offset + WRITE_CHUNK).min(pending.bytes.len());
-        let chunk = &pending.bytes[pending.offset..end];
-        self.handle.write(chunk)?;
-        pending.offset = end;
-        if pending.offset >= pending.bytes.len() {
-            let budget = pending.budget;
-            self.pending = None;
-            self.release(budget);
+        }
+        if !self.urgent.is_empty() {
+            let written = self.handle.write(&self.urgent)?;
+            self.urgent.drain(..written.min(self.urgent.len()));
+            if !self.urgent.is_empty() {
+                self.write_blocked = true;
+                return Ok(());
+            }
+        }
+        let mut burst = WRITE_BURST;
+        while burst > 0 {
+            let Some(pending) = &mut self.pending else {
+                break;
+            };
+            let end = (pending.offset + WRITE_CHUNK.min(burst)).min(pending.bytes.len());
+            let offered = end - pending.offset;
+            let written = self
+                .handle
+                .write(&pending.bytes[pending.offset..end])?
+                .min(offered);
+            pending.offset += written;
+            burst = burst.saturating_sub(written);
+            if pending.offset >= pending.bytes.len() {
+                let budget = pending.budget;
+                self.pending = None;
+                self.release(budget);
+                break;
+            }
+            if written < offered {
+                self.write_blocked = true;
+                break;
+            }
         }
         Ok(())
     }
 
     fn apply_effects(&mut self) -> io::Result<()> {
         let effects = std::mem::take(&mut self.effects);
-        if !effects.replies.is_empty() {
-            self.handle.write(&effects.replies)?;
-        }
+        self.urgent.extend_from_slice(&effects.replies);
         let mut changed = false;
         if effects.title_changed {
             self.snapshot.title = self.core.title().to_owned();
@@ -1080,12 +1168,13 @@ impl Owner {
     }
 
     fn cleanup(&mut self) {
-        self.shared.closing.store(true, Ordering::Release);
+        self.shared.set_closing();
         {
             let mut mail = self.shared.lock();
             mail.commands.clear();
             mail.bytes = 0;
             mail.reads.clear();
+            mail.read_bytes = 0;
         }
         self.pending = None;
         if self.core.parked.take().is_some() {

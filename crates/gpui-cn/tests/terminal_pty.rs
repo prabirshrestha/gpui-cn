@@ -260,3 +260,46 @@ fn the_foreground_process_follows_the_program_the_shell_runs() {
     assert_eq!(process.argv(), ["/bin/cat"]);
     handle.close();
 }
+
+#[test]
+fn a_large_paste_into_a_program_busy_writing_does_not_deadlock() {
+    let Some(shell) = shell() else {
+        eprintln!("skipping: no POSIX shell");
+        return;
+    };
+    // The program floods 8 MB of output before it reads any input, more
+    // than the engine queues and the pty buffers, so the paste and the
+    // output each wait on the other unless neither blocks the engine.
+    const PASTE: usize = 900_000;
+    let script = format!(
+        "stty raw -echo; echo RAW; sleep 0.2; head -c 8000000 /dev/zero | tr '\\0' x; echo; \
+         echo FLOODED; head -c {PASTE} | wc -c; echo DONE"
+    );
+    let options = LocalTerminalOptions::default()
+        .with_program(shell, ["-c", script.as_str()])
+        .with_shell_integration(ShellIntegration::None);
+    let (sink, wake) = FrameSink::new();
+    let handle = Box::new(Engine::new(
+        LocalPty::new(options),
+        EngineOptions::default(),
+    ))
+    .start(sink.clone(), StartOptions::default())
+    .unwrap();
+    // In canonical mode the line discipline drops a line this long.
+    wait_for(&sink, &wake, handle.as_ref(), |s| {
+        s.frame.text().contains("RAW")
+    });
+    handle
+        .input(gpui_cn::terminal::TerminalInput::Paste("y".repeat(PASTE)))
+        .unwrap();
+    let done = wait_for(&sink, &wake, handle.as_ref(), |s| {
+        s.frame.text().contains("DONE")
+    });
+    let text = done.frame.text();
+    assert!(text.contains("FLOODED"), "{text}");
+    assert!(
+        text.contains(&PASTE.to_string()),
+        "every pasted byte arrived:\n{text}"
+    );
+    handle.close();
+}

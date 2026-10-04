@@ -177,12 +177,12 @@ impl ByteSource for StreamSource {
 }
 
 impl ByteHandle for Handle {
-    fn write(&self, bytes: &[u8]) -> io::Result<()> {
+    fn write(&self, bytes: &[u8]) -> io::Result<usize> {
         let _ = self
             .shared
             .events
             .try_send(StreamEvent::Input(bytes.to_vec()));
-        Ok(())
+        Ok(bytes.len())
     }
 
     fn resize(&self, viewport: Viewport) -> io::Result<()> {
