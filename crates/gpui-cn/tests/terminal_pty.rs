@@ -99,3 +99,49 @@ fn a_resize_reaches_the_program_and_the_grid_together() {
     });
     assert!(matches!(exited.status, TerminalStatus::Exited(_)));
 }
+
+#[test]
+fn closing_the_terminal_ends_the_jobs_its_shell_started() {
+    let Some(shell) = shell() else {
+        eprintln!("skipping: no POSIX shell");
+        return;
+    };
+    // A job in its own process group, as a shell with job control starts it.
+    let options = LocalTerminalOptions::default()
+        .with_program(
+            shell,
+            ["-c", "set -m; sleep 300 & echo JOB $!; exec sleep 300"],
+        )
+        .with_shell_integration(ShellIntegration::None);
+    let (sink, wake) = FrameSink::new();
+    let handle = Box::new(Engine::new(
+        LocalPty::new(options),
+        EngineOptions::default(),
+    ))
+    .start(sink.clone(), StartOptions::default())
+    .unwrap();
+    let shown = wait_for(&sink, &wake, handle.as_ref(), |s| {
+        s.frame.text().contains("JOB ")
+    });
+    let job: i32 = shown
+        .frame
+        .text()
+        .split("JOB ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|pid| pid.parse().ok())
+        .expect("the job's pid");
+    let alive = |pid: i32| {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    assert!(alive(job));
+    handle.close();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(job) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!alive(job), "the job ended with the terminal");
+}

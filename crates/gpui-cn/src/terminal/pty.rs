@@ -235,9 +235,21 @@ impl ByteHandle for Handle {
             .child
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Ok(None) = child.try_wait() {
-            let _ = child.kill();
+        if !matches!(child.try_wait(), Ok(None)) {
+            return;
         }
+        // The shell leads its own session; its jobs end with it.
+        #[cfg(unix)]
+        if let Some(leader) = child
+            .process_id()
+            .and_then(|pid| libc::pid_t::try_from(pid).ok())
+        {
+            crate::terminal::process::end_session(leader, || {
+                matches!(child.try_wait(), Ok(Some(_)))
+            });
+            return;
+        }
+        let _ = child.kill();
     }
 }
 

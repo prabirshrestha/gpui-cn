@@ -147,6 +147,8 @@ mod keys;
 mod links;
 mod options;
 pub mod park;
+#[cfg(all(unix, not(any(target_os = "ios", target_os = "android"))))]
+mod process;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod pty;
 mod selection;
