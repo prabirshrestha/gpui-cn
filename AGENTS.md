@@ -7,14 +7,23 @@ tells users what the library does. This file tells you how to build it.
 
 gpui-cn is a shadcn-style component library for GPUI. It is built on
 `gpui-base` only, and its look is measured from a reference desktop app
-that this repository does not name. The workspace has three crates:
+that this repository does not name. The workspace has four crates:
 
 - `crates/gpui-cn` is the library. Never add `gpui-component` or use a
-  `gpui-component` type.
+  `gpui-component` type. Its `ghostty` feature adds the terminal in
+  `src/terminal`, and `ghostty-pty` adds a local pty to it.
 - `crates/gpui-cn-story` is the gallery. It uses gpui-cn components only,
   which makes it the first application that uses the library. Its
   `snapshot` binary renders the gallery to PNG files without a window, on
-  macOS. `cargo run` at the root opens it.
+  macOS. `cargo run` at the root opens it. Its default `terminal` feature
+  adds the Terminal story.
+- `crates/ghostty-vt-sys` builds libghostty-vt from the pinned Ghostty
+  source with Zig 0.16 and holds its raw bindings, which are generated and
+  committed. `crates/ghostty-vt` is the safe API on it. They have no GPUI
+  in them, have their own version, and release on `ghostty-vt-v*` tags.
+  Never patch the Ghostty source. Move the pin with `scripts/sync.sh`,
+  which keeps the submodule, `GHOSTTY.lock`, the bindings, the terminfo
+  database, and the shell integration scripts in step.
 
 ## Rules
 
@@ -98,6 +107,13 @@ crates. `theme/fonts.rs` registers them. The theme names font families,
 never font files. Bundle a font only from a crate with a clear license.
 Never copy a font file into the repository.
 
+The terminal's engine runs on its own thread and publishes frames; the
+element paints the latest frame and never blocks on the engine. Keep a
+terminal that is not painted at zero work: it gets no frame credit, so it
+builds no frames, and its cursor blink stops. A test drives a terminal
+through `FixtureSource`, never a real shell, except the pty test in
+`tests/terminal_pty.rs`.
+
 Icons come from the Lucide set in the gpui-kit-assets crate, as
 `IconName` values. The application registers `gpui_kit::assets::Assets`,
 which holds the names listed in `default-icons.txt` in that crate. Other
@@ -113,9 +129,12 @@ Every change must pass these commands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features
 cargo deny check licenses
 ```
+
+These need Zig 0.16 on `PATH` (see `mise.toml`) and, for a build without
+network, the `vendor/ghostty` submodule checked out.
 
 `deny.toml` lists the licenses this repository accepts. A crate that is
 only available under the GPL or the LGPL fails the check. Never add one.

@@ -1,10 +1,16 @@
 name: Release
 
 # Publishes a version tag through crates.io Trusted Publishing.
+#
+# - `v<version>` publishes gpui-cn at the workspace version.
+# - `ghostty-vt-v<version>` publishes ghostty-vt-sys, then ghostty-vt, at
+#   their own version. Release the engine before a gpui-cn version that
+#   needs it.
+#
 # Manual runs use the current workflow to recover an existing release tag.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "ghostty-vt-v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,7 +24,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish gpui-cn
+    name: Publish ${{ inputs.tag || github.ref_name }}
     runs-on: macos-latest
     permissions:
       contents: read
@@ -27,15 +33,29 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - name: Validate the release tag
+      - name: Pick the crates for the release tag
         run: |
-          [[ "$RELEASE_TAG" == v* ]] || { echo "expected a version tag"; exit 1; }
           git check-ref-format "refs/tags/$RELEASE_TAG"
+          case "$RELEASE_TAG" in
+            ghostty-vt-v*)
+              echo "CRATES=ghostty-vt-sys ghostty-vt" >> "$GITHUB_ENV"
+              echo "VERSION=${RELEASE_TAG#ghostty-vt-v}" >> "$GITHUB_ENV"
+              ;;
+            v*)
+              echo "CRATES=gpui-cn" >> "$GITHUB_ENV"
+              echo "VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "expected v<version> or ghostty-vt-v<version>"
+              exit 1
+              ;;
+          esac
       - uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
       - name: Check the release commit CI
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,15 +66,24 @@ jobs:
           gh run list --workflow ci.yml --branch main --commit "$sha" \
             --json conclusion --jq 'any(.[]; .conclusion == "success")' |
             grep -qx true
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Check the tag against the version
+      - name: Check the tag against the versions
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gpui-cn") | .version')
-          test "v$version" = "$RELEASE_TAG" || { echo "tag $RELEASE_TAG is not v$version"; exit 1; }
-      - run: cargo publish -p gpui-cn --dry-run --locked
+          for crate in $CRATES; do
+            version=$(cargo metadata --no-deps --format-version 1 | jq -r ".packages[] | select(.name == \"$crate\") | .version")
+            test "$version" = "$VERSION" || { echo "tag $RELEASE_TAG is not version $version of $crate"; exit 1; }
+          done
+      - name: Build the publish arguments
+        run: echo "PACKAGES=$(printf -- '-p %s ' $CRATES)" >> "$GITHUB_ENV"
+      - run: cargo publish $PACKAGES --dry-run --locked
       - name: Authenticate with crates.io
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
-      - run: cargo publish -p gpui-cn --locked
+      # Cargo publishes ghostty-vt-sys before ghostty-vt, which depends
+      # on it.
+      - run: cargo publish $PACKAGES --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

@@ -104,8 +104,16 @@ is built from gpui-cn components, so it is also the first application that
 uses the library.
 
 ```bash
+git submodule update --init
 cargo run
 ```
+
+The Terminal story runs your shell through Ghostty's terminal engine, so
+building the gallery needs [Zig](https://ziglang.org/download/) 0.16 on
+`PATH` (`mise install` picks it up from `mise.toml`). Without the
+submodule, the first build downloads the pinned Ghostty source instead.
+`cargo run --no-default-features` builds the gallery without the story
+and without Zig.
 
 Pick a story in the sidebar. Each story you pick is a page on the
 navigation stack, and the arrows in the title bar walk back and forward
@@ -161,17 +169,38 @@ Every change must pass these commands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features
 cargo deny check licenses
 ```
 
 `AGENTS.md` describes how the library is built and the rules a change
 must follow.
 
-To release, set the version in `Cargo.toml`, commit, and push a tag with
-the same version (`v0.1.0`). The `Release` workflow checks that the tag
-matches and runs `cargo publish -p gpui-cn`. Only `gpui-cn` is published;
-the gallery crates are marked `publish = false`.
+The workspace also holds the terminal engine that gpui-cn's `ghostty`
+feature uses: `ghostty-vt-sys` builds libghostty-vt from Ghostty's source
+with Zig and links it statically, and `ghostty-vt` is its safe API. The
+Ghostty pin is in `GHOSTTY.lock` and the `vendor/ghostty` submodule. To
+move it, which also regenerates the bindings, the terminfo database, and
+the shell integration scripts:
+
+```bash
+scripts/sync.sh <ghostty-commit>
+```
+
+The engine has two examples that need no GPUI:
+
+```bash
+cargo run -p ghostty-vt --example shell
+cargo run -p ghostty-vt --example demo -- 'ls --color=always'
+```
+
+To release gpui-cn, set the version in `Cargo.toml`, commit, and push a
+tag with the same version (`v0.1.0`). The `Release` workflow checks that
+the tag matches and runs `cargo publish -p gpui-cn`. The engine crates
+have their own version and release on a `ghostty-vt-v0.1.0` tag, which
+publishes `ghostty-vt-sys` and then `ghostty-vt`. Release the engine
+first when a gpui-cn release needs a new one. The gallery crate is marked
+`publish = false`.
 
 ## License
 
@@ -182,3 +211,7 @@ Apache-2.0. Third-party assets:
 - JetBrains Mono, used with the `jetbrains-mono` feature, comes from the
   `damascene-fonts-jetbrains-mono` crate under the SIL Open Font License
   1.1.
+- The terminal engine ships Ghostty's terminfo database and shell
+  integration scripts under Ghostty's MIT license (`LICENSE-GHOSTTY`).
+  `THIRD_PARTY_NOTICES.md` lists the code the terminal is adapted from
+  and the native libraries linked into libghostty-vt.
