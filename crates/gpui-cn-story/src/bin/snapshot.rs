@@ -196,6 +196,16 @@ mod macos {
                     })
                     .expect("hover a row");
                 }
+                if story == "Terminal" {
+                    // A pane's first frame arrives from its source a turn
+                    // after the pane opens, and the frame it paints asks
+                    // for the grid it measured.
+                    for _ in 0..3 {
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                            .expect("draw the panes");
+                    }
+                }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
                 if story == "Menu" {

@@ -167,9 +167,9 @@ pub struct TerminalColors {
     pub(crate) background: Rgb,
     /// Cursor color; `None` means the foreground.
     pub(crate) cursor: Option<Rgb>,
-    /// Selection background; `None` means the theme's selection color.
+    /// Selection background; `None` means the default foreground.
     pub(crate) selection_background: Option<Rgb>,
-    /// Selection foreground; `None` keeps each cell's foreground.
+    /// Selection foreground; `None` means the default background.
     pub(crate) selection_foreground: Option<Rgb>,
     /// The 256-color palette.
     pub(crate) palette: [Rgb; 256],
@@ -238,12 +238,14 @@ impl TerminalColors {
         self.cursor
     }
 
-    /// The selection background; `None` means the theme's selection color.
+    /// The selection background; `None` means the default foreground, as
+    /// in Ghostty.
     pub fn selection_background(&self) -> Option<Rgb> {
         self.selection_background
     }
 
-    /// The selection foreground; `None` keeps each cell's foreground.
+    /// The selection foreground; `None` means the default background, as
+    /// in Ghostty.
     pub fn selection_foreground(&self) -> Option<Rgb> {
         self.selection_foreground
     }
@@ -251,6 +253,26 @@ impl TerminalColors {
     /// The 256-color palette.
     pub fn palette(&self) -> &[Rgb; 256] {
         &self.palette
+    }
+
+    /// A gpui-cn theme config on these colors, for a [`ThemeScope`] that
+    /// draws the chrome around a terminal, such as its tab strip, in the
+    /// terminal's colors: the background is the surface and the
+    /// foreground the ink. The accent, contrast, fonts, and semantic colors
+    /// come from `theme`'s dark config on a dark background and its light
+    /// config otherwise.
+    ///
+    /// [`ThemeScope`]: crate::ThemeScope
+    pub fn theme_config(&self, theme: &crate::Theme) -> crate::ThemeConfig {
+        let surface = crate::terminal::colors::hsla(self.background);
+        let mut config = if crate::theme::lightness(surface) < 0.5 {
+            theme.dark.clone()
+        } else {
+            theme.light.clone()
+        };
+        config.surface = surface;
+        config.ink = crate::terminal::colors::hsla(self.foreground);
+        config
     }
 }
 
@@ -422,6 +444,19 @@ impl TerminalFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_colors_are_ghosttys_built_in_ones() {
+        // Ghostty's src/config/Config.zig at the pinned commit: `background`
+        // #282c34, `foreground` #ffffff, and no cursor or selection color.
+        let colors = TerminalColors::default();
+        assert_eq!(colors.background(), Rgb(0x28, 0x2c, 0x34));
+        assert_eq!(colors.foreground(), Rgb(0xff, 0xff, 0xff));
+        assert_eq!(colors.cursor(), None);
+        assert_eq!(colors.selection_background(), None);
+        assert_eq!(colors.selection_foreground(), None);
+        assert_eq!(colors.palette()[1], Rgb(0xcc, 0x66, 0x66));
+    }
 
     #[test]
     fn viewport_rejects_bad_sizes() {

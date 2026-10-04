@@ -34,14 +34,21 @@ impl<'a> Palette<'a> {
         self.colors.cursor.map_or_else(|| self.foreground(), hsla)
     }
 
-    /// The selection background: the configured one, or `fallback`, the
-    /// theme's selection color.
-    pub(crate) fn selection(self, fallback: Hsla) -> Hsla {
-        self.colors.selection_background.map_or(fallback, hsla)
+    /// The selection background: the configured one, or the default
+    /// foreground, as Ghostty inverts the window colors when no selection
+    /// color is set.
+    pub(crate) fn selection(self) -> Hsla {
+        self.colors
+            .selection_background
+            .map_or_else(|| self.foreground(), hsla)
     }
 
-    pub(crate) fn selection_foreground(self) -> Option<Hsla> {
-        self.colors.selection_foreground.map(hsla)
+    /// The selection foreground: the configured one, or the default
+    /// background, the other half of Ghostty's inversion.
+    pub(crate) fn selection_foreground(self) -> Hsla {
+        self.colors
+            .selection_foreground
+            .map_or_else(|| self.background(), hsla)
     }
 
     pub(crate) fn indexed(self, index: u8) -> Hsla {
@@ -122,6 +129,18 @@ mod tests {
         };
         let (foreground, background) = palette.style(&style);
         assert_eq!(foreground, background);
+    }
+
+    #[test]
+    fn an_unset_selection_inverts_the_window_colors_as_ghostty_does() {
+        let colors = colors();
+        let palette = Palette::new(&colors);
+        assert_eq!(palette.selection(), hsla(Rgb(200, 200, 200)));
+        assert_eq!(palette.selection_foreground(), hsla(Rgb(10, 10, 10)));
+        let set = colors.with_selection(Rgb(1, 2, 3), Rgb(4, 5, 6));
+        let palette = Palette::new(&set);
+        assert_eq!(palette.selection(), hsla(Rgb(1, 2, 3)));
+        assert_eq!(palette.selection_foreground(), hsla(Rgb(4, 5, 6)));
     }
 
     #[test]

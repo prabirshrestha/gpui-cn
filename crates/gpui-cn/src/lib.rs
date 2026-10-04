@@ -111,7 +111,7 @@ pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
 pub use tag::{Tag, TagVariant};
 pub use theme::{
-    ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
+    ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeScope, ThemeTokens,
 };
 pub use theme_mode_picker::ThemeModePicker;
 pub use title_bar::TitleBar;
@@ -141,7 +141,7 @@ pub mod prelude {
         SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
         SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner, Switch, Tab, Tabs,
         TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme, ThemeMode,
-        ThemeModePicker, TitleBar, TooltipExt,
+        ThemeModePicker, ThemeScope, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

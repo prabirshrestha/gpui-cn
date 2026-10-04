@@ -5,15 +5,17 @@ mod color;
 mod config;
 pub mod fonts;
 mod motion;
+mod scope;
 mod tokens;
 
 pub use color::{contrast_ratio, hex, lightness, mix, to_hex, try_hex};
 pub use config::{SemanticColors, ThemeConfig, ThemeFonts};
 pub use motion::MotionTokens;
+pub use scope::ThemeScope;
 pub use tokens::{MetricTokens, ThemeTokens};
 
 use gpui_kit::{
-    App, BorrowAppContext as _, Global, Pixels, Window, WindowAppearance,
+    App, BorrowAppContext as _, Global, Pixels, SharedString, Window, WindowAppearance,
     base::{self, ThemeAppearance},
     px,
 };
@@ -85,12 +87,26 @@ pub struct Theme {
 
     system_appearance: ThemeAppearance,
     tokens: ThemeTokens,
+    /// Token sets for parts of a window drawn on their own surface, keyed
+    /// by name. See [`ThemeScope`].
+    scopes: Vec<Scope>,
+    /// The scope the element being drawn is inside, an index into
+    /// `scopes`. A `Cell`, so entering a scope changes no global and wakes
+    /// no observer of the theme.
+    active_scope: std::cell::Cell<Option<usize>>,
     /// What `App::reduce_motion` held before gpui-cn first overrode it, so
     /// `ReduceMotion::System` can hand the flag back to base.
     reduce_motion_before_override: Option<bool>,
 }
 
 impl Global for Theme {}
+
+/// A named token set; see [`Theme::set_scope`].
+struct Scope {
+    key: SharedString,
+    config: ThemeConfig,
+    tokens: ThemeTokens,
+}
 
 impl Theme {
     /// Installs the theme and projects it onto `gpui_base::Theme`.
@@ -123,6 +139,8 @@ impl Theme {
             touch: metrics.touch,
             system_appearance,
             reduce_motion_before_override: None,
+            scopes: Vec::new(),
+            active_scope: std::cell::Cell::new(None),
         }
     }
 
@@ -140,6 +158,51 @@ impl Theme {
     /// The derived tokens for the active appearance.
     pub fn tokens(&self) -> &ThemeTokens {
         &self.tokens
+    }
+
+    /// The tokens a component reads: the scope's while it draws inside a
+    /// [`ThemeScope`], the active appearance's otherwise.
+    pub fn active_tokens(&self) -> &ThemeTokens {
+        self.active_scope
+            .get()
+            .and_then(|index| self.scopes.get(index))
+            .map_or(&self.tokens, |scope| &scope.tokens)
+    }
+
+    /// Registers or replaces the scope `key`: a part of the window drawn on
+    /// its own surface and ink, such as a terminal with its own colors.
+    /// Its tokens derive from `config` with this theme's sizes, and its
+    /// appearance follows the surface: dark when the surface's OKLab
+    /// lightness is under one half. They derive again whenever the theme
+    /// changes, so a font size change reaches them too.
+    pub fn set_scope(cx: &mut App, key: impl Into<SharedString>, config: ThemeConfig) {
+        let key = key.into();
+        Self::update(cx, |theme| {
+            if let Some(scope) = theme.scopes.iter_mut().find(|scope| scope.key == key) {
+                scope.config = config;
+            } else {
+                theme.scopes.push(Scope {
+                    key,
+                    tokens: theme.tokens.clone(),
+                    config,
+                });
+            }
+        });
+    }
+
+    /// The tokens of the scope `key`, if it is registered.
+    pub fn scope(&self, key: &str) -> Option<&ThemeTokens> {
+        self.scopes
+            .iter()
+            .find(|scope| scope.key.as_ref() == key)
+            .map(|scope| &scope.tokens)
+    }
+
+    /// The scope `key`'s index, for [`ThemeScope`].
+    fn scope_index(&self, key: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .position(|scope| scope.key.as_ref() == key)
     }
 
     /// The active appearance after resolving `mode`.
@@ -214,6 +277,14 @@ impl Theme {
             touch: self.touch,
         };
         self.tokens = ThemeTokens::derive(self.active_config(), self.appearance(), metrics);
+        for scope in &mut self.scopes {
+            let appearance = if lightness(scope.config.surface) < 0.5 {
+                ThemeAppearance::Dark
+            } else {
+                ThemeAppearance::Light
+            };
+            scope.tokens = ThemeTokens::derive(&scope.config, appearance, metrics);
+        }
         self.sync_base(cx);
         self.apply_reduce_motion(cx);
     }
@@ -303,7 +374,7 @@ pub trait ActiveTheme {
 impl ActiveTheme for App {
     #[inline(always)]
     fn theme(&self) -> &ThemeTokens {
-        Theme::global(self).tokens()
+        Theme::global(self).active_tokens()
     }
 }
 

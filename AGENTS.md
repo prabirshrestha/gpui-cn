@@ -40,7 +40,10 @@ that this repository does not name. The workspace has four crates:
    The rem helpers such as `px_2`, `gap_1`, and `size_4` are the spacing
    scale, and a 1px hairline is fine. Any other value is a token. Add it to
    `crates/gpui-cn/src/theme/tokens.rs` with a doc comment that says where
-   the value comes from.
+   the value comes from. A part of a window drawn on its own surface, such
+   as the chrome around a terminal in the terminal's colors, registers a
+   config with `Theme::set_scope` and wraps that subtree in `ThemeScope`,
+   so the components inside read the scope through `cx.theme()`.
 3. Measure the reference app. Do not guess. To make a visual decision,
    capture its window with `screencapture -l <window id>`, sample the
    pixels, and record the value in the token's doc comment and in a test

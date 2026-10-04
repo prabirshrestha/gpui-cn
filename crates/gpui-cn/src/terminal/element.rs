@@ -221,7 +221,6 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
         move |bounds, window, cx| {
             let theme = cx.theme();
             let look = Look {
-                selection: theme.selection(),
                 cursor_thickness: theme.metrics.terminal_cursor_thickness,
                 cursor_opacity: theme.terminal_cursor_opacity,
             };
@@ -341,7 +340,6 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
 /// The theme values the paint phase needs.
 #[derive(Clone, Copy)]
 struct Look {
-    selection: Hsla,
     cursor_thickness: Pixels,
     cursor_opacity: f32,
 }
@@ -376,7 +374,7 @@ fn prepare(
     let palette = Palette::new(&frame.colors);
     let mut painting = Painting {
         cell_height: geometry.cell.height,
-        selection: palette.selection(look.selection),
+        selection: palette.selection(),
         cursor_thickness: look.cursor_thickness,
         cursor_opacity: look.cursor_opacity,
         ..Painting::default()
@@ -501,7 +499,7 @@ fn prepare_row(
             let cell_end = cell.column.saturating_add(u16::from(cell.width)).min(end);
             let cell_bounds = geometry.span_bounds(cell.column..cell_end, row_index);
             let color = if selected.start < cell_end && cell.column < selected.end {
-                palette.selection_foreground().unwrap_or(foreground)
+                palette.selection_foreground()
             } else {
                 foreground
             };
@@ -540,14 +538,12 @@ fn prepare_row(
                 continue;
             }
             let color = if in_selection {
-                palette.selection_foreground().unwrap_or(foreground)
+                palette.selection_foreground()
             } else {
                 foreground
             };
             let underline = if in_selection {
-                palette
-                    .selection_foreground()
-                    .unwrap_or_else(|| palette.underline(&run.style))
+                palette.selection_foreground()
             } else {
                 palette.underline(&run.style)
             };

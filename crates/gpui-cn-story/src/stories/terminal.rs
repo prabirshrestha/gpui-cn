@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 
+use std::path::PathBuf;
+
 use gpui_cn::terminal::{
-    FixtureSource, LocalTerminalOptions, Terminal, TerminalConfig, TerminalEvent, TerminalState,
-    WorkingDirectory,
+    FixtureSource, LocalTerminalOptions, Terminal, TerminalColors, TerminalConfig, TerminalEvent,
+    TerminalState, WorkingDirectory,
 };
-use gpui_cn::{ActiveTheme as _, Tab, Tabs, TabsEvent, TabsState, gpui_kit::assets::IconName};
+use gpui_cn::{
+    ActiveTheme as _, Select, SelectEvent, SelectItem, SelectState, Tab, Tabs, TabsEvent,
+    TabsState, Theme, ThemeScope, ThemeTokens, gpui_kit::assets::IconName,
+};
 use gpui_kit::{
     Action, AnyView, App, AppContext as _, Axis, Context, ElementId, Entity, Global,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
@@ -288,9 +293,53 @@ struct TabPanes {
     focused: PaneId,
 }
 
+/// Where Ghostty keeps theme files: the user's own, then the ones the
+/// application ships.
+fn theme_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        dirs.push(home.join(".config/ghostty/themes"));
+        dirs.push(home.join(".local/share/ghostty/themes"));
+    }
+    dirs.push(PathBuf::from(
+        "/Applications/Ghostty.app/Contents/Resources/ghostty/themes",
+    ));
+    dirs.push(PathBuf::from("/usr/share/ghostty/themes"));
+    dirs
+}
+
+/// The Ghostty theme names on this machine, sorted, without duplicates.
+fn installed_themes() -> Vec<String> {
+    let mut names: Vec<String> = theme_dirs()
+        .into_iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names.dedup();
+    names
+}
+
+/// Reads the Ghostty theme `name` from the first theme directory that has
+/// it.
+fn read_theme(name: &str) -> Option<TerminalColors> {
+    theme_dirs()
+        .into_iter()
+        .find_map(|dir| std::fs::read_to_string(dir.join(name)).ok())
+        .and_then(|text| TerminalColors::from_ghostty_theme(&text).ok())
+}
+
+/// The value of the theme picker's first row: Ghostty's built-in colors.
+const DEFAULT_THEME: &str = "";
+
 /// Terminal tabs with splits and tmux-style leader keys, each pane a shell.
 pub struct TerminalStory {
     tabs: Entity<TabsState>,
+    /// The Ghostty theme every pane and the tab strip draw with.
+    colors: TerminalColors,
+    themes: Entity<SelectState<SharedString>>,
     layouts: HashMap<SharedString, TabPanes>,
     panes: HashMap<PaneId, Entity<TerminalState>>,
     next_pane: u64,
@@ -313,6 +362,43 @@ impl Story for TerminalStory {
     fn view(window: &mut Window, cx: &mut App) -> AnyView {
         bind_keys(cx);
         cx.new(|cx| {
+            // A fixture run lists no themes, so its pictures do not depend
+            // on the machine.
+            let names = if cx.has_global::<Fixtures>() {
+                Vec::new()
+            } else {
+                installed_themes()
+            };
+            let themes = cx.new(|cx| {
+                SelectState::new(
+                    std::iter::once(SelectItem::new(
+                        SharedString::from(DEFAULT_THEME),
+                        "Ghostty default",
+                    ))
+                    .chain(
+                        names
+                            .into_iter()
+                            .map(|name| SelectItem::new(SharedString::from(name.clone()), name)),
+                    ),
+                    cx,
+                )
+                .with_selected([SharedString::from(DEFAULT_THEME)])
+                .with_search("Search themes", window, cx)
+            });
+            cx.observe(&themes, |_, _, cx| cx.notify()).detach();
+            cx.subscribe(&themes, |this: &mut Self, _, event, cx| {
+                if let SelectEvent::Changed(names) = event
+                    && let Some(name) = names.first()
+                {
+                    let colors = if name.is_empty() {
+                        TerminalColors::default()
+                    } else {
+                        read_theme(name).unwrap_or_default()
+                    };
+                    this.set_colors(colors, cx);
+                }
+            })
+            .detach();
             let tabs = cx.new(|_| TabsState::new([]));
             cx.observe(&tabs, |_, _, cx| cx.notify()).detach();
             cx.subscribe_in(
@@ -328,11 +414,14 @@ impl Story for TerminalStory {
             .detach();
             let mut story = Self {
                 tabs,
+                colors: TerminalColors::default(),
+                themes,
                 layouts: HashMap::new(),
                 panes: HashMap::new(),
                 next_pane: 0,
                 next_tab: 0,
             };
+            story.set_colors(TerminalColors::default(), cx);
             story.new_tab(window, cx);
             story
         })
@@ -341,6 +430,38 @@ impl Story for TerminalStory {
 }
 
 impl TerminalStory {
+    /// The theme scope the tab strip and the panes draw in.
+    pub const SCOPE: &'static str = "terminal-story";
+
+    /// Draws every pane and the tab strip with `colors`: the panes take
+    /// them as their terminal colors, and the strip a gpui-cn theme derived
+    /// from them, so the two read as one surface.
+    pub fn set_colors(&mut self, colors: TerminalColors, cx: &mut Context<Self>) {
+        let config = colors.theme_config(Theme::global(cx));
+        Theme::set_scope(cx, Self::SCOPE, config);
+        for terminal in self.panes.values() {
+            let colors = colors.clone();
+            terminal.update(cx, |terminal, cx| terminal.set_colors(colors, cx));
+        }
+        self.colors = colors;
+        cx.notify();
+    }
+
+    /// The colors the panes draw with.
+    pub fn colors(&self) -> &TerminalColors {
+        &self.colors
+    }
+
+    /// Every pane's terminal, in no order.
+    pub fn terminals(&self) -> Vec<Entity<TerminalState>> {
+        self.panes.values().cloned().collect()
+    }
+
+    /// The tokens the tab strip draws with.
+    fn tokens<'a>(&self, cx: &'a App) -> &'a ThemeTokens {
+        Theme::global(cx).scope(Self::SCOPE).unwrap_or(cx.theme())
+    }
+
     /// Makes every pane opened from now on render canned output instead of
     /// running a shell. The snapshot and benchmark binaries call it, so
     /// their pictures and numbers do not depend on the user's shell.
@@ -366,18 +487,14 @@ impl TerminalStory {
             .and_then(|terminal| terminal.read(cx).cwd().map(Into::into))
             .map_or(WorkingDirectory::Home, WorkingDirectory::Path);
         let fixtures = cx.has_global::<Fixtures>();
+        let config = TerminalConfig::default().with_colors(self.colors.clone());
         let terminal = cx.new(|cx| {
             if fixtures {
-                TerminalState::new(
-                    FixtureSource::new(FIXTURE),
-                    TerminalConfig::default(),
-                    window,
-                    cx,
-                )
+                TerminalState::new(FixtureSource::new(FIXTURE), config, window, cx)
             } else {
                 TerminalState::local(
                     LocalTerminalOptions::default().with_cwd(cwd),
-                    TerminalConfig::default(),
+                    config,
                     window,
                     cx,
                 )
@@ -569,7 +686,7 @@ impl TerminalStory {
     }
 
     fn render_node(&self, node: &Node, focused: PaneId, split: bool, cx: &App) -> gpui_kit::Div {
-        let theme = cx.theme();
+        let theme = self.tokens(cx);
         match node {
             // In a split, a hairline frames each pane and the focused one
             // takes the ring color.
@@ -609,8 +726,11 @@ impl TerminalStory {
 
 impl Render for TerminalStory {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let bar = theme.metrics.title_bar;
+        let bar = cx.theme().metrics.title_bar;
+        let (background, border) = {
+            let tokens = self.tokens(cx);
+            (tokens.background(), tokens.border())
+        };
         let body = self
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
@@ -639,6 +759,12 @@ impl Render for TerminalStory {
                     cx,
                 ))
                 .child(note(leader, cx))
+                .child(
+                    div().w(px(280.)).child(
+                        Select::new("terminal-theme", &self.themes)
+                            .accessibility_label("Terminal theme"),
+                    ),
+                )
                 .child(
                     frame(px(480.), cx)
                         .key_context(CONTEXT)
@@ -684,13 +810,19 @@ impl Render for TerminalStory {
                         .on_action(cx.listener(|this, _: &SendLeader, _, cx| {
                             this.send_leader(cx);
                         }))
-                        .child(
+                        .bg(background)
+                        .border_color(border)
+                        // The strip and its controls draw in the
+                        // terminal's colors, so a theme change reaches
+                        // both.
+                        .child(ThemeScope::new(
+                            Self::SCOPE,
                             div()
                                 .h(bar)
                                 .w_full()
                                 .flex_shrink_0()
                                 .child(Tabs::new("terminal-tabs", &self.tabs)),
-                        )
+                        ))
                         .child(div().flex().flex_1().min_h_0().children(body)),
                 ),
         )])
