@@ -1,0 +1,868 @@
+//! The owner thread: one thread per terminal that owns the Ghostty state,
+//! parses output, encodes input and publishes frames.
+//!
+//! The thread sleeps on its mailbox. It wakes for output from the byte
+//! source, for input, resizes and visibility changes, and for its timers
+//! (scrollback compression, the render hold watchdog). A frame is built
+//! only when the UI has granted a credit, so a terminal that is not painted
+//! stops producing frames while it keeps parsing.
+//!
+//! Adapted from tt v2 (Apache-2.0), src/local_terminal/runtime.rs, itself
+//! derived from Herdr.
+
+use std::collections::VecDeque;
+use std::io;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use gpui_kit::base::async_util;
+
+use crate::terminal::core::{Core, Effects};
+use crate::terminal::frame::{CellSelection, CursorShape, TerminalColors, TerminalFrame, Viewport};
+use crate::terminal::input::TerminalInput;
+use crate::terminal::options::EngineOptions;
+use crate::terminal::source::{FrameHandle, FrameSink, FrameSource, StartOptions};
+
+const INPUT_BYTES: usize = 1 << 20;
+const INPUT_COMMANDS: usize = 256;
+const WRITE_CHUNK: usize = 8192;
+const COMPRESSION_IDLE: Duration = Duration::from_millis(250);
+const COMPRESSION_STEP: Duration = Duration::from_millis(16);
+
+/// How a program ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExitStatus {
+    pub(crate) code: Option<i32>,
+    pub(crate) signal: Option<String>,
+    pub(crate) runtime: Duration,
+    pub(crate) abnormal: bool,
+}
+
+impl ExitStatus {
+    /// An exit with `code`, or by `signal` when a signal ended the program.
+    /// The engine fills in the run time.
+    pub fn new(code: Option<i32>, signal: Option<impl Into<String>>) -> Self {
+        Self {
+            code,
+            signal: signal.map(Into::into),
+            runtime: Duration::ZERO,
+            abnormal: false,
+        }
+    }
+
+    /// The exit code, `None` when a signal ended the program.
+    pub fn code(&self) -> Option<i32> {
+        self.code
+    }
+
+    /// The signal name, when a signal ended the program.
+    pub fn signal(&self) -> Option<&str> {
+        self.signal.as_deref()
+    }
+
+    /// How long the program ran.
+    pub fn runtime(&self) -> Duration {
+        self.runtime
+    }
+
+    /// Whether the run was shorter than the abnormal-exit threshold.
+    pub fn is_abnormal(&self) -> bool {
+        self.abnormal
+    }
+}
+
+/// The state of a terminal's program.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TerminalStatus {
+    /// The program has not started yet.
+    #[default]
+    Starting,
+    /// The program is running.
+    Live,
+    /// The program ended.
+    Exited(ExitStatus),
+    /// The terminal could not start or the engine failed.
+    Failed(String),
+}
+
+/// The latest published terminal state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TerminalSnapshot {
+    /// The frame.
+    pub frame: Arc<TerminalFrame>,
+    /// The program's state.
+    pub status: TerminalStatus,
+    /// The title the program set.
+    pub title: String,
+    /// The working directory the program reported.
+    pub cwd: Option<PathBuf>,
+    /// Bells received so far.
+    pub bell_count: u64,
+    /// Increments per clipboard write.
+    pub clipboard_sequence: u64,
+    /// The last clipboard write.
+    pub clipboard: Option<Arc<str>>,
+    /// Increments per desktop notification.
+    pub notification_sequence: u64,
+    /// The last desktop notification as title and body.
+    pub notification: Option<(Arc<str>, Arc<str>)>,
+    /// Whether the cursor was at a shell prompt when the frame was built.
+    pub at_prompt: bool,
+}
+
+impl TerminalSnapshot {
+    /// A snapshot holding only a frame, for fixtures and tests.
+    #[must_use]
+    pub fn for_frame(frame: Arc<TerminalFrame>) -> Self {
+        Self {
+            frame,
+            status: TerminalStatus::Live,
+            ..Self::default()
+        }
+    }
+}
+
+/// A source of terminal output that also accepts the program's input.
+///
+/// The engine calls [`ByteSource::start`] on its owner thread and pumps
+/// everything the source writes to the [`ByteSink`] through the terminal.
+pub trait ByteSource: Send + 'static {
+    /// Start producing output into `sink` at `viewport` and return the
+    /// handle for input.
+    fn start(
+        self: Box<Self>,
+        sink: ByteSink,
+        viewport: Viewport,
+    ) -> io::Result<Box<dyn ByteHandle>>;
+}
+
+/// The engine's side of a byte source.
+pub trait ByteHandle: Send {
+    /// Write input for the program. Must accept the whole slice.
+    fn write(&self, bytes: &[u8]) -> io::Result<()>;
+    /// The grid changed.
+    fn resize(&self, viewport: Viewport) -> io::Result<()>;
+    /// Whether the program ended, and how.
+    fn try_wait(&self) -> io::Result<Option<ExitStatus>>;
+    /// Stop the program and release the source.
+    fn close(&self);
+}
+
+/// Where a [`ByteSource`] writes its output.
+#[derive(Clone, Debug)]
+pub struct ByteSink {
+    shared: Arc<Shared>,
+}
+
+impl ByteSink {
+    /// Deliver output. Returns false once the terminal is closing.
+    pub fn write(&self, bytes: &[u8]) -> bool {
+        let mut mail = self.shared.lock();
+        if self.shared.closing.load(Ordering::Acquire) {
+            return false;
+        }
+        mail.reads.push_back(bytes.to_vec());
+        mail.generation = mail.generation.wrapping_add(1);
+        self.shared.wake.notify_one();
+        true
+    }
+
+    /// The source reached end of file.
+    pub fn finished(&self) {
+        let mut mail = self.shared.lock();
+        mail.reader_exited = true;
+        mail.generation = mail.generation.wrapping_add(1);
+        self.shared.wake.notify_one();
+    }
+}
+
+/// Why an input was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputRejected {
+    /// The bounded input queue is full; try again after a frame.
+    QueueFull,
+    /// The terminal is closed.
+    Closed,
+}
+
+impl std::fmt::Display for InputRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::QueueFull => f.write_str("terminal input queue is full"),
+            Self::Closed => f.write_str("terminal is closed"),
+        }
+    }
+}
+
+impl std::error::Error for InputRejected {}
+
+#[derive(Default)]
+struct Mailbox {
+    commands: VecDeque<TerminalInput>,
+    bytes: usize,
+    reads: VecDeque<Vec<u8>>,
+    viewport: Option<Viewport>,
+    visible: bool,
+    credit: bool,
+    reader_exited: bool,
+    reveal: bool,
+    interrupt: Option<TerminalInput>,
+    copy: Option<(CellSelection, async_util::Sender<io::Result<String>>)>,
+    cursor: Option<(CursorShape, bool)>,
+    colors: Option<TerminalColors>,
+    generation: u64,
+}
+
+#[derive(Debug)]
+struct Shared {
+    mailbox: Mutex<Mailbox>,
+    wake: Condvar,
+    closing: AtomicBool,
+}
+
+impl std::fmt::Debug for Mailbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mailbox")
+            .field("commands", &self.commands.len())
+            .field("reads", &self.reads.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Shared {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Mailbox> {
+        self.mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn bump(&self, mail: &mut Mailbox) {
+        mail.generation = mail.generation.wrapping_add(1);
+        self.wake.notify_one();
+    }
+}
+
+/// The UI's handle to a running engine.
+///
+/// Every method is cheap and never blocks on the owner thread.
+#[derive(Clone, Debug)]
+pub(crate) struct EngineHandle {
+    shared: Arc<Shared>,
+}
+
+impl EngineHandle {
+    /// Queue input. Ctrl+C jumps the queue and discards pending input.
+    pub fn input(&self, input: TerminalInput) -> Result<(), InputRejected> {
+        let mut mail = self.shared.lock();
+        if self.shared.closing.load(Ordering::Acquire) {
+            return Err(InputRejected::Closed);
+        }
+        if input.is_interrupt() {
+            let discarded: usize = mail.commands.iter().map(TerminalInput::budget).sum();
+            mail.commands.clear();
+            mail.bytes = mail.bytes.saturating_sub(discarded);
+            mail.interrupt = Some(input);
+            self.shared.bump(&mut mail);
+            return Ok(());
+        }
+        let budget = input.budget();
+        if mail.commands.len() >= INPUT_COMMANDS || budget > INPUT_BYTES.saturating_sub(mail.bytes)
+        {
+            return Err(InputRejected::QueueFull);
+        }
+        mail.bytes += budget;
+        mail.commands.push_back(input);
+        self.shared.bump(&mut mail);
+        Ok(())
+    }
+
+    /// Queued input bytes not yet written to the program.
+    #[must_use]
+    pub fn input_backlog(&self) -> usize {
+        self.shared.lock().bytes
+    }
+
+    /// Change the grid.
+    pub fn resize(&self, viewport: Viewport) {
+        let mut mail = self.shared.lock();
+        mail.viewport = Some(viewport);
+        self.shared.bump(&mut mail);
+    }
+
+    /// Tell the engine whether the terminal is painted. A hidden terminal
+    /// keeps parsing but builds no frames; revealing it builds one at once.
+    pub fn set_visible(&self, visible: bool) {
+        let mut mail = self.shared.lock();
+        if mail.visible != visible {
+            mail.visible = visible;
+            mail.credit = visible;
+            mail.reveal = visible;
+            self.shared.bump(&mut mail);
+        }
+    }
+
+    /// Grant one frame of credit. The UI calls this after it painted the
+    /// last frame.
+    pub fn request_frame(&self) {
+        let mut mail = self.shared.lock();
+        if !mail.credit {
+            mail.credit = true;
+            self.shared.bump(&mut mail);
+        }
+    }
+
+    /// Set the default cursor shape and blink.
+    pub fn set_cursor(&self, shape: CursorShape, blinking: bool) {
+        let mut mail = self.shared.lock();
+        mail.cursor = Some((shape, blinking));
+        self.shared.bump(&mut mail);
+    }
+
+    /// Change the default colors. The next frame carries them.
+    pub fn set_colors(&self, colors: TerminalColors) {
+        let mut mail = self.shared.lock();
+        mail.colors = Some(colors);
+        self.shared.bump(&mut mail);
+    }
+
+    /// Ask the owner thread for the selected text. The answer arrives on the
+    /// returned receiver.
+    pub fn copy(&self, selection: CellSelection) -> async_util::Receiver<io::Result<String>> {
+        let (tx, rx) = async_util::unbounded();
+        let mut mail = self.shared.lock();
+        mail.copy = Some((selection, tx));
+        self.shared.bump(&mut mail);
+        rx
+    }
+
+    /// Stop the program and the owner thread. Idempotent.
+    pub fn close(&self) {
+        let mut mail = self.shared.lock();
+        self.shared.closing.store(true, Ordering::Release);
+        self.shared.bump(&mut mail);
+    }
+}
+
+/// Everything needed to start an engine.
+#[derive(Debug)]
+pub(crate) struct EngineConfig {
+    /// Engine limits.
+    pub options: EngineOptions,
+    /// The initial grid.
+    pub viewport: Viewport,
+    /// The initial colors.
+    pub colors: TerminalColors,
+    /// Whether the terminal starts visible.
+    pub visible: bool,
+    /// The default cursor.
+    pub cursor: Option<(CursorShape, bool)>,
+    /// Bytes written to the program right after it starts.
+    pub input: Vec<u8>,
+    /// A run shorter than this is an abnormal exit.
+    pub abnormal_exit_runtime: Duration,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            options: EngineOptions::default(),
+            viewport: Viewport::default(),
+            colors: TerminalColors::default(),
+            visible: true,
+            cursor: None,
+            input: Vec::new(),
+            abnormal_exit_runtime: Duration::from_millis(250),
+        }
+    }
+}
+
+/// Start an owner thread for `source`, publishing to `sink`.
+///
+/// The first snapshot is published as soon as the source started.
+pub(crate) fn spawn(
+    source: Box<dyn ByteSource>,
+    config: EngineConfig,
+    sink: FrameSink,
+) -> io::Result<EngineHandle> {
+    let shared = Arc::new(Shared {
+        mailbox: Mutex::new(Mailbox {
+            visible: config.visible,
+            credit: true,
+            ..Mailbox::default()
+        }),
+        wake: Condvar::new(),
+        closing: AtomicBool::new(false),
+    });
+    let handle = EngineHandle {
+        shared: shared.clone(),
+    };
+    let byte_sink = ByteSink {
+        shared: shared.clone(),
+    };
+    std::thread::Builder::new()
+        .name("gpui-cn-terminal".to_owned())
+        .spawn(move || {
+            let mut owner = match Owner::start(source, byte_sink, config, shared.clone(), &sink) {
+                Ok(owner) => owner,
+                Err(error) => {
+                    shared.closing.store(true, Ordering::Release);
+                    sink.publish(Arc::new(TerminalSnapshot {
+                        status: TerminalStatus::Failed(error.to_string()),
+                        ..TerminalSnapshot::default()
+                    }));
+                    return;
+                }
+            };
+            owner.run();
+        })?;
+    Ok(handle)
+}
+
+/// A [`FrameSource`] that runs a [`ByteSource`] through the engine.
+#[derive(Debug)]
+pub struct Engine<S> {
+    source: S,
+    options: EngineOptions,
+    abnormal_exit_runtime: Duration,
+    input: Vec<u8>,
+}
+
+impl<S: ByteSource> Engine<S> {
+    /// An engine for `source` with `options`.
+    #[must_use]
+    pub fn new(source: S, options: EngineOptions) -> Self {
+        Self {
+            source,
+            options,
+            abnormal_exit_runtime: Duration::from_millis(250),
+            input: Vec::new(),
+        }
+    }
+
+    /// Set the run time under which an exit is reported as abnormal.
+    #[must_use]
+    pub fn with_abnormal_exit_runtime(mut self, runtime: Duration) -> Self {
+        self.abnormal_exit_runtime = runtime;
+        self
+    }
+
+    /// Set bytes written to the program right after it starts.
+    #[must_use]
+    pub fn with_input(mut self, input: impl Into<Vec<u8>>) -> Self {
+        self.input = input.into();
+        self
+    }
+}
+
+impl<S: ByteSource> FrameSource for Engine<S> {
+    fn start(
+        self: Box<Self>,
+        sink: FrameSink,
+        options: StartOptions,
+    ) -> io::Result<Box<dyn FrameHandle>> {
+        let handle = spawn(
+            Box::new(self.source),
+            EngineConfig {
+                options: self.options,
+                viewport: options.viewport,
+                colors: options.colors,
+                visible: options.visible,
+                cursor: options.cursor,
+                input: self.input,
+                abnormal_exit_runtime: self.abnormal_exit_runtime,
+            },
+            sink,
+        )?;
+        Ok(Box::new(handle))
+    }
+}
+
+impl FrameHandle for EngineHandle {
+    fn input(&self, input: TerminalInput) -> Result<(), InputRejected> {
+        Self::input(self, input)
+    }
+
+    fn input_backlog(&self) -> usize {
+        Self::input_backlog(self)
+    }
+
+    fn resize(&self, viewport: Viewport) {
+        Self::resize(self, viewport);
+    }
+
+    fn set_visible(&self, visible: bool) {
+        Self::set_visible(self, visible);
+    }
+
+    fn request_frame(&self) {
+        Self::request_frame(self);
+    }
+
+    fn set_colors(&self, colors: TerminalColors) {
+        Self::set_colors(self, colors);
+    }
+
+    fn set_cursor(&self, shape: CursorShape, blinking: bool) {
+        Self::set_cursor(self, shape, blinking);
+    }
+
+    fn copy(&self, selection: CellSelection) -> Option<async_util::Receiver<io::Result<String>>> {
+        Some(Self::copy(self, selection))
+    }
+
+    fn close(&self) {
+        Self::close(self);
+    }
+}
+
+struct PendingWrite {
+    bytes: Vec<u8>,
+    offset: usize,
+    budget: usize,
+    paste: bool,
+}
+
+struct Owner {
+    shared: Arc<Shared>,
+    core: Core,
+    handle: Box<dyn ByteHandle>,
+    sink: FrameSink,
+    snapshot: TerminalSnapshot,
+    pending: Option<PendingWrite>,
+    exit: Option<ExitStatus>,
+    started: Instant,
+    abnormal_exit_runtime: Duration,
+    compression_deadline: Option<Instant>,
+    dirty: bool,
+    force: bool,
+    effects: Effects,
+}
+
+impl Owner {
+    fn start(
+        source: Box<dyn ByteSource>,
+        byte_sink: ByteSink,
+        config: EngineConfig,
+        shared: Arc<Shared>,
+        sink: &FrameSink,
+    ) -> io::Result<Self> {
+        let mut core = Core::new(config.viewport, &config.options, config.colors)?;
+        if let Some((shape, blinking)) = config.cursor {
+            core.set_cursor(shape, blinking)?;
+        }
+        let frame = core
+            .frame(true)?
+            .ok_or_else(|| io::Error::other("initial terminal frame missing"))?;
+        let handle = source.start(byte_sink, config.viewport)?;
+        if !config.input.is_empty() {
+            handle.write(&config.input)?;
+        }
+        let snapshot = TerminalSnapshot {
+            frame,
+            status: TerminalStatus::Live,
+            ..TerminalSnapshot::default()
+        };
+        sink.publish(Arc::new(snapshot.clone()));
+        Ok(Self {
+            shared,
+            core,
+            handle,
+            sink: sink.clone(),
+            snapshot,
+            pending: None,
+            exit: None,
+            started: Instant::now(),
+            abnormal_exit_runtime: config.abnormal_exit_runtime,
+            compression_deadline: None,
+            dirty: true,
+            force: false,
+            effects: Effects::default(),
+        })
+    }
+
+    fn run(&mut self) {
+        while !self.shared.closing.load(Ordering::Acquire) {
+            if let Err(error) = self.turn() {
+                self.snapshot.status = TerminalStatus::Failed(error.to_string());
+                self.publish();
+                break;
+            }
+        }
+        self.cleanup();
+    }
+
+    fn turn(&mut self) -> io::Result<()> {
+        let (
+            reads,
+            viewport,
+            command,
+            visible,
+            credit,
+            eof,
+            reveal,
+            interrupt,
+            copy,
+            cursor,
+            colors,
+            generation,
+        ) = {
+            let mut mail = self.shared.lock();
+            let interrupt = mail.interrupt.take();
+            let command = if interrupt.is_none() && self.pending.is_none() {
+                mail.commands.pop_front()
+            } else {
+                None
+            };
+            (
+                std::mem::take(&mut mail.reads),
+                mail.viewport.take(),
+                command,
+                mail.visible,
+                mail.credit,
+                mail.reader_exited,
+                std::mem::take(&mut mail.reveal),
+                interrupt,
+                mail.copy.take(),
+                mail.cursor.take(),
+                mail.colors.take(),
+                mail.generation,
+            )
+        };
+        let had_work = !reads.is_empty()
+            || viewport.is_some()
+            || command.is_some()
+            || reveal
+            || interrupt.is_some()
+            || copy.is_some()
+            || cursor.is_some()
+            || colors.is_some();
+        if reveal {
+            self.dirty = true;
+            self.force = true;
+        }
+        if let Some((shape, blinking)) = cursor {
+            self.core.set_cursor(shape, blinking)?;
+            self.dirty = true;
+        }
+        if let Some(colors) = colors {
+            self.core.set_colors(colors)?;
+            self.dirty = true;
+            self.force = true;
+        }
+        if !reads.is_empty() {
+            for chunk in reads {
+                self.core.write(&chunk, &mut self.effects);
+            }
+            self.compression_deadline = Some(Instant::now() + COMPRESSION_IDLE);
+            self.dirty = true;
+            self.apply_effects()?;
+        }
+        if let Some(interrupt) = interrupt {
+            let partial_paste = self
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.paste && pending.offset > 0);
+            if let Some(pending) = self.pending.take() {
+                self.release(pending.budget);
+            }
+            let mut bytes = if partial_paste {
+                b"\x1b[201~".to_vec()
+            } else {
+                Vec::new()
+            };
+            bytes.extend(self.core.input(interrupt)?);
+            self.handle.write(&bytes)?;
+            self.dirty = true;
+        }
+        if let Some(viewport) = viewport {
+            self.core.resize(viewport, &mut self.effects)?;
+            self.handle.resize(viewport)?;
+            self.apply_effects()?;
+            self.dirty = true;
+            self.force = true;
+        }
+        if let Some(input) = command {
+            let budget = input.budget();
+            if self.exit.is_some() && !matches!(input, TerminalInput::Scroll(_)) {
+                self.release(budget);
+            } else {
+                let paste = matches!(input, TerminalInput::Paste(_));
+                match self.core.input(input) {
+                    Ok(bytes) if !bytes.is_empty() => {
+                        self.pending = Some(PendingWrite {
+                            bytes,
+                            offset: 0,
+                            budget,
+                            paste,
+                        });
+                    }
+                    Ok(_) => self.release(budget),
+                    Err(error) => {
+                        self.release(budget);
+                        return Err(error);
+                    }
+                }
+                self.dirty = true;
+            }
+        }
+        if let Some((selection, reply)) = copy {
+            let _ = reply.try_send(self.core.copy(selection));
+        }
+        self.advance_input()?;
+        if eof
+            && self.exit.is_none()
+            && let Some(mut status) = self.handle.try_wait()?
+        {
+            status.runtime = self.started.elapsed();
+            status.abnormal = status.runtime <= self.abnormal_exit_runtime;
+            self.exit = Some(status.clone());
+            self.snapshot.status = TerminalStatus::Exited(status);
+            self.dirty = true;
+            self.force = true;
+        }
+        let exited = self.exit.is_some();
+        let held = self.core.held();
+        if self.dirty && ((visible && credit && !held) || (exited && self.force)) {
+            if let Some(frame) = self.core.frame(self.force)? {
+                self.snapshot.frame = frame;
+                self.snapshot.at_prompt = self.core.at_prompt();
+                self.shared.lock().credit = false;
+                self.publish();
+            }
+            self.dirty = false;
+            self.force = false;
+        }
+        if self
+            .compression_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            let complete = self.core.compress();
+            self.compression_deadline = (!complete).then(|| Instant::now() + COMPRESSION_STEP);
+        }
+        if !had_work {
+            let delay = if self.pending.is_some() {
+                Some(Duration::from_millis(1))
+            } else if self.dirty && visible && credit {
+                self.core
+                    .hold_remaining()
+                    .or(Some(Duration::from_millis(1)))
+            } else if let Some(deadline) = self.compression_deadline {
+                Some(deadline.saturating_duration_since(Instant::now()))
+            } else if eof && self.exit.is_none() {
+                Some(Duration::from_millis(20))
+            } else {
+                None
+            };
+            let mail = self.shared.lock();
+            if mail.generation == generation && !self.shared.closing.load(Ordering::Acquire) {
+                match delay {
+                    None => drop(
+                        self.shared
+                            .wake
+                            .wait(mail)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    ),
+                    Some(delay) => drop(
+                        self.shared
+                            .wake
+                            .wait_timeout(mail, delay.max(Duration::from_millis(1)))
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    ),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn release(&self, budget: usize) {
+        let mut mail = self.shared.lock();
+        mail.bytes = mail.bytes.saturating_sub(budget);
+    }
+
+    fn advance_input(&mut self) -> io::Result<()> {
+        let Some(pending) = &mut self.pending else {
+            return Ok(());
+        };
+        let end = (pending.offset + WRITE_CHUNK).min(pending.bytes.len());
+        let chunk = &pending.bytes[pending.offset..end];
+        self.handle.write(chunk)?;
+        pending.offset = end;
+        if pending.offset >= pending.bytes.len() {
+            let budget = pending.budget;
+            self.pending = None;
+            self.release(budget);
+        }
+        Ok(())
+    }
+
+    fn apply_effects(&mut self) -> io::Result<()> {
+        let effects = std::mem::take(&mut self.effects);
+        if !effects.replies.is_empty() {
+            self.handle.write(&effects.replies)?;
+        }
+        let mut changed = false;
+        if effects.title_changed {
+            self.snapshot.title = self.core.title().to_owned();
+            changed = true;
+        }
+        if effects.cwd_changed {
+            self.snapshot.cwd = self.core.cwd().cloned();
+            changed = true;
+        }
+        if effects.bells > 0 {
+            self.snapshot.bell_count += effects.bells;
+            changed = true;
+        }
+        if let Some(text) = effects.clipboard.last() {
+            self.snapshot.clipboard_sequence += effects.clipboard.len() as u64;
+            self.snapshot.clipboard = Some(Arc::from(text.as_str()));
+            changed = true;
+        }
+        if let Some((title, body)) = effects.notifications.last() {
+            self.snapshot.notification_sequence += effects.notifications.len() as u64;
+            self.snapshot.notification =
+                Some((Arc::from(title.as_str()), Arc::from(body.as_str())));
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
+            self.force = true;
+        }
+        Ok(())
+    }
+
+    fn publish(&self) {
+        self.sink.publish(Arc::new(self.snapshot.clone()));
+    }
+
+    fn cleanup(&mut self) {
+        self.shared.closing.store(true, Ordering::Release);
+        {
+            let mut mail = self.shared.lock();
+            mail.commands.clear();
+            mail.bytes = 0;
+            mail.reads.clear();
+        }
+        self.pending = None;
+        self.handle.close();
+        if self.exit.is_none() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if let Ok(Some(mut status)) = self.handle.try_wait() {
+                    status.runtime = self.started.elapsed();
+                    status.abnormal = status.runtime <= self.abnormal_exit_runtime;
+                    self.snapshot.status = TerminalStatus::Exited(status.clone());
+                    self.exit = Some(status);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        self.publish();
+    }
+}

@@ -1,0 +1,355 @@
+//! A local program in a pty, as a [`ByteSource`].
+//!
+//! The child environment follows Ghostty: `TERM=xterm-ghostty` with the
+//! shipped terminfo database, `COLORTERM`, `TERM_PROGRAM`, the shell
+//! integration scripts injected per shell, and the terminal-specific
+//! variables of other emulators removed.
+//!
+//! Adapted from tt v2 (Apache-2.0), src/local_terminal/runtime.rs and
+//! src/pty, itself derived from Herdr.
+
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+use crate::terminal::engine::{ByteHandle, ByteSink, ByteSource, ExitStatus};
+use crate::terminal::frame::Viewport;
+use crate::terminal::options::{LocalTerminalOptions, ShellIntegration, WorkingDirectory};
+
+/// A program to run in a local pty.
+#[derive(Debug)]
+pub struct LocalPty {
+    options: LocalTerminalOptions,
+}
+
+impl LocalPty {
+    /// A pty for `options`.
+    #[must_use]
+    pub fn new(options: LocalTerminalOptions) -> Self {
+        Self { options }
+    }
+}
+
+fn size(viewport: Viewport) -> PtySize {
+    PtySize {
+        rows: viewport.rows(),
+        cols: viewport.columns(),
+        pixel_width: u16::try_from(u32::from(viewport.columns()) * viewport.cell_width())
+            .unwrap_or(u16::MAX),
+        pixel_height: u16::try_from(u32::from(viewport.rows()) * viewport.cell_height())
+            .unwrap_or(u16::MAX),
+    }
+}
+
+/// The user's shell: `SHELL`, then the passwd entry, then `sh`.
+fn default_shell() -> PathBuf {
+    if let Some(shell) = std::env::var_os("SHELL").filter(|s| !s.is_empty()) {
+        return PathBuf::from(shell);
+    }
+    #[cfg(windows)]
+    {
+        if let Some(comspec) = std::env::var_os("ComSpec") {
+            return PathBuf::from(comspec);
+        }
+        return PathBuf::from("cmd.exe");
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/bin/sh")
+    }
+}
+
+fn detect_shell(program: &Path) -> ShellIntegration {
+    match program.file_name().and_then(|n| n.to_str()) {
+        Some("bash") => ShellIntegration::Bash,
+        Some("zsh") => ShellIntegration::Zsh,
+        Some("fish") => ShellIntegration::Fish,
+        Some("elvish") => ShellIntegration::Elvish,
+        Some("nu") => ShellIntegration::Nushell,
+        _ => ShellIntegration::None,
+    }
+}
+
+fn prepend_path_list(existing: Option<std::ffi::OsString>, dir: &Path, default: &str) -> String {
+    let existing = existing
+        .map(|v| v.to_string_lossy().into_owned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_owned());
+    format!("{}:{existing}", dir.display())
+}
+
+/// Build the command, following Ghostty's environment rules.
+fn command(options: &LocalTerminalOptions, resources: &Path, terminfo: &Path) -> CommandBuilder {
+    let program = options.program.clone().unwrap_or_else(default_shell);
+    let integration = match options.shell_integration {
+        ShellIntegration::Detect => detect_shell(&program),
+        other => other,
+    };
+    let mut args: Vec<String> = options.args.clone();
+    let mut cmd = CommandBuilder::new(&program);
+
+    match &options.cwd {
+        WorkingDirectory::Inherit => {}
+        WorkingDirectory::Home => {
+            if let Some(home) = std::env::var_os("HOME") {
+                cmd.cwd(home);
+            }
+        }
+        WorkingDirectory::Path(path) => {
+            let fallback = std::env::var_os("HOME").map(PathBuf::from);
+            if path.is_dir() {
+                cmd.cwd(path);
+            } else if let Some(home) = fallback.filter(|h| h.is_dir()) {
+                cmd.cwd(home);
+            } else {
+                cmd.cwd("/");
+            }
+        }
+    }
+
+    for name in [
+        "VTE_VERSION",
+        "WT_SESSION",
+        "TERM_SESSION_ID",
+        "TERMINFO",
+        "GHOSTTY_RESOURCES_DIR",
+        "GHOSTTY_SHELL_FEATURES",
+        "GHOSTTY_SHELL_INTEGRATION_XDG_DIR",
+        "GHOSTTY_BASH_INJECT",
+        "GHOSTTY_BASH_ENV",
+        "GHOSTTY_ZSH_ZDOTDIR",
+    ] {
+        cmd.env_remove(name);
+    }
+    for name in &options.env_remove {
+        cmd.env_remove(name);
+    }
+    cmd.env("TERM", ghostty_vt::terminfo::TERM);
+    cmd.env("TERMINFO", terminfo);
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "ghostty");
+    cmd.env(
+        "TERM_PROGRAM_VERSION",
+        ghostty_vt::build_info::pinned_version(),
+    );
+    cmd.env("GHOSTTY_RESOURCES_DIR", resources);
+    if std::env::var_os("LANG").is_none_or(|v| v.is_empty()) {
+        cmd.env("LANG", "en_US.UTF-8");
+    }
+    if options.program.is_none() {
+        cmd.env("SHELL", &program);
+    }
+    if !options.shell_integration_features.is_empty() && integration != ShellIntegration::None {
+        cmd.env(
+            "GHOSTTY_SHELL_FEATURES",
+            options.shell_integration_features.join(","),
+        );
+    }
+
+    let integration_dir = resources.join("shell-integration");
+    match integration {
+        ShellIntegration::None | ShellIntegration::Detect => {}
+        ShellIntegration::Bash => {
+            // Ghostty starts bash in POSIX mode with ENV pointing at its
+            // script, which then loads the normal startup files itself.
+            if let Some(env) = std::env::var_os("ENV") {
+                cmd.env("GHOSTTY_BASH_ENV", env);
+            }
+            cmd.env("ENV", integration_dir.join("bash").join("ghostty.bash"));
+            let mut inject = String::from("1");
+            if options.login {
+                inject.push_str(" --login");
+            }
+            cmd.env("GHOSTTY_BASH_INJECT", inject);
+            if std::env::var_os("HISTFILE").is_none()
+                && let Some(home) = std::env::var_os("HOME")
+            {
+                cmd.env("HISTFILE", PathBuf::from(home).join(".bash_history"));
+                cmd.env("GHOSTTY_BASH_UNEXPORT_HISTFILE", "1");
+            }
+            args.insert(0, "--posix".to_owned());
+        }
+        ShellIntegration::Zsh => {
+            if let Some(old) = std::env::var_os("ZDOTDIR") {
+                cmd.env("GHOSTTY_ZSH_ZDOTDIR", old);
+            }
+            cmd.env("ZDOTDIR", integration_dir.join("zsh"));
+        }
+        ShellIntegration::Fish | ShellIntegration::Elvish | ShellIntegration::Nushell => {
+            cmd.env("GHOSTTY_SHELL_INTEGRATION_XDG_DIR", &integration_dir);
+            cmd.env(
+                "XDG_DATA_DIRS",
+                prepend_path_list(
+                    std::env::var_os("XDG_DATA_DIRS"),
+                    &integration_dir,
+                    "/usr/local/share:/usr/share",
+                ),
+            );
+            if integration == ShellIntegration::Nushell {
+                args.push("--execute".to_owned());
+                args.push("use ghostty *".to_owned());
+            }
+        }
+    }
+    if options.login
+        && options.program.is_none()
+        && !matches!(
+            integration,
+            ShellIntegration::Bash | ShellIntegration::Nushell
+        )
+    {
+        args.insert(0, "-l".to_owned());
+    }
+    for (name, value) in &options.env {
+        cmd.env(name, value);
+    }
+    cmd.args(args);
+    cmd
+}
+
+struct Handle {
+    writer: Mutex<Box<dyn Write + Send>>,
+    master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
+    child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+}
+
+impl ByteHandle for Handle {
+    fn write(&self, bytes: &[u8]) -> io::Result<()> {
+        let mut writer = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        writer.write_all(bytes)?;
+        writer.flush()
+    }
+
+    fn resize(&self, viewport: Viewport) -> io::Result<()> {
+        self.master
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resize(size(viewport))
+            .map_err(io::Error::other)
+    }
+
+    fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
+        let mut child = self
+            .child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(child.try_wait()?.map(|status| ExitStatus {
+            code: status.exit_code().try_into().ok(),
+            signal: status.signal().map(str::to_owned),
+            runtime: std::time::Duration::ZERO,
+            abnormal: false,
+        }))
+    }
+
+    fn close(&self) {
+        let mut child = self
+            .child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Ok(None) = child.try_wait() {
+            let _ = child.kill();
+        }
+    }
+}
+
+impl ByteSource for LocalPty {
+    fn start(
+        self: Box<Self>,
+        sink: ByteSink,
+        viewport: Viewport,
+    ) -> io::Result<Box<dyn ByteHandle>> {
+        let resources = ghostty_vt::shell_integration::resources_dir()?;
+        let terminfo = ghostty_vt::terminfo::dir()?;
+        let cmd = command(&self.options, &resources, &terminfo);
+        let pty = native_pty_system()
+            .openpty(size(viewport))
+            .map_err(io::Error::other)?;
+        let child = pty.slave.spawn_command(cmd).map_err(io::Error::other)?;
+        drop(pty.slave);
+        let mut reader = pty.master.try_clone_reader().map_err(io::Error::other)?;
+        let writer = pty.master.take_writer().map_err(io::Error::other)?;
+        std::thread::Builder::new()
+            .name("gpui-cn-pty".to_owned())
+            .spawn(move || {
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if !sink.write(&buf[..n]) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                sink.finished();
+            })?;
+        Ok(Box::new(Handle {
+            writer: Mutex::new(writer),
+            master: Mutex::new(pty.master),
+            child: Mutex::new(child),
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_detection_uses_the_file_name() {
+        assert_eq!(detect_shell(Path::new("/bin/zsh")), ShellIntegration::Zsh);
+        assert_eq!(
+            detect_shell(Path::new("/opt/homebrew/bin/fish")),
+            ShellIntegration::Fish
+        );
+        assert_eq!(
+            detect_shell(Path::new("/usr/bin/nu")),
+            ShellIntegration::Nushell
+        );
+        assert_eq!(detect_shell(Path::new("/bin/sh")), ShellIntegration::None);
+    }
+
+    #[test]
+    fn xdg_data_dirs_are_prepended_with_the_default_when_unset() {
+        let dir = Path::new("/res/shell-integration");
+        assert_eq!(
+            prepend_path_list(None, dir, "/usr/local/share:/usr/share"),
+            "/res/shell-integration:/usr/local/share:/usr/share"
+        );
+        assert_eq!(
+            prepend_path_list(
+                Some("/opt/share".into()),
+                dir,
+                "/usr/local/share:/usr/share"
+            ),
+            "/res/shell-integration:/opt/share"
+        );
+    }
+
+    #[test]
+    fn zsh_gets_zdotdir_and_a_login_flag() {
+        let options =
+            LocalTerminalOptions::default().with_program("/bin/zsh", Vec::<String>::new());
+        let cmd = command(&options, Path::new("/res"), Path::new("/ti"));
+        let env: std::collections::HashMap<_, _> = cmd
+            .iter_extra_env_as_str()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        assert_eq!(
+            env.get("ZDOTDIR").map(String::as_str),
+            Some("/res/shell-integration/zsh")
+        );
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-ghostty"));
+        assert_eq!(env.get("TERMINFO").map(String::as_str), Some("/ti"));
+        assert!(
+            !cmd.get_argv().iter().any(|a| a == "-l"),
+            "an explicit program is not made a login shell"
+        );
+    }
+}

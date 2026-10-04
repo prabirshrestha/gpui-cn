@@ -24,6 +24,11 @@ workspace = true
 default = []
 # JetBrains Mono as the code font, registered by `init`.
 jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
+# The terminal in `gpui_cn::terminal`, on libghostty-vt. Building it needs
+# Zig 0.16; see the `ghostty-vt-sys` crate.
+ghostty = ["dep:ghostty-vt"]
+# A local pty for the terminal, on desktop targets.
+ghostty-pty = ["ghostty", "dep:portable-pty"]
 # Headless UI testing through `gpui_kit::test`.
 test-support = ["gpui-kit/test-support"]
 
@@ -32,6 +37,10 @@ gpui-kit = { workspace = true, features = ["assets"] }
 damascene-fonts-jetbrains-mono = { version = "0.1", optional = true }
 nucleo-matcher = "0.3"
 smol = "2"
+ghostty-vt = { workspace = true, optional = true }
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+portable-pty = { version = "0.9", optional = true }
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

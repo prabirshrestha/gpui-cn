@@ -79,6 +79,10 @@ pub struct ThemeTokens {
     /// fill and a card to the whole. The reference app's disabled switch
     /// measures 60%; gpui-cn keeps one strength for every control.
     pub disabled_opacity: f32,
+    /// The strength of a terminal's block cursor over the cell it covers:
+    /// 55%, from tt v2's terminal, so the glyph under the cursor stays
+    /// readable without a second color.
+    pub terminal_cursor_opacity: f32,
     /// The track of a switch that is on: the accent, as the reference
     /// app paints it (#539af8 on dark).
     pub switch_track_on: Hsla,
@@ -371,6 +375,15 @@ pub struct MetricTokens {
     pub avatar_group_overlap: Pixels,
     /// The ring that parts overlapped avatars: 2px, shadcn's `ring-2`.
     pub avatar_group_ring: Pixels,
+    /// The room around a terminal's grid: 6px, the padding the
+    /// gpui-ghostty terminal app shipped with (Ghostty's own default is
+    /// 2px). Not measured from the reference app. Fixed, because the grid
+    /// follows the code font size, not the UI font size.
+    pub terminal_padding: Pixels,
+    /// The width of a bar cursor and the height of an underline cursor in
+    /// a terminal: 2px, from tt v2's terminal, which gpui-cn's is adapted
+    /// from.
+    pub terminal_cursor_thickness: Pixels,
 }
 
 impl MetricTokens {
@@ -462,6 +475,8 @@ impl MetricTokens {
             avatar_initials_lg: scaled(14.),
             avatar_group_overlap: scaled(8.),
             avatar_group_ring: px(2.),
+            terminal_padding: px(6.),
+            terminal_cursor_thickness: px(2.),
         }
     }
 }
@@ -664,6 +679,7 @@ impl ThemeTokens {
             text_title,
             metrics: MetricTokens::derive(metrics.ui_font_size, metrics.touch),
             disabled_opacity: 0.55,
+            terminal_cursor_opacity: 0.55,
             switch_track_on,
             switch_track_off,
             switch_thumb,
@@ -1261,6 +1277,14 @@ mod tests {
         assert_eq!(default.metrics.badge_dot, px(6.));
         assert_eq!(large.metrics.avatar_md, px(40.));
         assert_eq!(large.metrics.avatar_group_ring, px(2.), "a hairline stays");
+        assert_eq!(default.metrics.terminal_padding, px(6.));
+        assert_eq!(
+            large.metrics.terminal_padding,
+            px(6.),
+            "the grid's room stays"
+        );
+        assert_eq!(large.metrics.terminal_cursor_thickness, px(2.));
+        assert_eq!(large.terminal_cursor_opacity, 0.55);
     }
 
     #[test]

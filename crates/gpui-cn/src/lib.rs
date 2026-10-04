@@ -59,6 +59,8 @@ mod spinner;
 mod switch;
 mod tabs;
 mod tag;
+#[cfg(feature = "ghostty")]
+pub mod terminal;
 pub mod theme;
 mod theme_mode_picker;
 mod title_bar;
@@ -120,6 +122,15 @@ use gpui_kit::{App, Global};
 
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
+    #[cfg(all(
+        feature = "ghostty-pty",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    pub use crate::terminal::LocalTerminalOptions;
+    #[cfg(feature = "ghostty")]
+    pub use crate::terminal::{
+        Terminal, TerminalAppearance, TerminalColors, TerminalConfig, TerminalEvent, TerminalState,
+    };
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
         Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, Dialog,
@@ -172,6 +183,8 @@ pub fn init(cx: &mut App) {
     menu::init(cx);
     command::init(cx);
     folder_picker::init(cx);
+    #[cfg(feature = "ghostty")]
+    terminal::init(cx);
     cx.set_global(Initialized);
 }
 
