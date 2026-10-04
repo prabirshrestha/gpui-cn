@@ -209,6 +209,8 @@ struct Mailbox {
     viewport: Option<Viewport>,
     visible: bool,
     credit: bool,
+    /// The UI painted since the owner last looked, which counts as use.
+    painted: bool,
     reader_exited: bool,
     reveal: bool,
     interrupt: Option<TerminalInput>,
@@ -310,8 +312,9 @@ impl EngineHandle {
     /// last frame.
     pub fn request_frame(&self) {
         let mut mail = self.shared.lock();
-        if !mail.credit {
+        if !mail.credit || !mail.painted {
             mail.credit = true;
+            mail.painted = true;
             self.shared.bump(&mut mail);
         }
     }
@@ -529,9 +532,45 @@ struct PendingWrite {
     paste: bool,
 }
 
+/// The owner's core: live, or parked as a snapshot in the park store.
+struct CoreSlot {
+    live: Option<Core>,
+    #[cfg(feature = "ghostty-park")]
+    parked: Option<crate::terminal::core::Parked>,
+}
+
+impl std::ops::Deref for CoreSlot {
+    type Target = Core;
+
+    fn deref(&self) -> &Core {
+        self.live
+            .as_ref()
+            .expect("the core is restored before it is used")
+    }
+}
+
+impl std::ops::DerefMut for CoreSlot {
+    fn deref_mut(&mut self) -> &mut Core {
+        self.live
+            .as_mut()
+            .expect("the core is restored before it is used")
+    }
+}
+
+/// What the owner needs to park and restore its core.
+#[cfg(feature = "ghostty-park")]
+struct Parking {
+    options: EngineOptions,
+    key: u64,
+    /// The last output, input, resize, paint or other request.
+    last_use: Instant,
+}
+
 struct Owner {
     shared: Arc<Shared>,
-    core: Core,
+    core: CoreSlot,
+    #[cfg(feature = "ghostty-park")]
+    parking: Parking,
     handle: Box<dyn ByteHandle>,
     sink: FrameSink,
     snapshot: TerminalSnapshot,
@@ -572,7 +611,17 @@ impl Owner {
         sink.publish(Arc::new(snapshot.clone()));
         Ok(Self {
             shared,
-            core,
+            core: CoreSlot {
+                live: Some(core),
+                #[cfg(feature = "ghostty-park")]
+                parked: None,
+            },
+            #[cfg(feature = "ghostty-park")]
+            parking: Parking {
+                options: config.options.clone(),
+                key: crate::terminal::park::next_key(),
+                last_use: Instant::now(),
+            },
             handle,
             sink: sink.clone(),
             snapshot,
@@ -611,6 +660,7 @@ impl Owner {
             copy,
             cursor,
             colors,
+            painted,
             generation,
         ) = {
             let mut mail = self.shared.lock();
@@ -632,6 +682,7 @@ impl Owner {
                 mail.copy.take(),
                 mail.cursor.take(),
                 mail.colors.take(),
+                std::mem::take(&mut mail.painted),
                 mail.generation,
             )
         };
@@ -643,6 +694,20 @@ impl Owner {
             || copy.is_some()
             || cursor.is_some()
             || colors.is_some();
+        #[cfg(feature = "ghostty-park")]
+        {
+            // Anything that needs the terminal restores a parked one first;
+            // with nothing to do, a parked terminal only waits.
+            if had_work || painted || (eof && self.exit.is_none()) {
+                self.parking.last_use = Instant::now();
+                self.unpark()?;
+            } else if self.core.live.is_none() {
+                self.wait(generation, None);
+                return Ok(());
+            }
+        }
+        #[cfg(not(feature = "ghostty-park"))]
+        let _ = painted;
         if reveal {
             self.dirty = true;
             self.force = true;
@@ -760,24 +825,89 @@ impl Owner {
             } else {
                 None
             };
-            let mail = self.shared.lock();
-            if mail.generation == generation && !self.shared.closing.load(Ordering::Acquire) {
-                match delay {
-                    None => drop(
-                        self.shared
-                            .wake
-                            .wait(mail)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    ),
-                    Some(delay) => drop(
-                        self.shared
-                            .wake
-                            .wait_timeout(mail, delay.max(Duration::from_millis(1)))
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    ),
-                }
+            #[cfg(feature = "ghostty-park")]
+            let delay = match self.park_after() {
+                Some(_) if self.park_if_idle() => None,
+                Some(after) => Some(delay.map_or(after, |delay| delay.min(after))),
+                None => delay,
+            };
+            self.wait(generation, delay);
+        }
+        Ok(())
+    }
+
+    /// Sleeps until the mailbox changes, or `delay` passes.
+    fn wait(&self, generation: u64, delay: Option<Duration>) {
+        let mail = self.shared.lock();
+        if mail.generation == generation && !self.shared.closing.load(Ordering::Acquire) {
+            match delay {
+                None => drop(
+                    self.shared
+                        .wake
+                        .wait(mail)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                ),
+                Some(delay) => drop(
+                    self.shared
+                        .wake
+                        .wait_timeout(mail, delay.max(Duration::from_millis(1)))
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                ),
             }
         }
+    }
+
+    /// How long until a live terminal may park, when parking is on and
+    /// nothing keeps it awake.
+    #[cfg(feature = "ghostty-park")]
+    fn park_after(&mut self) -> Option<Duration> {
+        let park = &self.parking.options.park;
+        if !park.enabled
+            || self.core.live.is_none()
+            || self.pending.is_some()
+            || self.exit.is_some()
+            || self.core.held()
+        {
+            return None;
+        }
+        Some(park.idle.saturating_sub(self.parking.last_use.elapsed()))
+    }
+
+    /// Parks the terminal when it has been idle long enough. Returns
+    /// whether it parked.
+    #[cfg(feature = "ghostty-park")]
+    fn park_if_idle(&mut self) -> bool {
+        if self.park_after() != Some(Duration::ZERO) {
+            return false;
+        }
+        let store = self.parking.options.park.store.clone();
+        let parked = self
+            .core
+            .park()
+            .and_then(|(bytes, parked)| store.save(self.parking.key, &bytes).map(|()| parked));
+        match parked {
+            Ok(parked) => {
+                self.core.live = None;
+                self.core.parked = Some(parked);
+                self.compression_deadline = None;
+                true
+            }
+            // Try again after another idle period rather than at once.
+            Err(_) => {
+                self.parking.last_use = Instant::now();
+                false
+            }
+        }
+    }
+
+    /// Restores a parked terminal from its store.
+    #[cfg(feature = "ghostty-park")]
+    fn unpark(&mut self) -> io::Result<()> {
+        let Some(parked) = self.core.parked.take() else {
+            return Ok(());
+        };
+        let bytes = self.parking.options.park.store.take(self.parking.key)?;
+        self.core.live = Some(Core::restore(&bytes, parked, &self.parking.options)?);
         Ok(())
     }
 
@@ -851,6 +981,10 @@ impl Owner {
             mail.reads.clear();
         }
         self.pending = None;
+        #[cfg(feature = "ghostty-park")]
+        if self.core.parked.take().is_some() {
+            self.parking.options.park.store.remove(self.parking.key);
+        }
         self.handle.close();
         if self.exit.is_none() {
             let deadline = Instant::now() + Duration::from_secs(2);

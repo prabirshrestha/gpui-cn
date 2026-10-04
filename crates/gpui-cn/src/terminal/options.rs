@@ -18,6 +18,8 @@ pub struct EngineOptions {
     pub(crate) terminfo_name: String,
     /// Maximum decoded bytes per Kitty clipboard write.
     pub(crate) clipboard_write_max_bytes: usize,
+    #[cfg(feature = "ghostty-park")]
+    pub(crate) park: crate::terminal::park::ParkOptions,
 }
 
 impl Default for EngineOptions {
@@ -27,6 +29,8 @@ impl Default for EngineOptions {
             scrollback_lines: None,
             terminfo_name: ghostty_vt::terminfo::TERM.to_owned(),
             clipboard_write_max_bytes: 64 << 20,
+            #[cfg(feature = "ghostty-park")]
+            park: crate::terminal::park::ParkOptions::default(),
         }
     }
 }
@@ -58,6 +62,22 @@ impl EngineOptions {
     pub fn with_clipboard_write_max_bytes(mut self, bytes: usize) -> Self {
         self.clipboard_write_max_bytes = bytes;
         self
+    }
+
+    /// Set when an idle terminal parks and where its snapshot goes. On by
+    /// default with the `ghostty-park` feature, after 60 seconds idle, in
+    /// memory.
+    #[cfg(feature = "ghostty-park")]
+    #[must_use]
+    pub fn with_park(mut self, park: crate::terminal::park::ParkOptions) -> Self {
+        self.park = park;
+        self
+    }
+
+    /// When an idle terminal parks and where its snapshot goes.
+    #[cfg(feature = "ghostty-park")]
+    pub fn park(&self) -> &crate::terminal::park::ParkOptions {
+        &self.park
     }
 
     /// The scrollback byte limit. Zero disables scrollback.

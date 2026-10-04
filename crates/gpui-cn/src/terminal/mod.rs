@@ -49,6 +49,8 @@ pub mod input;
 mod keys;
 mod links;
 mod options;
+#[cfg(feature = "ghostty-park")]
+pub mod park;
 #[cfg(all(
     feature = "ghostty-pty",
     not(any(target_os = "ios", target_os = "android"))

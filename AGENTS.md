@@ -11,7 +11,9 @@ that this repository does not name. The workspace has four crates:
 
 - `crates/gpui-cn` is the library. Never add `gpui-component` or use a
   `gpui-component` type. Its `ghostty` feature adds the terminal in
-  `src/terminal`, and `ghostty-pty` adds a local pty to it.
+  `src/terminal`, `ghostty-pty` adds a local pty to it, and
+  `ghostty-park` parks idle terminals as snapshots (see
+  `src/terminal/park.rs`).
 - `crates/gpui-cn-story` is the gallery. It uses gpui-cn components only,
   which makes it the first application that uses the library. Its
   `snapshot` binary renders the gallery to PNG files without a window, on
@@ -119,7 +121,10 @@ Never copy a font file into the repository.
 The terminal's engine runs on its own thread and publishes frames; the
 element paints the latest frame and never blocks on the engine. Keep a
 terminal that is not painted at zero work: it gets no frame credit, so it
-builds no frames, and its cursor blink stops. A test drives a terminal
+builds no frames, and its cursor blink stops. With `ghostty-park`, a
+terminal idle for its park period (60 seconds by default) is saved as a
+snapshot in its `ParkStore` and its state freed; anything that needs it
+restores it first. A test drives a terminal
 through `FixtureSource` or `StreamSource`, never a real shell, except the
 pty test in `tests/terminal_pty.rs`. A test that runs the engine thread
 reads frames from a `FrameSink`, as `tests/terminal_stream.rs` does: the

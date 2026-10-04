@@ -229,6 +229,8 @@ mod macos {
         select(&mut cx, handle, &gallery, frames);
         #[cfg(feature = "terminal")]
         terminal();
+        #[cfg(feature = "terminal")]
+        parking();
     }
 
     /// The select: what a menu costs to open, to keep open, to scroll, to
@@ -476,6 +478,130 @@ mod macos {
                 "",
                 cpu_ms() - idle_cpu
             );
+            handle.close();
+        }
+    }
+
+    /// This process' physical footprint in megabytes, what Activity
+    /// Monitor shows as Memory. Freed pages macOS keeps for reuse do not
+    /// count, unlike the resident set.
+    #[cfg(feature = "terminal")]
+    fn footprint_mb() -> f64 {
+        let out = std::process::Command::new("footprint")
+            .args(["-p", &std::process::id().to_string()])
+            .output()
+            .expect("footprint");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut words = text
+            .lines()
+            .find(|line| line.contains("Footprint:"))
+            .unwrap_or_default()
+            .split_whitespace()
+            .skip_while(|word| *word != "Footprint:")
+            .skip(1);
+        let value: f64 = words.next().and_then(|v| v.parse().ok()).unwrap_or(0.);
+        match words.next().unwrap_or("MB") {
+            unit if unit.starts_with('K') => value / 1024.,
+            unit if unit.starts_with('G') => value * 1024.,
+            _ => value,
+        }
+    }
+
+    /// Parking: ten terminals with full scrollback, live and then parked
+    /// after their idle period, and how long the first output after it
+    /// takes to show.
+    #[cfg(feature = "terminal")]
+    fn parking() {
+        use std::time::Duration;
+
+        use gpui_cn::terminal::park::{MemoryStore, ParkOptions};
+        use gpui_cn::terminal::{
+            Engine, EngineOptions, FrameSink, FrameSource as _, StartOptions, StreamSource,
+            Viewport,
+        };
+
+        println!("terminal parking:");
+        let idle = Duration::from_millis(500);
+        let store = Arc::new(MemoryStore::new());
+        let base = footprint_mb();
+        let terminals: Vec<_> = (0..10)
+            .map(|n| {
+                let (source, peer) = StreamSource::new();
+                let (sink, _wake) = FrameSink::new();
+                let options = EngineOptions::default().with_park(
+                    ParkOptions::default()
+                        .with_idle(idle)
+                        .with_shared_store(store.clone()),
+                );
+                let handle = Box::new(Engine::new(source, options))
+                    .start(
+                        sink.clone(),
+                        StartOptions::default()
+                            .with_viewport(Viewport::new(120, 40, 16, 32).expect("a grid")),
+                    )
+                    .expect("start");
+                let mut chunk = Vec::new();
+                for line in 0..200_000 {
+                    chunk.extend_from_slice(
+                        format!(
+                            "line {line} of {n} the quick brown fox jumps over the lazy dog\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    if chunk.len() > 60 << 10 {
+                        peer.output(&chunk);
+                        chunk.clear();
+                    }
+                }
+                peer.output(&chunk);
+                (peer, sink, handle)
+            })
+            .collect();
+        // Every terminal shows its last line, so it parsed everything;
+        // then nothing paints them.
+        for (n, (_, sink, handle)) in terminals.iter().enumerate() {
+            let last = format!("line 199999 of {n}");
+            handle.request_frame();
+            loop {
+                if let Some(snapshot) = sink.take() {
+                    if snapshot.frame.text().contains(&last) {
+                        break;
+                    }
+                    handle.request_frame();
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let live = footprint_mb() - base;
+        std::thread::sleep(idle * 3);
+        let parked = footprint_mb() - base;
+        println!(
+            "  10 terminals, 10 MB scrollback each: live {live:.0} MB, parked {parked:.0} MB (snapshots {:.1} MB)",
+            store.len_bytes() as f64 / (1 << 20) as f64
+        );
+        let mut samples = Vec::new();
+        for (peer, sink, handle) in &terminals {
+            let _ = sink.take();
+            let start = Instant::now();
+            peer.output(b"\r\nback");
+            handle.request_frame();
+            loop {
+                if let Some(snapshot) = sink.take() {
+                    if snapshot.frame.text().contains("back") {
+                        break;
+                    }
+                    handle.request_frame();
+                }
+                std::thread::sleep(Duration::from_micros(100));
+            }
+            samples.push(start.elapsed().as_secs_f64() * 1000.);
+        }
+        let (p50, p95) = summarize(samples);
+        println!(
+            "  first output after parking to its frame: {p50:.2} ms p50, {p95:.2} ms p95; restored {:.0} MB",
+            footprint_mb() - base
+        );
+        for (_, _, handle) in &terminals {
             handle.close();
         }
     }

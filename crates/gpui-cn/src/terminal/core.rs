@@ -68,9 +68,30 @@ pub(crate) struct Core {
     revision: u64,
     content_revision: u64,
     colors: TerminalColors,
+    /// The default cursor the host set, which a parked snapshot does not
+    /// carry.
+    cursor: Option<(CursorShape, bool)>,
     title: String,
     cwd: Option<PathBuf>,
     scratch: String,
+}
+
+/// The largest unfinished escape sequence a parked snapshot keeps: 64 KiB,
+/// enough for any OSC or DCS a shell writes between two reads.
+#[cfg(feature = "ghostty-park")]
+const PARK_CONTINUATION_BYTES: usize = 64 << 10;
+
+/// What a parked core keeps beside its snapshot.
+#[cfg(feature = "ghostty-park")]
+#[derive(Debug)]
+pub(crate) struct Parked {
+    viewport: Viewport,
+    colors: TerminalColors,
+    cursor: Option<(CursorShape, bool)>,
+    title: String,
+    cwd: Option<PathBuf>,
+    revision: u64,
+    content_revision: u64,
 }
 
 fn fault(error: vt::Error) -> io::Error {
@@ -136,12 +157,23 @@ impl Core {
         options: &EngineOptions,
         colors: TerminalColors,
     ) -> io::Result<Self> {
-        let mut terminal = vt::Terminal::new(vt::TerminalOptions {
+        let terminal = vt::Terminal::new(vt::TerminalOptions {
             cols: viewport.columns(),
             rows: viewport.rows(),
             max_scrollback: options.scrollback_bytes,
         })
         .map_err(fault)?;
+        Self::around(terminal, viewport, options, colors)
+    }
+
+    /// A core around `terminal`, configured from `options` and `colors`, as
+    /// a new terminal or one restored from a parked snapshot.
+    fn around(
+        mut terminal: vt::Terminal,
+        viewport: Viewport,
+        options: &EngineOptions,
+        colors: TerminalColors,
+    ) -> io::Result<Self> {
         terminal
             .resize(
                 viewport.columns(),
@@ -159,6 +191,8 @@ impl Core {
             .map_err(fault)?
             .set_default_color_palette(Some(vt::style::Palette(colors.palette.map(rgb))))
             .map_err(fault)?
+            .set_scrollback_max_bytes(Some(options.scrollback_bytes))
+            .map_err(fault)?
             .set_scrollback_max_lines(options.scrollback_lines)
             .map_err(fault)?
             .set_clipboard_write_max_bytes(Some(options.clipboard_write_max_bytes))
@@ -166,6 +200,13 @@ impl Core {
             .set_terminfo_name(Some(&options.terminfo_name))
             .map_err(fault)?;
         terminal.set_xtversion(Some(format!("gpui-cn {}", env!("CARGO_PKG_VERSION"))));
+        // A terminal parked in the middle of an escape sequence keeps the
+        // unfinished bytes in its snapshot, so its parser resumes as if it
+        // never stopped.
+        #[cfg(feature = "ghostty-park")]
+        terminal
+            .set_continuation_max_bytes(PARK_CONTINUATION_BYTES)
+            .map_err(fault)?;
 
         // The last published frame is the one the program wants left on
         // screen, so a hold only has to stop frames until it ends.
@@ -191,10 +232,60 @@ impl Core {
             revision: 0,
             content_revision: 0,
             colors,
+            cursor: None,
             title: String::new(),
             cwd: None,
             scratch: String::new(),
         })
+    }
+
+    /// Encodes the whole terminal, scrollback included, and keeps what the
+    /// snapshot does not carry, so the core can be dropped and rebuilt
+    /// later with [`Core::restore`].
+    #[cfg(feature = "ghostty-park")]
+    pub(crate) fn park(&self) -> io::Result<(Vec<u8>, Parked)> {
+        let bytes = vt::snapshot::encode(&self.terminal)
+            .map_err(fault)?
+            .to_vec();
+        Ok((
+            bytes,
+            Parked {
+                viewport: self.viewport,
+                colors: self.colors.clone(),
+                cursor: self.cursor,
+                title: self.title.clone(),
+                cwd: self.cwd.clone(),
+                revision: self.revision,
+                content_revision: self.content_revision,
+            },
+        ))
+    }
+
+    /// Rebuilds a parked core from its snapshot. The first frame after it
+    /// is built in full.
+    #[cfg(feature = "ghostty-park")]
+    pub(crate) fn restore(
+        bytes: &[u8],
+        parked: Parked,
+        options: &EngineOptions,
+    ) -> io::Result<Self> {
+        let mut decoder = vt::snapshot::Decoder::from_slice(bytes);
+        decoder
+            .set_max_continuation_bytes(PARK_CONTINUATION_BYTES)
+            .map_err(fault)?
+            .set_retain_continuation(true)
+            .map_err(fault)?;
+        let terminal = decoder.decode().map_err(fault)?;
+        let mut core = Self::around(terminal, parked.viewport, options, parked.colors)?;
+        if let Some((shape, blinking)) = parked.cursor {
+            core.set_cursor(shape, blinking)?;
+        }
+        core.title = parked.title;
+        core.cwd = parked.cwd;
+        core.revision = parked.revision;
+        // The rows are rebuilt, so a selection anchored to them is too.
+        core.content_revision = parked.content_revision + 1;
+        Ok(core)
     }
 
     /// Replace the default colors. The next frame carries them.
@@ -214,16 +305,17 @@ impl Core {
     }
 
     pub(crate) fn set_cursor(&mut self, shape: CursorShape, blinking: bool) -> io::Result<()> {
-        let shape = match shape {
+        let style = match shape {
             CursorShape::Block | CursorShape::Hollow => vt::terminal::CursorStyle::Block,
             CursorShape::Bar => vt::terminal::CursorStyle::Bar,
             CursorShape::Underline => vt::terminal::CursorStyle::Underline,
         };
         self.terminal
-            .set_default_cursor_style(Some(shape))
+            .set_default_cursor_style(Some(style))
             .map_err(fault)?
             .set_default_cursor_blink(Some(blinking))
             .map_err(fault)?;
+        self.cursor = Some((shape, blinking));
         Ok(())
     }
 
