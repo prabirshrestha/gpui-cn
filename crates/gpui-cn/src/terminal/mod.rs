@@ -149,9 +149,8 @@
 //! before the pty holds the program back, so a large paste into a program
 //! that is busy writing cannot deadlock.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal, itself
-//! derived from Herdr; block, decoration and element structure adapted from
-//! Muxy (MIT).
+//! Derived from Herdr (Apache-2.0); the block, decoration and element
+//! structure are adapted from Muxy v2 (MIT).
 
 mod appearance;
 mod block;

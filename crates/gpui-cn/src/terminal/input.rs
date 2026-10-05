@@ -3,8 +3,7 @@
 //! The engine owns the Ghostty encoders and the terminal modes, so the UI
 //! sends typed requests and the owner thread encodes them.
 //!
-//! Adapted from tt v2 (Apache-2.0), src/local_terminal/mod.rs, itself
-//! derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 /// Modifier keys held during an input event.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

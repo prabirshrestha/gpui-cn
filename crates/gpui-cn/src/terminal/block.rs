@@ -5,8 +5,7 @@
 //! cell sizes. Snapping each edge to a physical pixel makes neighbouring
 //! cells tile.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/block.rs,
-//! itself adapted from Muxy (MIT).
+//! Adapted from Muxy v2 (MIT).
 
 use gpui_kit::{Bounds, Hsla, Pixels, point, px};
 

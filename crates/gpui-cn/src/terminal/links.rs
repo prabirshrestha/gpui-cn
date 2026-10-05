@@ -1,7 +1,6 @@
 //! Openable URLs under the pointer in one row.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/links.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::ops::Range;
 

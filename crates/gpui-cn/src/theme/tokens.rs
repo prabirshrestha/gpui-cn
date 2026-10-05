@@ -80,7 +80,7 @@ pub struct ThemeTokens {
     /// measures 60%; gpui-cn keeps one strength for every control.
     pub disabled_opacity: f32,
     /// The strength of a terminal's block cursor over the cell it covers:
-    /// 55%, from tt v2's terminal, so the glyph under the cursor stays
+    /// 55%, chosen so the glyph under the cursor stays
     /// readable without a second color.
     pub terminal_cursor_opacity: f32,
     /// The track of a switch that is on: the accent, as the reference
@@ -383,8 +383,7 @@ pub struct MetricTokens {
     /// follows the code font size, not the UI font size.
     pub terminal_padding: Pixels,
     /// The width of a bar cursor and the height of an underline cursor in
-    /// a terminal: 2px, from tt v2's terminal, which gpui-cn's is adapted
-    /// from.
+    /// a terminal: 2px, chosen to stay visible at every code font size.
     pub terminal_cursor_thickness: Pixels,
 }
 

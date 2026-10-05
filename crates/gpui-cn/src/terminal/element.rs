@@ -3,9 +3,8 @@
 //! Everything the paint phase needs is built during prepaint so painting
 //! never reads the entity or the engine.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/element.rs,
-//! itself derived from Herdr. The canvas structure, cell-aligned glyph
-//! positioning and merged background quads are adapted from Muxy (MIT).
+//! Derived from Herdr (Apache-2.0). The canvas structure, cell-aligned glyph
+//! positioning and merged background quads are adapted from Muxy v2 (MIT).
 
 use std::collections::HashMap;
 use std::sync::Arc;

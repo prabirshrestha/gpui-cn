@@ -7,8 +7,7 @@
 //! only when the UI has granted a credit, so a terminal that is not painted
 //! stops producing frames while it keeps parsing.
 //!
-//! Adapted from tt v2 (Apache-2.0), src/local_terminal/runtime.rs, itself
-//! derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::collections::VecDeque;
 use std::io;

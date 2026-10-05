@@ -1,7 +1,6 @@
 //! Resolve frame colors to GPUI colors.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/colors.rs,
-//! itself derived from Herdr; in part from Muxy (MIT).
+//! Derived from Herdr (Apache-2.0), in part from Muxy v2 (MIT).
 
 use gpui_kit::{Hsla, rgb};
 

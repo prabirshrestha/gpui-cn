@@ -1,7 +1,6 @@
 //! Cursor blink cadence tied to painted frames.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/cursor.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::time::Duration;
 

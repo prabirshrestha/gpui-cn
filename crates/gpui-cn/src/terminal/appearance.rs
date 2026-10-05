@@ -1,7 +1,6 @@
 //! Font, padding and behavior settings for the element.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/appearance.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use gpui_kit::{
     Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString, Size,

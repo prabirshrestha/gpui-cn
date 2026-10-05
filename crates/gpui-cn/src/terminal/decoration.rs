@@ -1,7 +1,6 @@
 //! Underline, strikethrough and overline quads.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/decoration.rs,
-//! itself adapted from Muxy (MIT).
+//! Adapted from Muxy v2 (MIT).
 
 use gpui_kit::{Bounds, Hsla, Pixels, point, px, size};
 

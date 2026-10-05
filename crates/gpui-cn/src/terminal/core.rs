@@ -4,8 +4,7 @@
 //! the program receives. It never blocks and never talks to the UI; the
 //! owner thread in `engine.rs` drives it.
 //!
-//! Adapted from tt v2 (Apache-2.0), src/local_terminal/core.rs, itself
-//! derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::cell::Cell;
 use std::io;

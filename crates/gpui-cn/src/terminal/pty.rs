@@ -5,8 +5,7 @@
 //! integration scripts injected per shell, and the terminal-specific
 //! variables of other emulators removed.
 //!
-//! Adapted from tt v2 (Apache-2.0), src/local_terminal/runtime.rs and
-//! src/pty, itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::io;
 use std::path::{Path, PathBuf};

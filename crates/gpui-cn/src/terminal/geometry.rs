@@ -4,9 +4,8 @@
 //! the pointer handlers, the IME candidate rectangle and the resize request
 //! cannot disagree about the grid.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/geometry.rs,
-//! itself derived from Herdr. Flooring the content box to whole cells is
-//! adapted from Muxy (MIT).
+//! Derived from Herdr (Apache-2.0). Flooring the content box to whole cells
+//! is adapted from Muxy v2 (MIT).
 
 use gpui_kit::{Bounds, Pixels, Point, Size, point, px, size};
 

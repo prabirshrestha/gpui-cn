@@ -5,8 +5,7 @@
 //! metrics and the input modes. Rows are `Arc`s so a frame that changes one
 //! row shares the rest with the previous frame.
 //!
-//! Adapted from tt v2 (Apache-2.0), src/local_terminal/frame.rs, itself
-//! derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::ops::Range;
 use std::sync::Arc;

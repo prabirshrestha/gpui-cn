@@ -5,8 +5,7 @@
 //! into the typed requests and owns the policy for which events the
 //! terminal sees at all.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/input.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use gpui_kit::{Keystroke, Modifiers as GpuiModifiers, MouseButton as GpuiMouseButton};
 

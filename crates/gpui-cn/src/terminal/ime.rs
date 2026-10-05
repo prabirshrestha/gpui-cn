@@ -4,8 +4,7 @@
 //! composition buffer as the entire text. Committed text is sent to the
 //! program and the buffer is cleared.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/ime.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use std::ops::Range;
 

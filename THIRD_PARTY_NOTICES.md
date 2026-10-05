@@ -11,8 +11,8 @@ compiled into `libghostty-vt.a` is invisible to it and is listed here.
 | Project | License | What is included |
 | --- | --- | --- |
 | [Ghostty](https://github.com/ghostty-org/ghostty) | MIT, Copyright (c) 2024 Mitchell Hashimoto and Ghostty contributors | Bindings generated from `include/ghostty/vt/*.h` (with their doc comments), the `xterm-ghostty` terminfo source and its compiled database, and the shell integration scripts under `crates/ghostty-vt/resources/shell-integration`. License text in `LICENSE-GHOSTTY`. |
-| [tt v2](https://github.com/prabirshrestha/tt) | Apache-2.0, itself derived from Herdr | The terminal in `crates/gpui-cn/src/terminal` (frames, engine, pty, element, selection, links, IME) is adapted from tt v2's terminal pane. Every adapted file says so in its header. |
-| Muxy | MIT, Copyright (c) 2026 Muxy | Block element quads, decoration quads, the canvas structure and cell-aligned glyph positioning in `crates/gpui-cn/src/terminal`, by way of tt v2. |
+| [Herdr](https://github.com/herdrdev/herdr) | Apache-2.0 | The terminal in `crates/gpui-cn/src/terminal` (frames, engine, pty, element, selection, links, IME) is derived from Herdr's terminal pane. Every derived file says so in its header. |
+| [Muxy v2](https://github.com/muxy-app/muxy) (the Rust 2.x line) | MIT, Copyright (c) 2026 Muxy | Block element quads, decoration quads, the canvas structure and cell-aligned glyph positioning in `crates/gpui-cn/src/terminal`, from `crates/muxy-app/src/views/terminal/element.rs`. Every adapted file says so in its header. License text in `LICENSE-MUXY`. |
 | [libghostty-rs](https://github.com/Uzaaft/libghostty-rs) (`libghostty-vt`, `libghostty-vt-sys` 0.2.2) | MIT OR Apache-2.0, by Uzaaft and pluiedev | The safe crate is a fork; the sys crate's build script, `lib.rs` and bindgen tool are adapted from it. Every adapted file says "Adapted from libghostty-vt 0.2.2" or "Adapted from libghostty-vt-sys 0.2.2" in its header. The crates ship no license text of their own; the repository above has it. Used here under Apache-2.0. |
 
 ## Linked into the static archive

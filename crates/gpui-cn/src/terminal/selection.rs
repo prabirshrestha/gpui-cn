@@ -1,7 +1,6 @@
 //! The viewport selection model.
 //!
-//! Adapted from tt v2 (Apache-2.0), crates/desktop/src/terminal/selection.rs,
-//! itself derived from Herdr.
+//! Derived from Herdr (Apache-2.0).
 
 use crate::terminal::frame::{CellSelection, TerminalFrame};
 
