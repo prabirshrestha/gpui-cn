@@ -870,5 +870,50 @@ mod macos {
             })
             .expect("select the story");
         }
+
+        // A phone-width window shows the sidebar as a sheet over the page.
+        let mut narrow: Option<Entity<Gallery>> = None;
+        let narrow_handle = cx
+            .open_window(size(px(430.), px(900.)), |window, cx| {
+                let view = cx.new(|cx| Gallery::new(window, cx));
+                narrow = Some(view.clone());
+                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+            })
+            .expect("open the narrow window");
+        let narrow = narrow.expect("the narrow gallery");
+        for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            cx.update(|cx| Theme::change(mode, cx));
+            cx.update_window(narrow_handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the narrow gallery");
+            cx.update(|cx| {
+                narrow.update(cx, |gallery, cx| {
+                    gallery
+                        .sidebar()
+                        .update(cx, |state, cx| state.set_open(true, cx))
+                })
+            });
+            cx.run_until_parked();
+            cx.update_window(narrow_handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the sheet");
+            let image = cx
+                .capture_screenshot(narrow_handle.into())
+                .expect("Metal rendering must be available");
+            let path = out.join(format!("gallery-{name}-sheet.png"));
+            image.save(&path).expect("write the PNG");
+            println!("{}", path.display());
+            cx.update(|cx| {
+                narrow.update(cx, |gallery, cx| {
+                    gallery
+                        .sidebar()
+                        .update(cx, |state, cx| state.set_open(false, cx))
+                })
+            });
+        }
     }
 }

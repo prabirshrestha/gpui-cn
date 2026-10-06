@@ -32,12 +32,13 @@ use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Element, ElementId, Entity,
-    EventEmitter, GlobalElementId, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    EventEmitter, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement as _,
+    IntoElement, LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, WeakFocusHandle,
+    Window,
     base::{
-        Collapsible, Disableable, Placement, Selectable, StyledExt as _, TestSupportExt as _,
-        Transition, h_flex, transition, v_flex,
+        Collapsible, Disableable, Placement, Selectable, Sheet, StyledExt as _,
+        TestSupportExt as _, Transition, h_flex, transition, v_flex,
     },
     div,
     prelude::FluentBuilder as _,
@@ -491,37 +492,43 @@ impl RenderOnce for SidebarLayout {
             })
             .map(|this| {
                 if sheet {
-                    // The sheet floats over the content. A scrim behind it
-                    // dims the content and closes the sheet on a tap; it
-                    // fades with the sheet's motion.
+                    // The sheet is base's: it traps focus, closes on Escape
+                    // and on a press outside the panel, and sits over the
+                    // content. The scrim and the slide are ours, and fade
+                    // and move with the sheet's motion.
                     let progress = f32::from(shown) / f32::from(sheet_width);
                     let scrim = cx.theme().scrim.opacity(progress);
-                    let state = self.state.clone();
+                    let close_state = self.state.clone();
+                    let focus = sheet_focus(&self.state, open, window, cx);
                     this.child(inset).when(visible, |this| {
                         this.child(
-                            div()
-                                .id("sidebar-scrim")
-                                .test_support()
-                                .absolute()
-                                .inset_0()
-                                .bg(scrim)
-                                .on_click(move |_, _, cx| {
-                                    state.update(cx, |state, cx| state.set_open(false, cx));
-                                }),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                // A click in the sheet is the sheet's, not
-                                // the scrim's under it.
-                                .occlude()
-                                .map(|this| match side {
-                                    SidebarSide::Left => this.left_0(),
-                                    SidebarSide::Right => this.right_0(),
+                            Sheet::new(cx)
+                                .focus_handle(focus)
+                                .request_close(move |_, cx| {
+                                    close_state.update(cx, |state, cx| state.set_open(false, cx));
                                 })
-                                .child(panel),
+                                .overlay(
+                                    div()
+                                        .id("sidebar-scrim")
+                                        .test_support()
+                                        .absolute()
+                                        .inset_0()
+                                        .bg(scrim),
+                                )
+                                .surface(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .bottom_0()
+                                        // A click in the sheet is the sheet's,
+                                        // not the scrim's under it.
+                                        .occlude()
+                                        .map(|this| match side {
+                                            SidebarSide::Left => this.left_0(),
+                                            SidebarSide::Right => this.right_0(),
+                                        })
+                                        .child(panel),
+                                ),
                         )
                     })
                 } else {
@@ -532,6 +539,56 @@ impl RenderOnce for SidebarLayout {
                 }
             })
     }
+}
+
+/// What the sheet remembers while it is open: its focus handle, and the
+/// element that had focus before it opened.
+struct SheetFocus {
+    handle: FocusHandle,
+    previous: Option<WeakFocusHandle>,
+    open: bool,
+}
+
+/// The sheet's focus handle. Focus moves into the sheet when it opens and
+/// goes back to the element that had it when the sheet closes.
+fn sheet_focus(
+    state: &Entity<SidebarState>,
+    open: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> FocusHandle {
+    let keyed = window.use_keyed_state(
+        ElementId::NamedInteger("sidebar-sheet-focus".into(), state.entity_id().as_u64()),
+        cx,
+        |_, cx| SheetFocus {
+            handle: cx.focus_handle(),
+            previous: None,
+            open: false,
+        },
+    );
+    let handle = keyed.read(cx).handle.clone();
+    let (was_open, previous) = {
+        let focus = keyed.read(cx);
+        (focus.open, focus.previous.clone())
+    };
+    if open && !was_open {
+        let before = window.focused(cx).map(|focused| focused.downgrade());
+        keyed.update(cx, |focus, _| {
+            focus.previous = before;
+            focus.open = true;
+        });
+        let target = handle.clone();
+        window.defer(cx, move |window, cx| target.focus(window, cx));
+    } else if !open && was_open {
+        keyed.update(cx, |focus, _| {
+            focus.previous = None;
+            focus.open = false;
+        });
+        if let Some(before) = previous.and_then(|weak| weak.upgrade()) {
+            window.defer(cx, move |window, cx| before.focus(window, cx));
+        }
+    }
+    handle
 }
 
 /// The sidebar surface: a header that stays put, content that scrolls, and
