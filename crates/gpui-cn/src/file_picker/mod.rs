@@ -651,7 +651,8 @@ impl FilePickerState {
     /// while the path has no query, so that Cmd+A still selects the text
     /// of a query. Tells whether it took the key.
     fn select_all_key(&mut self, cx: &mut Context<Self>) -> bool {
-        let takes = self.multiple && self.browser.query.is_empty();
+        let takes =
+            self.multiple && self.browser.query.is_empty() && self.browser.new_folder.is_none();
         if takes {
             self.select_all(cx);
         }

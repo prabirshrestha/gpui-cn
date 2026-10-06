@@ -475,3 +475,31 @@ fn choosing_cancels_the_requests_still_running(cx: &mut TestAppContext) {
         );
     }
 }
+
+#[gpui_kit::test]
+fn select_all_in_the_new_folder_name_selects_the_name_not_the_files(cx: &mut TestAppContext) {
+    let setup = start(
+        cx,
+        Which::File,
+        FakeRemote::posix(),
+        Options {
+            multiple: true,
+            ..new_folder_options("/home/me")
+        },
+    );
+    click(&setup, part("new-folder-button"), cx);
+    type_text(&setup, "abc", cx);
+    press(&setup, SELECT_ALL, cx);
+    assert!(selection(&setup, cx).is_empty(), "no file was selected");
+    type_text(&setup, "Z", cx);
+    assert_eq!(
+        support::harness::text(&setup, cx),
+        "/home/me/",
+        "the path field is untouched"
+    );
+    cx.update(|cx| {
+        if let Picker::File(state) = &setup.picker {
+            assert_eq!(state.read(cx).new_folder_name(cx).as_deref(), Some("Z"));
+        }
+    });
+}

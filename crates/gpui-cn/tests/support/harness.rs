@@ -74,6 +74,7 @@ pub struct Options {
     pub allow_new_folder: bool,
     pub auth: bool,
     pub touch: bool,
+    pub multiple: bool,
     pub sign_in: Option<Rc<dyn Fn()>>,
 }
 
@@ -142,7 +143,8 @@ pub fn start<S: FolderSource + FileSource + Clone>(
                 let state = cx.new(|cx| {
                     let mut state = FilePickerState::new(window, cx)
                         .with_source(source.clone(), window, cx)
-                        .allow_new_folder(options.allow_new_folder);
+                        .allow_new_folder(options.allow_new_folder)
+                        .with_multiple(options.multiple);
                     if let Some(initial) = &options.initial {
                         state = state.with_initial(initial, window, cx);
                     }
