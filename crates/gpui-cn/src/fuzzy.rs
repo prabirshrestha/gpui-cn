@@ -101,7 +101,16 @@ fn score(
     indices: &mut Vec<u32>,
 ) -> Option<(u32, Vec<Range<usize>>)> {
     indices.clear();
-    let haystack = Utf32Str::new(text, buffer);
+    // One entry per char, so the indices nucleo returns are char indices.
+    // `Utf32Str::new` would merge a combining mark or a CRLF into one
+    // entry and shift every index after it.
+    let haystack = if text.is_ascii() {
+        Utf32Str::Ascii(text.as_bytes())
+    } else {
+        buffer.clear();
+        buffer.extend(text.chars());
+        Utf32Str::Unicode(buffer)
+    };
     let score =
         MATCHER.with(|matcher| atom.indices(haystack, &mut matcher.borrow_mut(), indices))?;
     indices.sort_unstable();
@@ -120,6 +129,16 @@ fn score(
 pub fn is_match(query: &str, text: &str) -> bool {
     let query = query.trim();
     query.is_empty() || matched(query, text).is_some()
+}
+
+/// How well `query` matches `text`: a higher score ranks first, `None` when
+/// it does not match. An empty query matches everything with score 0.
+pub fn score_of(query: &str, text: &str) -> Option<u32> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Some(0);
+    }
+    score(&atom(query), text, &mut Vec::new(), &mut Vec::new()).map(|(score, _)| score)
 }
 
 /// The byte ranges of `text` that `query` matches, or `None` when it does
@@ -219,6 +238,37 @@ mod tests {
         assert_eq!(found[0].ranges, vec![8..9, 10..12]);
         let accented = ["\u{e9}t\u{e9}"];
         assert_eq!(rank("t", &accented, |item| item)[0].ranges, vec![2..3]);
+    }
+
+    fn marked(query: &str, text: &str) -> Vec<String> {
+        matched(query, text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|range| text[range].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn marks_land_on_the_matched_characters_in_any_script() {
+        assert_eq!(marked("x", "e\u{301}x"), ["x"], "after a combining mark");
+        assert_eq!(
+            marked("b", "\u{1F468}\u{200D}\u{1F469}b"),
+            ["b"],
+            "after a ZWJ emoji"
+        );
+        assert_eq!(
+            marked("\u{6587}", "\u{65e5}\u{672c}\u{6587}\u{5b57}"),
+            ["\u{6587}"],
+            "CJK"
+        );
+        assert_eq!(marked("z", "\u{130}z"), ["z"], "after U+0130");
+        assert_eq!(marked("b", "a\r\nb"), ["b"], "after a CRLF");
+        assert_eq!(marked("cf", "caf\u{e9}"), ["c", "f"]);
+    }
+
+    #[test]
+    fn equal_scores_prefer_the_shorter_text_then_the_list_order() {
+        assert_eq!(found("a", &["ab", "a", "ac", "a"]), ["a", "a", "ab", "ac"]);
     }
 
     #[test]

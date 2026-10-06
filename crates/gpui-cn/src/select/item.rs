@@ -106,9 +106,7 @@ pub struct SelectItem<V> {
     label: SharedString,
     description: Option<SharedString>,
     leading: Option<Leading>,
-    /// The label and the keywords, lowercased, one per line: what a
-    /// query is looked for in. Built once, so a keystroke over ten
-    /// thousand rows allocates nothing per row.
+    /// Words the query is looked for in besides the label.
     keywords: Vec<SharedString>,
     disabled: bool,
 }
@@ -225,11 +223,21 @@ impl<V: SelectValue> SelectItem<V> {
     /// Whether the query matches the label or a keyword, as a fuzzy
     /// subsequence ignoring case. An empty query matches everything.
     pub fn matches(&self, query: &str) -> bool {
-        crate::fuzzy::is_match(query, &self.label)
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| crate::fuzzy::is_match(query, keyword))
+        self.match_score(query).is_some()
+    }
+
+    /// How well the query matches: the label's score, or half the best
+    /// keyword's score, since a keyword is a weaker hit. `None` for no
+    /// match, and 0 for an empty query.
+    pub fn match_score(&self, query: &str) -> Option<u32> {
+        let label = crate::fuzzy::score_of(query, &self.label);
+        let keyword = self
+            .keywords
+            .iter()
+            .filter_map(|keyword| crate::fuzzy::score_of(query, keyword))
+            .max()
+            .map(|score| score / 2);
+        label.max(keyword)
     }
 }
 
@@ -276,29 +284,61 @@ pub(crate) fn visible_entries<V: SelectValue>(
     let mut visible = Vec::with_capacity(entries.len());
     let mut pending_label: Option<usize> = None;
     let mut pending_separator: Option<usize> = None;
+    let mut group: Vec<(usize, u32)> = Vec::new();
+    // A group's matches go in best first, ties in the order given, under
+    // its label, with a separator only between two groups that show.
+    let flush = |group: &mut Vec<(usize, u32)>,
+                 visible: &mut Vec<usize>,
+                 pending_separator: &mut Option<usize>,
+                 pending_label: &mut Option<usize>| {
+        if group.is_empty() {
+            return;
+        }
+        if let Some(separator) = pending_separator.take()
+            && !visible.is_empty()
+        {
+            visible.push(separator);
+        }
+        if let Some(label) = pending_label.take() {
+            visible.push(label);
+        }
+        group.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        visible.extend(group.drain(..).map(|(index, _)| index));
+    };
     for (index, entry) in entries.iter().enumerate() {
         match entry {
             SelectEntry::Item(item) => {
-                if !item.matches(query) {
-                    continue;
+                if let Some(score) = item.match_score(query) {
+                    group.push((index, score));
                 }
-                if let Some(separator) = pending_separator.take()
-                    && !visible.is_empty()
-                {
-                    visible.push(separator);
-                }
-                if let Some(label) = pending_label.take() {
-                    visible.push(label);
-                }
-                visible.push(index);
             }
-            SelectEntry::Label(_) => pending_label = Some(index),
+            SelectEntry::Label(_) => {
+                flush(
+                    &mut group,
+                    &mut visible,
+                    &mut pending_separator,
+                    &mut pending_label,
+                );
+                pending_label = Some(index);
+            }
             SelectEntry::Separator => {
+                flush(
+                    &mut group,
+                    &mut visible,
+                    &mut pending_separator,
+                    &mut pending_label,
+                );
                 pending_label = None;
                 pending_separator = Some(index);
             }
         }
     }
+    flush(
+        &mut group,
+        &mut visible,
+        &mut pending_separator,
+        &mut pending_label,
+    );
     visible
 }
 
@@ -333,6 +373,53 @@ mod tests {
     }
 
     #[test]
+    fn a_query_ranks_the_rows_of_a_group_best_first() {
+        let entries: Vec<SelectEntry<&'static str>> = vec![
+            SelectEntry::label("Language"),
+            SelectItem::new("de", "Deutsch").keywords(["German"]).into(),
+            SelectItem::new("fr", "French").into(),
+            SelectItem::new("en", "English").into(),
+            SelectEntry::Separator,
+            SelectEntry::label("Other"),
+            SelectItem::new("x", "Zen").into(),
+            SelectItem::new("y", "Enigma").into(),
+        ];
+        let labels = |query: &str| -> Vec<String> {
+            visible_entries(&entries, query)
+                .into_iter()
+                .map(|index| match &entries[index] {
+                    SelectEntry::Item(item) => item.label().to_string(),
+                    SelectEntry::Label(text) => format!("# {text}"),
+                    SelectEntry::Separator => "--".to_string(),
+                })
+                .collect()
+        };
+        assert_eq!(
+            labels("en"),
+            [
+                "# Language",
+                "English",
+                "French",
+                "Deutsch",
+                "--",
+                "# Other",
+                "Enigma",
+                "Zen"
+            ],
+            "label hits beat the keyword hit, groups stay"
+        );
+        assert_eq!(
+            labels("").len(),
+            entries.len(),
+            "an empty query keeps the order"
+        );
+        assert_eq!(
+            visible_entries(&entries, ""),
+            (0..entries.len()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn an_empty_query_shows_every_row() {
         assert_eq!(visible_entries(&entries(), ""), vec![0, 1, 2, 3, 4, 5, 6]);
     }
@@ -343,7 +430,11 @@ mod tests {
         assert_eq!(visible_entries(&entries, "local"), vec![0, 2]);
         assert_eq!(visible_entries(&entries, "time"), vec![4, 6]);
         assert_eq!(visible_entries(&entries, "ated"), vec![4, 5, 6]);
-        assert_eq!(visible_entries(&entries, "l"), vec![0, 1, 2]);
+        assert_eq!(
+            visible_entries(&entries, "l"),
+            vec![0, 2, 1],
+            "Local starts with the letter, so it ranks above All chats"
+        );
         assert_eq!(
             visible_entries(&entries, " LOC "),
             vec![0, 2],

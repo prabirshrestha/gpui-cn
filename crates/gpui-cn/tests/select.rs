@@ -1437,3 +1437,39 @@ fn a_fuzzy_search_keeps_the_rows_it_matches_and_marks_the_characters(cx: &mut Te
         "d, t, s, h are marked in Deutsch"
     );
 }
+
+#[gpui_kit::test]
+fn a_query_highlights_the_best_match_not_the_first_listed(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |window, cx| {
+        SelectState::new(
+            [
+                SelectItem::new("de", "Deutsch").keywords(["German"]),
+                SelectItem::new("en", "English"),
+            ],
+            cx,
+        )
+        .with_search("Search", window, cx)
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.input("en", cx);
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let en = window.find(child("en")).bounds();
+        let de = window.find(child("de")).bounds();
+        assert!(en.top() < de.top(), "English is listed first");
+        assert_eq!(
+            setup
+                .state
+                .read(cx)
+                .highlighted()
+                .map(|item| item.value().to_string()),
+            Some("en".into()),
+            "and takes the highlight"
+        );
+    })
+    .unwrap();
+}

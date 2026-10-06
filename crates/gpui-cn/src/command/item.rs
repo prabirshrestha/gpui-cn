@@ -38,8 +38,7 @@ pub struct CommandItem {
     /// Boxed: an [`Icon`] carries a whole style, which would make every
     /// row kilobytes wide.
     icon: Option<Box<Icon>>,
-    /// The label and the keywords in lower case, one per line: what the
-    /// query is looked for in.
+    /// Words the query is looked for in besides the label.
     keywords: Vec<SharedString>,
     action: Option<Box<dyn Action>>,
     action_context: Option<FocusHandle>,
@@ -148,11 +147,20 @@ impl CommandItem {
     /// Whether the query matches the label or a keyword, as a fuzzy
     /// subsequence ignoring case. An empty query matches everything.
     pub(crate) fn matches(&self, query: &str) -> bool {
-        crate::fuzzy::is_match(query, &self.label)
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| crate::fuzzy::is_match(query, keyword))
+        self.match_score(query).is_some()
+    }
+
+    /// How well the query matches: the label's score, or half the best
+    /// keyword's, which is a weaker hit. `None` for no match.
+    pub(crate) fn match_score(&self, query: &str) -> Option<u32> {
+        let label = crate::fuzzy::score_of(query, &self.label);
+        let keyword = self
+            .keywords
+            .iter()
+            .filter_map(|keyword| crate::fuzzy::score_of(query, keyword))
+            .max()
+            .map(|score| score / 2);
+        label.max(keyword)
     }
 
     pub(crate) fn leading_icon(&self) -> Option<&Icon> {
@@ -270,12 +278,15 @@ pub(crate) fn rows(entries: &[CommandEntry], query: &str) -> Vec<Row> {
                 push(block, &mut rows, &mut pending_separator);
             }
             CommandEntry::Group(group) => {
-                let items: Vec<Row> = group
+                let mut hits: Vec<(&CommandItem, u32)> = group
                     .items
                     .iter()
-                    .filter(|item| item.matches(query))
-                    .cloned()
-                    .map(Row::Item)
+                    .filter_map(|item| Some((item, item.match_score(query)?)))
+                    .collect();
+                hits.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+                let items: Vec<Row> = hits
+                    .into_iter()
+                    .map(|(item, _)| Row::Item(item.clone()))
                     .collect();
                 let block = if items.is_empty() {
                     items
@@ -307,6 +318,21 @@ mod tests {
                 Row::Item(item) => item.key().to_string(),
             })
             .collect()
+    }
+
+    #[test]
+    fn a_query_ranks_the_commands_of_a_group_best_first() {
+        let entries = vec![
+            CommandGroup::new()
+                .heading("Language")
+                .items([
+                    CommandItem::new("de", "Deutsch").keywords(["German"]),
+                    CommandItem::new("en", "English"),
+                ])
+                .into(),
+        ];
+        assert_eq!(shape(&rows(&entries, "")), ["# Language", "de", "en"]);
+        assert_eq!(shape(&rows(&entries, "en")), ["# Language", "en", "de"]);
     }
 
     #[test]
