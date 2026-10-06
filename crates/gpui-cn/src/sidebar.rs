@@ -31,7 +31,7 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Element, ElementId, Entity,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, Element, ElementId, Entity,
     EventEmitter, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement as _,
     IntoElement, LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, WeakFocusHandle,
@@ -40,7 +40,7 @@ use gpui_kit::{
         Collapsible, Disableable, Placement, Selectable, Sheet, StyledExt as _,
         TestSupportExt as _, Transition, h_flex, transition, v_flex,
     },
-    div,
+    canvas, div, point,
     prelude::FluentBuilder as _,
     px,
 };
@@ -466,6 +466,28 @@ impl RenderOnce for SidebarLayout {
             .overflow_hidden()
             .children(self.children);
 
+        let bounds_state = window.use_keyed_state(
+            ElementId::NamedInteger("sidebar-layout-bounds".into(), id),
+            cx,
+            |_, _| None::<Bounds<Pixels>>,
+        );
+        let layout_bounds = *bounds_state.read(cx);
+        let probe = {
+            let keyed = bounds_state;
+            canvas(
+                move |bounds, window, cx| {
+                    if *keyed.read(cx) != Some(bounds) {
+                        keyed.update(cx, |held, _| *held = Some(bounds));
+                        window.refresh();
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
         div()
             .id(ElementId::NamedInteger("sidebar-layout".into(), id))
             .flex()
@@ -474,6 +496,7 @@ impl RenderOnce for SidebarLayout {
             .relative()
             .overflow_hidden()
             .refine_style(&self.style)
+            .child(probe)
             .on_drag_move::<SidebarResize>(move |event, _, cx| {
                 if event.drag(cx).0 != state.entity_id() {
                     return;
@@ -496,10 +519,16 @@ impl RenderOnce for SidebarLayout {
                     let scrim = cx.theme().scrim.opacity(progress);
                     let close_state = self.state.clone();
                     let focus = sheet_focus(&self.state, open, window, cx);
+                    let viewport = window.viewport_size();
+                    let area = layout_bounds.unwrap_or(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: viewport,
+                    });
                     this.child(inset).when(visible, |this| {
                         this.child(
                             Sheet::new(cx)
                                 .focus_handle(focus)
+                                .dismiss_before_y(area.origin.y)
                                 .request_close(move |_, cx| {
                                     close_state.update(cx, |state, cx| state.set_open(false, cx));
                                 })
@@ -508,18 +537,23 @@ impl RenderOnce for SidebarLayout {
                                         .id("sidebar-scrim")
                                         .test_support()
                                         .absolute()
-                                        .inset_0()
+                                        .left(area.origin.x)
+                                        .top(area.origin.y)
+                                        .w(area.size.width)
+                                        .h(area.size.height)
                                         .bg(scrim),
                                 )
                                 .surface(
                                     div()
                                         .absolute()
-                                        .top_0()
-                                        .bottom_0()
+                                        .top(area.origin.y)
+                                        .h(area.size.height)
                                         .occlude()
                                         .map(|this| match side {
-                                            SidebarSide::Left => this.left_0(),
-                                            SidebarSide::Right => this.right_0(),
+                                            SidebarSide::Left => this.left(area.origin.x),
+                                            SidebarSide::Right => {
+                                                this.right(viewport.width - area.right())
+                                            }
                                         })
                                         .child(panel),
                                 ),

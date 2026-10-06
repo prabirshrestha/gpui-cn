@@ -966,3 +966,73 @@ fn tab_keeps_focus_inside_the_open_sheet(cx: &mut TestAppContext) {
     frames(handle, cx);
     assert!(in_sheet(handle, cx));
 }
+
+struct BoxedHarness {
+    sidebar: Entity<SidebarState>,
+    side: gpui_cn::SidebarSide,
+}
+
+impl Render for BoxedHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(div().h(px(60.)).w_full())
+            .child(
+                div().flex_1().min_h_0().p(px(20.)).child(
+                    SidebarLayout::new(&self.sidebar)
+                        .side(self.side)
+                        .sidebar(
+                            Sidebar::new().child(
+                                SidebarGroup::new()
+                                    .child(SidebarMenuButton::new("inbox").label("Inbox")),
+                            ),
+                        )
+                        .child(div().id("content").test_support().size_full()),
+                ),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn the_sheet_sits_on_the_layout_box_not_the_window(cx: &mut TestAppContext) {
+    for side in [gpui_cn::SidebarSide::Left, gpui_cn::SidebarSide::Right] {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            gpui_cn::init(cx);
+            Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+        });
+        let sidebar = cx.new(|cx| SidebarState::new(cx));
+        let handle = cx.open_window(size(px(400.), px(800.)), |window, cx| {
+            let harness = cx.new(|_| BoxedHarness {
+                sidebar: sidebar.clone(),
+                side,
+            });
+            Root::new(harness, window, cx)
+        });
+        frames(handle, cx);
+        sidebar.update(cx, |state, cx| state.set_open(true, cx));
+        frames(handle, cx);
+        frames(handle, cx);
+        cx.update_window(handle.into(), |_, window, _| {
+            let layout = window.find("sidebar-inset").bounds();
+            let panel = window.find("sidebar-panel").bounds();
+            let scrim = window.find("sidebar-scrim").bounds();
+            assert!(layout.top() >= px(60.), "the layout is under the header");
+            assert!(
+                panel.top() >= layout.top() && panel.bottom() <= layout.bottom(),
+                "{side:?}: {panel:?} in {layout:?}"
+            );
+            assert!(
+                panel.left() >= layout.left() && panel.right() <= layout.right(),
+                "{side:?}: {panel:?} in {layout:?}"
+            );
+            assert_eq!(
+                scrim, layout,
+                "{side:?}: the scrim covers the layout box only"
+            );
+        })
+        .unwrap();
+    }
+}
