@@ -176,7 +176,7 @@
 //! ```
 //!
 //! The same source serves a [`FolderPicker`](crate::FolderPicker) by
-//! implementing [`FolderSource`](crate::FolderSource) with the same two methods and
+//! implementing [`FolderSource`](crate::FolderSource) with the same methods and
 //! [`FolderPage`](crate::FolderPage) in place of [`FilePage`](crate::FilePage).
 //!
 //! The gallery's "Remote (simulated)" switch on the file picker and folder

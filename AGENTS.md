@@ -102,8 +102,10 @@ Icons come from the Lucide set in the gpui-kit-assets crate, as
 `IconName` values. The application registers `gpui_kit::assets::Assets`,
 which holds the names listed in `default-icons.txt` in that crate. Other
 names render nothing unless the application registers
-`gpui_kit::assets::AllAssets`. Never copy an icon file into the
-repository.
+`gpui_kit::assets::AllAssets`. The composer family draws a few names the
+default set lacks, so an application that uses it registers
+`gpui_cn::ComposerAssets`, which adds them. Never copy an icon file into
+the repository.
 
 ## Check a change
 

@@ -40,7 +40,7 @@ use crate::{ActiveTheme as _, Theme};
 /// ```
 ///
 /// The look follows the switch and the radio: a thin fully rounded rail in
-/// a translucent ink, the filled range in the shared control accent, and a
+/// a translucent ink, the filled range in the primary color, and a
 /// round white thumb with a hairline and a soft shadow, centered on the rail.
 /// The rail is inset by half the thumb at each end, so the thumb at either
 /// end stays inside the control's box, and the ticks of `stops` are

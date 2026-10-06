@@ -438,6 +438,15 @@ impl Slot {
 ///
 /// The id derives the ids of the controls, so it must be stable across
 /// frames. `Styled` refines the card.
+///
+/// The builders `disabled`, `max_lines` and `placeholder` are applied to the
+/// state on every render, and each setter does nothing when the value is
+/// already the state's, so the frame that applies them again changes nothing
+/// and asks for no further frame.
+///
+/// The default icons (the mic, the shield, the file kinds, the git branch) are
+/// not in the default `gpui_kit::assets::Assets`: register
+/// [`ComposerAssets`](crate::ComposerAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct Composer {
@@ -615,13 +624,12 @@ impl RenderOnce for Composer {
         };
         let focused = input.read(cx).focus_handle(cx).contains_focused(window, cx);
         let theme = cx.theme();
-        let (fill, border, focus_border, radius, accent, pad, gap) = (
+        let (fill, border, focus_border, radius, accent, gap) = (
             theme.field,
             theme.field_border,
             theme.field_focus_border,
             theme.radius_xl(),
             theme.field_focus_border,
-            theme.metrics.composer_padding,
             theme.base.spacing.sm,
         );
         let (ink, muted) = (theme.foreground(), theme.muted_foreground());
@@ -810,7 +818,7 @@ impl RenderOnce for Composer {
             .flex_col()
             .w_full()
             .gap(gap)
-            .p(pad)
+            .p_1()
             .rounded(radius)
             .bg(fill)
             .border_1()

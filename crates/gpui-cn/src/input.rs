@@ -101,7 +101,6 @@ pub struct Field<M: InputModeKind> {
     mask_toggle: bool,
     context_menu: Option<TextMenuBuilder>,
     context_menu_enabled: bool,
-    placeholder_color: Option<Hsla>,
 }
 
 /// A single-line text field on an [`InputState`](crate::InputState).
@@ -150,14 +149,7 @@ impl<M: InputModeKind> Field<M> {
             mask_toggle: false,
             context_menu: None,
             context_menu_enabled: true,
-            placeholder_color: None,
         }
-    }
-
-    /// The color of the placeholder, in place of the muted text.
-    pub fn placeholder_color(mut self, color: impl Into<Hsla>) -> Self {
-        self.placeholder_color = Some(color.into());
-        self
     }
 
     /// The frame's id, for tests and focus.
@@ -277,10 +269,7 @@ impl<M: InputModeKind> RenderOnce for Field<M> {
             state.presentation()
         });
         let disabled = presentation.is_disabled();
-        let mut look = Look::read::<M>(disabled, cx);
-        if let Some(color) = self.placeholder_color {
-            look.placeholder = color;
-        }
+        let look = Look::read::<M>(disabled, cx);
         let menu_id = ElementId::NamedChild(self.id.clone().into(), "context-menu".into());
         let menu = window.use_keyed_state(menu_id.clone(), cx, |_, cx| MenuState::new(cx));
         let menu_open = menu.read(cx).is_open();

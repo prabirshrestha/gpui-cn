@@ -284,8 +284,8 @@ pub struct MetricTokens {
     pub slider_track: Pixels,
     /// The diameter of a slider's thumb: 16px, shadcn's `size-4`.
     pub slider_thumb: Pixels,
-    /// The diameter of a tick on a slider with stops: 4px, a step under
-    /// the track so the dot sits inside it.
+    /// The diameter of a tick on a slider with stops: 4px, as thick as the
+    /// track, so a dot on the rail reads as a stop and not a bump.
     pub slider_tick: Pixels,
     /// The diameter of a radio's ring: 16px, shadcn's `size-4`.
     pub radio_size: Pixels,
@@ -330,8 +330,6 @@ pub struct MetricTokens {
     /// How far the status tab is inset from each side of the card: 14px,
     /// the same screenshots (27px).
     pub status_tab_inset: Pixels,
-    /// The padding between a composer card's edge and its content: 4px.
-    pub composer_padding: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
     /// the reference app at 2x.
     pub menu_gap: Pixels,
@@ -359,9 +357,10 @@ pub struct MetricTokens {
     /// This value comes from shadcn, not from the reference app.
     pub command_dialog_width: Pixels,
     /// How far a command dialog sits below the top of the window: 120px,
-    /// so it rests in the upper third as Spotlight and shadcn's palette
-    /// do, and does not move when its content changes height. This value
-    /// comes from shadcn's placement, not from the reference app.
+    /// so it rests in the upper third as Spotlight does, and does not move
+    /// when its content changes height. This is gpui-cn's own choice: only
+    /// the width comes from shadcn, and neither comes from the reference
+    /// app.
     pub command_dialog_top: Pixels,
     /// The height of the folder picker's list: 6.5 rows, so the last row
     /// peeks over the edge and shows that the list scrolls. Measured from
@@ -509,7 +508,6 @@ impl MetricTokens {
             status_tab_inset: scaled(14.),
             status_tab_gap: scaled(28.),
             status_label_gap: scaled(8.),
-            composer_padding: scaled(4.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
             menu_search_min_width: scaled(240.),
@@ -1496,7 +1494,6 @@ mod tests {
         assert_eq!(m.status_tab_inset, px(14.));
         assert_eq!(m.status_tab_gap, px(28.));
         assert_eq!(m.status_label_gap, px(8.));
-        assert_eq!(m.composer_padding, px(4.));
     }
 
     #[test]

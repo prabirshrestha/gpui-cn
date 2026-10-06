@@ -427,8 +427,8 @@ impl Render for ComposerStory {
                     .gap_3()
                     .w(px(560.))
                     .child(note(
-                        "Every control is the application's to replace or leave out: here the \
-                         microphone is gone, a web button joins the toolbar, and the model \
+                        "Every control is the application's to replace or leave out: here a web \
+                         button joins the toolbar, and the model \
                          catalog and the permission modes are the application's own.",
                         cx,
                     ))
@@ -436,7 +436,6 @@ impl Render for ComposerStory {
                         Composer::new("composer-custom", &self.custom)
                             .placeholder("Ask the local model")
                             .max_lines(4)
-                            .show_mic(false)
                             .toolbar(
                                 Button::new("web")
                                     .ghost()
@@ -457,9 +456,9 @@ impl Render for ComposerStory {
                     .w(px(340.))
                     .child(note(
                         "A file tile shows a tinted icon and its name. An image shows its \
-                         picture. An uploading tile draws an arc around its border and counts \
-                         the percent; it swaps the counter for the dismiss button when the \
-                         upload ends.",
+                         picture. A queued or uploading tile draws a ring at its top left; an \
+                         uploading one also counts the percent at its top right, and swaps the \
+                         counter for the dismiss button when the upload ends.",
                         cx,
                     ))
                     .child(
@@ -581,7 +580,7 @@ impl Render for ComposerStory {
                             .context(92.),
                     )
                     .child(note(
-                        "Over a card stub the tab keeps its own 34px and the card's hairline \
+                        "Over a card stub the tab keeps its own 38px and the card's hairline \
                          covers its bottom edge.",
                         cx,
                     ))

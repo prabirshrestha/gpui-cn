@@ -1160,3 +1160,38 @@ fn number_shortcuts_count_the_rows_of_a_search_and_of_the_favorites(cx: &mut Tes
         "Cmd+2 chose the second favorite"
     );
 }
+
+#[gpui_kit::test]
+fn the_effort_levels_can_be_the_applications_own(cx: &mut TestAppContext) {
+    let setup = start(cx, catalog(), |state| {
+        state.with_effort_levels(["Fast", "Balanced", "Deep"])
+    });
+    cx.update_window(setup.handle.into(), |_, _, cx| {
+        setup.state.update(cx, |state, cx| {
+            state.select("acme-deep", cx);
+            state.set_effort(9, cx);
+        });
+    })
+    .unwrap();
+    let (effort, label, levels) = setup.state.read_with(cx, |state, _| {
+        (
+            state.effort(),
+            state.effort_label(),
+            state.effort_levels().to_vec(),
+        )
+    });
+    assert_eq!(levels.len(), 3);
+    assert_eq!(effort, Some(2), "clamped to the last of three levels");
+    assert_eq!(label.as_deref(), Some("Deep"));
+    assert!(
+        setup
+            .events
+            .borrow()
+            .contains(&ModelPickerEvent::EffortChanged(2))
+    );
+    let default = start(cx, catalog(), |state| state);
+    assert_eq!(
+        default.state.read_with(cx, |s, _| s.effort_levels().len()),
+        6
+    );
+}

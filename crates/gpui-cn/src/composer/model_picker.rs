@@ -22,13 +22,15 @@ use crate::{
     ActiveTheme as _, Button, ButtonSize, Icon, MenuEvent, MenuState, Popover, ScrollArea, Theme,
     collapse::{self, Need},
     fuzzy,
-    menu::{MenuLook, matched_text, row_frame, search_row, search_style, separator},
+    menu::{MenuLook, OpenSlot, matched_text, row_frame, search_row, search_style, separator},
 };
 
-/// The names of the six effort levels, from the lowest to the highest.
+/// The names of the six default effort levels, from the lowest to the
+/// highest.
 ///
-/// A model that supports effort runs at one of them. The composer's effort
-/// menu lists them in this order.
+/// A model that supports effort runs at one of them. The effort menu lists
+/// them in this order, unless
+/// [`ModelPickerState::with_effort_levels`] sets others.
 pub const EFFORT_LABELS: [&str; 6] = ["Low", "Medium", "High", "Extra high", "Ultra", "Max"];
 
 /// The effort a model starts at when it is first chosen: `Medium`.
@@ -208,6 +210,7 @@ impl ModelProvider {
 /// What the list of a [`ModelPicker`] shows: the favorites, or one
 /// provider's models. A query overrides both and searches every provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ModelView {
     /// The models the user starred, across providers.
     Favorites,
@@ -217,6 +220,7 @@ pub enum ModelView {
 
 /// What a [`ModelPickerState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ModelPickerEvent {
     /// A model was chosen. The payload is its id.
     Selected(SharedString),
@@ -390,6 +394,7 @@ pub struct ModelPickerState {
     providers: Vec<ModelProvider>,
     selected: Option<SharedString>,
     effort: u8,
+    effort_levels: Vec<SharedString>,
     favorites: Vec<SharedString>,
     view: ModelView,
     search: Entity<InputState>,
@@ -454,6 +459,7 @@ impl ModelPickerState {
             providers,
             selected: None,
             effort: DEFAULT_EFFORT,
+            effort_levels: EFFORT_LABELS.iter().map(|label| (*label).into()).collect(),
             favorites: Vec::new(),
             search,
             focus: cx.focus_handle(),
@@ -499,8 +505,33 @@ impl ModelPickerState {
 
     /// Starts the effort at `level`, clamped to the last level.
     pub fn with_effort(mut self, level: u8) -> Self {
-        self.effort = level.min((EFFORT_LABELS.len() - 1) as u8);
+        self.effort = level.min(self.last_effort());
         self
+    }
+
+    /// The names of the effort levels, lowest first, in place of
+    /// [`EFFORT_LABELS`]. `EffortChanged` and
+    /// [`effort`](Self::effort) are indices into them. An empty list
+    /// changes nothing. The effort is clamped to the new last level.
+    pub fn with_effort_levels(
+        mut self,
+        levels: impl IntoIterator<Item = impl Into<SharedString>>,
+    ) -> Self {
+        let levels: Vec<SharedString> = levels.into_iter().map(Into::into).collect();
+        if !levels.is_empty() {
+            self.effort_levels = levels;
+            self.effort = self.effort.min(self.last_effort());
+        }
+        self
+    }
+
+    /// The names of the effort levels, lowest first.
+    pub fn effort_levels(&self) -> &[SharedString] {
+        &self.effort_levels
+    }
+
+    fn last_effort(&self) -> u8 {
+        (self.effort_levels.len() - 1).min(usize::from(u8::MAX)) as u8
     }
 
     /// Starts with these favorites, in this order. An id the catalog does
@@ -592,7 +623,8 @@ impl ModelPickerState {
         self.rebuild(cx);
     }
 
-    /// The effort level of the chosen model, from `0` to `5`, or `None`
+    /// The effort level of the chosen model, an index into
+    /// [`effort_levels`](Self::effort_levels) (`0` to `5` by default), or `None`
     /// when no model is chosen or the chosen model has no effort setting.
     pub fn effort(&self) -> Option<u8> {
         self.selected_model()
@@ -601,14 +633,15 @@ impl ModelPickerState {
     }
 
     /// The name of the effort level, such as "Medium".
-    pub fn effort_label(&self) -> Option<&'static str> {
-        self.effort().map(|level| EFFORT_LABELS[usize::from(level)])
+    pub fn effort_label(&self) -> Option<SharedString> {
+        self.effort()
+            .map(|level| self.effort_levels[usize::from(level)].clone())
     }
 
     /// Sets the effort to `level`, clamped to the last level, and emits
     /// `EffortChanged`.
     pub fn set_effort(&mut self, level: u8, cx: &mut Context<Self>) {
-        let level = level.min((EFFORT_LABELS.len() - 1) as u8);
+        let level = level.min(self.last_effort());
         if level == self.effort {
             return;
         }
@@ -1237,7 +1270,7 @@ impl RenderOnce for ModelPicker {
             .on_open_change(on_open_change)
             .align(self.align)
             .track_focus(&search_focus)
-            .trigger(Slot { trigger, open })
+            .trigger(OpenSlot::fixed(trigger, open))
             .content(content)
             .w(width)
             .h(height)
@@ -1250,39 +1283,12 @@ impl RenderOnce for ModelPicker {
     }
 }
 
-/// A built trigger, which the popover marks open through `Selectable`.
-/// The picker already built it with the open flag it keeps itself.
-#[derive(IntoElement)]
-struct Slot {
-    trigger: gpui_kit::AnyElement,
-    open: bool,
-}
-
-impl Selectable for Slot {
-    fn selected(self, _: bool) -> Self {
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        false
-    }
-
-    fn open(self, _: bool) -> Self {
-        self
-    }
-
-    fn is_open(&self) -> bool {
-        self.open
-    }
-}
-
-impl RenderOnce for Slot {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.trigger
-    }
-}
-
 /// The panel: the rail, the search, and the list.
+///
+/// The panel reads its keys in one `on_key_down` handler and not through
+/// actions: a character typed anywhere in the panel must reach the search
+/// field, and a number with the secondary key must choose a row, which
+/// bindings in a context cannot tell apart from text.
 fn panel(
     id: &ElementId,
     state: &Entity<ModelPickerState>,

@@ -281,6 +281,10 @@ struct Look {
 ///
 /// The id keys motion and the dismiss button, so it must be stable across
 /// frames.
+///
+/// The default icons (the mic, the shield, the file kinds, the git branch) are
+/// not in the default `gpui_kit::assets::Assets`: register
+/// [`ComposerAssets`](crate::ComposerAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct AttachmentTile {

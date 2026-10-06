@@ -12,11 +12,13 @@ use crate::{
     ActiveTheme as _, Button, ButtonSize, DropdownMenu, Icon, MenuEntry, MenuEvent, MenuItem,
     MenuState,
     collapse::{self, Need},
-    menu::{MenuLook, label_block, line_slot, row_line},
+    menu::{MenuLook, OpenSlot, label_block, line_slot, row_line},
 };
 
 /// How many characters of its label the permission trigger keeps before it
-/// becomes an icon.
+/// becomes an icon. It keeps fewer than the other controls
+/// (`collapse::MIN_LABEL_CHARS`) because the mode names are short words,
+/// so six characters already tell them apart.
 const MIN_LABEL_CHARS: usize = 6;
 
 /// The key of the menu row that reports [`PermissionEvent::LearnMore`].
@@ -147,6 +149,7 @@ impl PermissionMode {
 
 /// What a [`PermissionState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PermissionEvent {
     /// The selected mode changed. The payload is its id.
     Changed(SharedString),
@@ -280,6 +283,10 @@ type TriggerBuilder = Box<dyn FnOnce(bool) -> gpui_kit::AnyElement>;
 ///     PermissionMenu::new("permission", &state)
 /// }
 /// ```
+///
+/// The default icons (the mic, the shield, the file kinds, the git branch) are
+/// not in the default `gpui_kit::assets::Assets`: register
+/// [`ComposerAssets`](crate::ComposerAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct PermissionMenu {
@@ -447,9 +454,7 @@ impl RenderOnce for PermissionMenu {
             .refine_style(&self.style)
             .items(move |_, cx| entries(&state, learn_more, cx));
         match self.trigger {
-            Some(build) => menu
-                .trigger(TriggerSlot { build, open: false })
-                .into_any_element(),
+            Some(build) => menu.trigger(OpenSlot::built(build)).into_any_element(),
             None => {
                 let button = Button::new(ElementId::NamedChild(self.id.into(), "trigger".into()))
                     .ghost()
@@ -492,38 +497,6 @@ impl RenderOnce for PermissionMenu {
                 menu.trigger(button).into_any_element()
             }
         }
-    }
-}
-
-/// A replaced trigger, built when the dropdown knows whether it is open.
-#[derive(IntoElement)]
-struct TriggerSlot {
-    build: TriggerBuilder,
-    open: bool,
-}
-
-impl Selectable for TriggerSlot {
-    fn selected(self, _: bool) -> Self {
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        false
-    }
-
-    fn open(mut self, open: bool) -> Self {
-        self.open = open;
-        self
-    }
-
-    fn is_open(&self) -> bool {
-        self.open
-    }
-}
-
-impl RenderOnce for TriggerSlot {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        (self.build)(self.open)
     }
 }
 

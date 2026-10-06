@@ -7,14 +7,16 @@ use gpui_kit::{
 };
 
 use crate::{
-    ActiveTheme as _, Button, ButtonSize, DropdownMenu, EFFORT_LABELS, Icon, MenuEntry, MenuItem,
+    ActiveTheme as _, Button, ButtonSize, DropdownMenu, Icon, MenuEntry, MenuItem,
     ModelPickerState,
     collapse::{self, Need},
 };
 
 /// The effort of the chosen model as a small dropdown: the level's name,
-/// such as "Medium", and a chevron. Its menu lists the six
-/// [`EFFORT_LABELS`] with a check on the current one, and choosing a level
+/// such as "Medium", and a chevron. Its menu lists the state's effort
+/// levels, [`EFFORT_LABELS`](crate::EFFORT_LABELS) unless
+/// [`with_effort_levels`](crate::ModelPickerState::with_effort_levels) set
+/// others, with a check on the current one, and choosing a level
 /// sets it on the [`ModelPickerState`], which reports
 /// [`ModelPickerEvent::EffortChanged`](crate::ModelPickerEvent::EffortChanged).
 ///
@@ -30,6 +32,10 @@ use crate::{
 ///     EffortMenu::new("effort", models)
 /// }
 /// ```
+///
+/// The default icons (the mic, the shield, the file kinds, the git branch) are
+/// not in the default `gpui_kit::assets::Assets`: register
+/// [`ComposerAssets`](crate::ComposerAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct EffortMenu {
@@ -66,8 +72,11 @@ impl EffortMenu {
         let padding = theme.metrics.control_padding_sm;
         let rem = window.rem_size();
         let gap = rems(0.375).to_pixels(rem);
-        let label = collapse::text_width(EFFORT_LABELS[usize::from(level)], window)
-            .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+        let label = collapse::text_width(
+            &self.state.read(cx).effort_levels()[usize::from(level)],
+            window,
+        )
+        .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
         Some(Need::flexible(
             padding * 2. + rems(1.).to_pixels(rem) + gap + label + gap + rems(0.75).to_pixels(rem),
             Some(theme.metrics.control_sm),
@@ -92,7 +101,7 @@ impl RenderOnce for EffortMenu {
             return gpui_kit::div().into_any_element();
         };
         let muted = cx.theme().muted_foreground();
-        let word = EFFORT_LABELS[usize::from(level)];
+        let word = self.state.read(cx).effort_levels()[usize::from(level)].clone();
         let min = match (self.icon_only, need.and_then(|need| need.icon_only)) {
             (true, Some(icon_only)) => icon_only,
             _ => need.map_or(px(0.), |need| need.min),
@@ -110,7 +119,7 @@ impl RenderOnce for EffortMenu {
         let trigger = if self.icon_only {
             button.tooltip(format!("Effort: {word}"))
         } else {
-            let keep = collapse::text_width(word, window)
+            let keep = collapse::text_width(&word, window)
                 .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
             button
                 .child(
@@ -132,12 +141,14 @@ impl RenderOnce for EffortMenu {
             .trigger(trigger)
             .items(move |_, cx| {
                 let current = state.read(cx).effort();
-                EFFORT_LABELS
+                state
+                    .read(cx)
+                    .effort_levels()
                     .iter()
                     .enumerate()
                     .map(|(index, label)| {
                         MenuEntry::from(
-                            MenuItem::new(index.to_string(), *label)
+                            MenuItem::new(index.to_string(), label.clone())
                                 .checked(current == Some(index as u8)),
                         )
                     })

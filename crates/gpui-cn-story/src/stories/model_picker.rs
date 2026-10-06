@@ -104,6 +104,7 @@ impl ModelPickerStory {
             ModelPickerEvent::FavoriteChanged { model, favorite } => {
                 format!("FavoriteChanged {model} {favorite}")
             }
+            other => format!("{other:?}"),
         }
         .into()
     }
@@ -379,7 +380,7 @@ impl Render for ModelPickerStory {
                 "Events",
                 note(
                     "ModelPickerState reports Selected, EffortChanged, ViewChanged, \
-                     OpenChanged, and FavoriteChanged. Selection and favorites are kept by \
+                     OpenChanged, LegacyToggled, and FavoriteChanged. Selection and favorites are kept by \
                      model id, so a catalog that changes keeps the ones still in it.",
                     cx,
                 ),

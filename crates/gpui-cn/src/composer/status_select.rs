@@ -95,6 +95,7 @@ impl StatusOption {
 
 /// What a [`StatusSelectState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StatusSelectEvent {
     /// Another option was chosen. The payload is its id.
     Changed(SharedString),
@@ -206,6 +207,10 @@ impl StatusSelectState {
 ///     StatusSelect::new("branch", &state).icon(IconName::GitBranch)
 /// }
 /// ```
+///
+/// The default icons (the mic, the shield, the file kinds, the git branch) are
+/// not in the default `gpui_kit::assets::Assets`: register
+/// [`ComposerAssets`](crate::ComposerAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct StatusSelect {

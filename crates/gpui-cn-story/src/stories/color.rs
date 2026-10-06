@@ -168,7 +168,9 @@ pub const REGISTRY: &[ColorToken] = &[
 ];
 
 /// The text-on-surface pairs the contrast table measures, as
-/// (label, text, surface).
+/// (label, text, surface). Each text color is what a component paints on
+/// that surface, so a pair that falls under the WCAG 4.5 ratio shows as a
+/// failure in the table.
 type Getter = fn(&ThemeTokens) -> Hsla;
 
 const PAIRS: &[(&str, Getter, Getter)] = &[

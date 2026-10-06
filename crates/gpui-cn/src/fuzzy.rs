@@ -20,6 +20,7 @@ use nucleo_matcher::{
 
 /// An item that matches the query, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Match {
     /// The index of the item in the list that was ranked.
     pub index: usize,
