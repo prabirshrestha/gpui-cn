@@ -397,19 +397,17 @@ fn the_model_picker_chooses_a_model_and_an_effort(cx: &mut TestAppContext) {
         window.render_frame(cx);
     })
     .unwrap();
-    open(&setup, cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        window.click(nested(part("models"), "effort"), cx);
+        window.render_frame(cx);
+        window.click(nested(part("effort"), "trigger"), cx);
         window.render_frame(cx);
         window.render_frame(cx);
-        let slider = window
-            .find(nested(part("models"), "effort-slider"))
-            .bounds();
-        window.click_at(
-            nested(part("models"), "effort-slider"),
-            gpui_kit::point(slider.size.width - px(1.), slider.size.height / 2.),
-            cx,
-        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(nested(part("effort"), "5"), cx);
         window.render_frame(cx);
     })
     .unwrap();

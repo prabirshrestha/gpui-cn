@@ -138,6 +138,15 @@ pub struct ThemeTokens {
     /// reference app's hovered menu row. On light the same step as a
     /// hovered sidebar row.
     pub popover_accent: Hsla,
+    /// The fill of a hovered or keyboard-highlighted row where another row
+    /// is chosen, such as in the model picker: halfway from the popover
+    /// surface to `popover_accent`, which is the chosen row's fill. Checked
+    /// first: `popover_accent` (the chosen fill itself), `popover_separator`
+    /// and `select_indicator` (a hairline and a check), and the sidebar
+    /// steps (on the sidebar surface, not a popover's). None is a step
+    /// below `popover_accent` on the popover surface. Not measured from the
+    /// reference app, whose picker screenshot shows no hovered row.
+    pub popover_hover: Hsla,
     /// A separator inside a popover: #3e3e3e on dark, sampled from the
     /// reference app's menus. The `border` step on light.
     pub popover_separator: Hsla,
@@ -212,17 +221,6 @@ pub struct ThemeTokens {
     /// The reference screenshots paint "Full access" #ef8b57 (this gives
     /// #fb894a on dark).
     pub warning_text: Hsla,
-    /// The fill of the model picker's provider rail: the popover surface a
-    /// step toward the ink on light (#f6f6f7 over white, as the picker design
-    /// screenshot) and a step toward the window on dark, so the rail reads
-    /// darker than the panel. Not measured from the reference app.
-    pub model_rail: Hsla,
-    /// The tile behind the selected provider in the rail: one more step
-    /// from `model_rail` toward the ink.
-    pub model_rail_selected: Hsla,
-    /// The pill of an effort chip on the highlighted model row: the popover
-    /// surface eight percent toward the ink on light, sixteen on dark.
-    pub model_chip: Hsla,
     /// The ring of a radio that is not chosen: the field hairline, which
     /// reads on a popover surface where the `input` hairline vanishes.
     pub radio_border: Hsla,
@@ -368,33 +366,23 @@ pub struct MetricTokens {
     pub attachment_icon: Pixels,
     /// The stroke of the arc that draws around an uploading tile: 2px.
     pub attachment_arc: Pixels,
-    /// The width of the model picker's panel: 341px (composer design spec;
-    /// not measured from the reference app).
+    /// The width of the model picker's panel: 361px, measured from the
+    /// reference app's picker at 2x (722px from edge to edge).
     pub model_picker_width: Pixels,
+    /// The height of the model picker's panel: 346px, the same screenshot
+    /// (693px). The panel never changes height: a short result leaves room,
+    /// an empty one centers its message in the list, and a long one scrolls
+    /// inside it.
+    pub model_picker_height: Pixels,
     /// The width of the provider rail at the picker's left: 44px, the same
-    /// source.
+    /// screenshot (89px).
     pub model_picker_rail: Pixels,
-    /// The height of a model row: 40px, measured from the picker design
-    /// screenshot at 2x.
+    /// The height of a two-line model row: 47px, the same screenshot, where
+    /// rows are 94px apart.
     pub model_row: Pixels,
-    /// The height of the model picker's list: six rows, in every state. The
-    /// panel never changes height: a short result leaves room, an empty one
-    /// centers its message in this box, and a long one, or an open effort
-    /// card, scrolls inside it.
-    pub model_list_height: Pixels,
-    /// The height of the picker's header row, "Models" and Quick Search:
-    /// 34px, the same screenshot.
+    /// The height of the picker's search row, from the panel's top edge to
+    /// the underline: 42px, the same screenshot (83px).
     pub model_header: Pixels,
-    /// The width of the picker's Quick Search field: 150px, the same
-    /// screenshot.
-    pub model_search_width: Pixels,
-    /// The corner radius of the picker's panel: 20px, the same screenshot.
-    pub model_picker_radius: Pixels,
-    /// The height of the effort card that opens under the chosen model: 88px,
-    /// which is two paddings, three 16px rows, and two gaps of 8px.
-    pub effort_card_height: Pixels,
-    /// The padding on every side of the effort card: 12px.
-    pub effort_card_padding: Pixels,
     /// The height of a composer's status tab: 38px, measured from the reference
     /// composer screenshots at 2x (76px from the top of the tab to the top
     /// of the card).
@@ -588,15 +576,11 @@ impl MetricTokens {
             attachment_tile: scaled(56.),
             attachment_icon: scaled(18.),
             attachment_arc: scaled(2.),
-            model_picker_width: scaled(341.),
+            model_picker_width: scaled(361.),
+            model_picker_height: scaled(346.),
             model_picker_rail: scaled(44.),
-            model_row: scaled(40.),
-            model_header: scaled(34.),
-            model_search_width: scaled(150.),
-            model_picker_radius: scaled(20.),
-            model_list_height: scaled(240.),
-            effort_card_height: scaled(88.),
-            effort_card_padding: scaled(12.),
+            model_row: scaled(47.),
+            model_header: scaled(42.),
             status_tab_height: scaled(38.),
             status_tab_inset: scaled(14.),
             status_tab_gap: scaled(28.),
@@ -748,6 +732,7 @@ impl ThemeTokens {
         let popover_step = |amount: f32| mix(popover, ink, amount);
         let popover_border = if dark { popover_step(0.13) } else { border };
         let popover_accent = popover_step(if dark { 0.09 } else { 0.033 });
+        let popover_hover = mix(popover, popover_accent, 0.5);
         let popover_separator = if dark { popover_step(0.095) } else { border };
         let popover_muted_foreground = mix(ink, popover, if dark { 0.32 } else { 0.38 });
         let select_indicator = mix(ink, popover, if dark { 0.227 } else { 0.38 });
@@ -771,11 +756,6 @@ impl ThemeTokens {
             ink,
             0.1,
         );
-        let model_rail = if dark {
-            mix(popover, surface, 0.4)
-        } else {
-            mix(popover, ink, 0.04)
-        };
         let turned = |hue_degrees: f32| Hsla {
             h: hue_degrees / 360.,
             ..config.accent
@@ -889,6 +869,7 @@ impl ThemeTokens {
             popover_foreground: ink,
             popover_border,
             popover_accent,
+            popover_hover,
             popover_separator,
             popover_muted_foreground,
             select_indicator,
@@ -908,9 +889,6 @@ impl ThemeTokens {
             composer_placeholder,
             composer_muted,
             warning_text,
-            model_rail,
-            model_rail_selected: mix(model_rail, ink, if dark { 0.08 } else { 0.05 }),
-            model_chip: mix(popover, ink, if dark { 0.16 } else { 0.08 }),
             radio_border: field_border,
             kind_document: muted_foreground,
             kind_spreadsheet: config.accent,
@@ -1659,32 +1637,53 @@ mod tests {
     #[test]
     fn model_picker_metrics_and_the_radio_ring_are_derived() {
         let (dark, light) = (dark(), light());
-        assert_eq!(dark.metrics.model_picker_width, px(341.));
+        assert_eq!(dark.metrics.model_picker_width, px(361.));
+        assert_eq!(dark.metrics.model_picker_height, px(346.));
         assert_eq!(dark.metrics.model_picker_rail, px(44.));
-        assert_eq!(dark.metrics.model_row, px(40.));
-        assert_eq!(dark.metrics.model_header, px(34.));
-        assert_eq!(dark.metrics.model_picker_radius, px(20.));
-        assert_eq!(dark.metrics.model_list_height, px(240.), "six rows");
-        assert_eq!(dark.metrics.effort_card_height, px(88.));
+        assert_eq!(dark.metrics.model_row, px(47.));
+        assert_eq!(dark.metrics.model_header, px(42.));
         assert_eq!(dark.radio_border, dark.field_border);
         assert_eq!(to_hex(dark.radio_border), "#3b3b3b");
         assert_eq!(to_hex(light.radio_border), "#e5e5e6");
-        assert_eq!(
-            [
-                to_hex(dark.model_rail),
-                to_hex(dark.model_rail_selected),
-                to_hex(dark.model_chip)
-            ],
-            ["#242424", "#333333", "#4a4a4a"]
-        );
-        assert_eq!(
-            [
-                to_hex(light.model_rail),
-                to_hex(light.model_rail_selected),
-                to_hex(light.model_chip)
-            ],
-            ["#f5f5f5", "#e8e8e9", "#eaeaeb"]
-        );
+    }
+
+    #[test]
+    fn the_model_picker_paints_with_the_menu_tokens_in_both_appearances() {
+        for theme in [dark(), light()] {
+            let picker = crate::composer::PickerLook::of(&theme, px(16.));
+            let select = crate::menu::MenuLook::of(&theme, px(16.));
+            let menu = &picker.menu;
+            assert_eq!(menu.surface, theme.popover, "surface");
+            assert_eq!(menu.border, theme.popover_border, "panel hairline");
+            assert_eq!(menu.accent, theme.popover_accent, "chosen row");
+            assert_eq!(picker.hover, theme.popover_hover, "hovered row");
+            assert_eq!(menu.separator, theme.popover_separator, "dividers");
+            for (picker, select) in [
+                (menu.surface, select.surface),
+                (menu.border, select.border),
+                (menu.accent, select.accent),
+                (menu.separator, select.separator),
+                (menu.foreground, select.foreground),
+                (menu.muted_foreground, select.muted_foreground),
+            ] {
+                assert_eq!(picker, select, "the picker and a select menu agree");
+            }
+            assert_eq!(menu.row_radius, select.row_radius);
+        }
+    }
+
+    #[test]
+    fn a_hovered_picker_row_is_between_the_menu_surface_and_its_highlight() {
+        for theme in [dark(), light()] {
+            let (surface, hover, accent) = (
+                lightness(theme.popover),
+                lightness(theme.popover_hover),
+                lightness(theme.popover_accent),
+            );
+            let (low, high) = (surface.min(accent), surface.max(accent));
+            assert!(hover > low && hover < high, "{surface} {hover} {accent}");
+        }
+        assert_eq!(to_hex(dark().popover_hover), "#343434");
     }
 
     #[test]

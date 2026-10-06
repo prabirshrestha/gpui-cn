@@ -84,9 +84,9 @@ pub use command_dialog::CommandDialog;
 pub use composer::{
     Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
     ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
-    ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider, PermissionEvent,
-    PermissionMenu, PermissionMode, PermissionState, PermissionTone, StatusOption, StatusSelect,
-    StatusSelectEvent, StatusSelectState,
+    EffortMenu, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,
+    ModelView, PermissionEvent, PermissionMenu, PermissionMode, PermissionState, PermissionTone,
+    StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
 pub use file_picker::{
@@ -195,6 +195,7 @@ pub fn init(cx: &mut App) {
     select::init(cx);
     menu::init(cx);
     command::init(cx);
+    composer::init_model_picker(cx);
     folder_picker::init(cx);
     file_picker::init(cx);
     cx.set_global(Initialized);

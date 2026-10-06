@@ -1,15 +1,17 @@
 use std::f32::consts::PI;
 
 use gpui_kit::{
-    App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, RenderOnce,
-    SharedString, StyleRefinement, Styled, Subscription, Window,
+    App, AppContext as _, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, ListAlignment,
+    ListState, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, Subscription, Window, actions,
     assets::IconName,
     base::{
-        Align, Radio as BaseRadio, Selectable, StyledExt as _, TestSupportExt as _,
-        actions::Cancel,
+        Align, Selectable, StyledExt as _, TestSupportExt as _,
+        actions::{Confirm, SelectDown, SelectUp},
+        h_flex,
         input::{InputEvent, InputState},
-        slider::{SliderEvent, SliderState},
+        transition, v_flex,
     },
     div,
     prelude::FluentBuilder as _,
@@ -17,19 +19,48 @@ use gpui_kit::{
 };
 
 use crate::{
-    ActiveTheme as _, Button, ButtonSize, Icon, Input, Popover, RadioMark, ScrollArea, Slider,
-    menu::{MenuLook, search_style},
+    ActiveTheme as _, Button, ButtonSize, Icon, MenuEvent, MenuState, Popover, ScrollArea, Theme,
+    menu::{MenuLook, search_row, search_style},
 };
 
 /// The names of the six effort levels, from the lowest to the highest.
 ///
-/// The levels are the stops of the effort slider: a model that supports
-/// effort runs at one of them, `Faster` at the first and `Smarter` at the
-/// last.
+/// A model that supports effort runs at one of them. The composer's effort
+/// menu lists them in this order.
 pub const EFFORT_LABELS: [&str; 6] = ["Low", "Medium", "High", "Extra high", "Ultra", "Max"];
 
 /// The effort a model starts at when it is first chosen: `Medium`.
 const DEFAULT_EFFORT: u8 = 1;
+
+/// How many rows get a number shortcut: Cmd+1 to Cmd+9.
+const SHORTCUT_ROWS: usize = 9;
+
+/// The key context of the panel, which takes Up, Down, Enter, Home, and End
+/// the search field passes on.
+const CONTEXT: &str = "GpuiCnModelPicker";
+
+actions!(
+    gpui_cn_model_picker,
+    [
+        /// Moves the highlight to the first row.
+        FirstRow,
+        /// Moves the highlight to the last row.
+        LastRow
+    ]
+);
+
+pub(crate) fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("up", SelectUp, Some(CONTEXT)),
+        KeyBinding::new("down", SelectDown, Some(CONTEXT)),
+        KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
+        // The search field binds Home and End to move its caret. A binding
+        // for the field inside the panel is as deep and comes later, so it
+        // runs first, and it hands the key on while a query is typed.
+        KeyBinding::new("home", FirstRow, Some("GpuiCnModelPicker > Input")),
+        KeyBinding::new("end", LastRow, Some("GpuiCnModelPicker > Input")),
+    ]);
+}
 
 /// A model a [`ModelPicker`] offers.
 ///
@@ -41,6 +72,7 @@ const DEFAULT_EFFORT: u8 = 1;
 ///
 /// let model = ModelEntry::new("gpt-5.6-mini", "GPT-5.6 Mini").effort(true);
 /// assert!(model.supports_effort());
+/// assert!(!model.is_legacy());
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -48,23 +80,32 @@ pub struct ModelEntry {
     id: SharedString,
     name: SharedString,
     effort: bool,
+    legacy: bool,
 }
 
 impl ModelEntry {
     /// A model with a stable id and the name it shows. It has no effort
-    /// setting.
+    /// setting and is not legacy.
     pub fn new(id: impl Into<SharedString>, name: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
             effort: false,
+            legacy: false,
         }
     }
 
-    /// Whether the model has an effort setting. A model that does shows an
-    /// effort chip while it is the chosen one.
+    /// Whether the model has an effort setting. While it is the chosen
+    /// model, the composer shows its effort menu.
     pub fn effort(mut self, supported: bool) -> Self {
         self.effort = supported;
+        self
+    }
+
+    /// Whether the model is legacy. A provider's legacy models fold into a
+    /// collapsed "Legacy models" group at the top of its list.
+    pub fn legacy(mut self, legacy: bool) -> Self {
+        self.legacy = legacy;
         self
     }
 
@@ -81,6 +122,11 @@ impl ModelEntry {
     /// Whether the model has an effort setting.
     pub fn supports_effort(&self) -> bool {
         self.effort
+    }
+
+    /// Whether the model is legacy.
+    pub fn is_legacy(&self) -> bool {
+        self.legacy
     }
 }
 
@@ -147,6 +193,16 @@ impl ModelProvider {
     }
 }
 
+/// What the list of a [`ModelPicker`] shows: the favorites, or one
+/// provider's models. A query overrides both and searches every provider.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelView {
+    /// The models the user starred, across providers.
+    Favorites,
+    /// The models of the provider with this id.
+    Provider(SharedString),
+}
+
 /// What a [`ModelPickerState`] reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelPickerEvent {
@@ -154,34 +210,153 @@ pub enum ModelPickerEvent {
     Selected(SharedString),
     /// The effort level changed, from `0` to `5`.
     EffortChanged(u8),
-    /// The rail's provider changed. The payload is its id.
-    ProviderChanged(SharedString),
+    /// The rail's entry changed. The payload is the new view.
+    ViewChanged(ModelView),
     /// The panel opened or closed.
     OpenChanged(bool),
+    /// A model was starred or unstarred. The application keeps the
+    /// favorites, so it saves them on this event.
+    FavoriteChanged {
+        /// The id of the model.
+        model: SharedString,
+        /// Whether it is a favorite now.
+        favorite: bool,
+    },
 }
 
-/// The catalog, the chosen model and its effort, the rail's provider, the
-/// quick search, and the open panel of a [`ModelPicker`].
+/// One row of the list: the fold of legacy models, or a model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    /// The "Legacy models" header, with how many models it folds.
+    Legacy(usize),
+    /// A model by provider and model index, and its shortcut number
+    /// (from `1`) when it is among the first nine models.
+    Model {
+        provider: usize,
+        model: usize,
+        number: Option<usize>,
+    },
+}
+
+/// The rows the list shows. A query shows every model of every provider
+/// whose name or whose provider's name contains it, ignoring case. With no
+/// query the favorites view shows the starred models in the order they
+/// were starred, and a provider's view shows its models, its legacy ones
+/// folded under a header at the top and listed only while the fold is
+/// open.
+fn build_rows(
+    providers: &[ModelProvider],
+    view: &ModelView,
+    query: &str,
+    favorites: &[SharedString],
+    legacy_open: bool,
+) -> Vec<Row> {
+    let query = query.trim().to_lowercase();
+    let model = |provider, model| Row::Model {
+        provider,
+        model,
+        number: None,
+    };
+    let mut rows = Vec::new();
+    if !query.is_empty() {
+        for (p, provider) in providers.iter().enumerate() {
+            let provider_matches = provider.name.to_lowercase().contains(&query);
+            for (m, entry) in provider.models.iter().enumerate() {
+                if provider_matches || entry.name.to_lowercase().contains(&query) {
+                    rows.push(model(p, m));
+                }
+            }
+        }
+    } else {
+        match view {
+            ModelView::Favorites => {
+                for id in favorites {
+                    if let Some((p, m)) = find_model(providers, id) {
+                        rows.push(model(p, m));
+                    }
+                }
+            }
+            ModelView::Provider(id) => {
+                if let Some((p, provider)) = providers
+                    .iter()
+                    .enumerate()
+                    .find(|(_, provider)| &provider.id == id)
+                {
+                    let legacy = provider.models.iter().filter(|m| m.legacy).count();
+                    if legacy > 0 {
+                        rows.push(Row::Legacy(legacy));
+                        if legacy_open {
+                            rows.extend(
+                                provider
+                                    .models
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, m)| m.legacy)
+                                    .map(|(m, _)| model(p, m)),
+                            );
+                        }
+                    }
+                    rows.extend(
+                        provider
+                            .models
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, m)| !m.legacy)
+                            .map(|(m, _)| model(p, m)),
+                    );
+                }
+            }
+        }
+    }
+    let mut number = 0;
+    for row in &mut rows {
+        if let Row::Model { number: slot, .. } = row {
+            number += 1;
+            *slot = (number <= SHORTCUT_ROWS).then_some(number);
+        }
+    }
+    rows
+}
+
+fn find_model(providers: &[ModelProvider], id: &str) -> Option<(usize, usize)> {
+    providers.iter().enumerate().find_map(|(p, provider)| {
+        provider
+            .models
+            .iter()
+            .position(|model| model.id == id)
+            .map(|m| (p, m))
+    })
+}
+
+/// The catalog, the chosen model and its effort, the favorites, the view
+/// the rail shows, the search, and the open panel of a [`ModelPicker`].
 ///
 /// Owned by the view that shows the picker, which observes it so a change
-/// renders. The choice is kept by model id, so a catalog that changes
-/// under it keeps the choice when the model is still there.
+/// renders. The choice and the favorites are kept by model id, so a catalog
+/// that changes under them keeps the ones whose model is still there. The
+/// state does not save anything: the application listens for
+/// [`ModelPickerEvent::FavoriteChanged`] and seeds the favorites again with
+/// [`with_favorites`](Self::with_favorites).
 pub struct ModelPickerState {
     providers: Vec<ModelProvider>,
     selected: Option<SharedString>,
     effort: u8,
-    active: SharedString,
+    favorites: Vec<SharedString>,
+    view: ModelView,
     search: Entity<InputState>,
     focus: FocusHandle,
-    slider: Entity<SliderState>,
+    effort_menu: Entity<MenuState>,
     open: bool,
-    effort_open: bool,
+    legacy_open: bool,
+    rows: Vec<Row>,
+    highlighted: Option<usize>,
+    list: ListState,
     _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<ModelPickerEvent> for ModelPickerState {}
 
-/// The quick search's focus, which holds the keyboard while the panel is
+/// The search field's focus, which holds the keyboard while the panel is
 /// open.
 impl gpui_kit::Focusable for ModelPickerState {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -189,36 +364,9 @@ impl gpui_kit::Focusable for ModelPickerState {
     }
 }
 
-/// The models that show for a query, as `(provider, model)` indices: an
-/// empty query shows the active provider's models, and a query shows every
-/// model of every provider whose name or whose provider's name contains
-/// it, without regard to case.
-fn visible_models(providers: &[ModelProvider], active: &str, query: &str) -> Vec<(usize, usize)> {
-    let query = query.trim().to_lowercase();
-    providers
-        .iter()
-        .enumerate()
-        .filter(|(_, provider)| query.is_empty() && provider.id == active || !query.is_empty())
-        .flat_map(|(p, provider)| {
-            let provider_matches = provider.name.to_lowercase().contains(&query);
-            let query = query.clone();
-            provider
-                .models
-                .iter()
-                .enumerate()
-                .filter(move |(_, model)| {
-                    query.is_empty()
-                        || provider_matches
-                        || model.name.to_lowercase().contains(&query)
-                })
-                .map(move |(m, _)| (p, m))
-        })
-        .collect()
-}
-
 impl ModelPickerState {
-    /// A picker over `providers` with nothing chosen. The rail starts on
-    /// the first provider.
+    /// A picker over `providers` with nothing chosen and no favorites. The
+    /// rail starts on the first provider.
     pub fn new(
         providers: impl IntoIterator<Item = ModelProvider>,
         window: &mut Window,
@@ -227,44 +375,47 @@ impl ModelPickerState {
         let providers: Vec<_> = providers.into_iter().collect();
         let style = search_style(cx.theme());
         let search = cx.new(|cx| {
-            let mut input = InputState::new(window, cx).placeholder("Quick Search");
+            let mut input = InputState::new(window, cx).placeholder("Search models...");
             input.set_editor_style(style);
             input
         });
-        let slider = cx.new(|_| {
-            SliderState::new()
-                .min(0.)
-                .max((EFFORT_LABELS.len() - 1) as f32)
-                .step(1.)
-                .default_value(f32::from(DEFAULT_EFFORT))
-        });
+        let effort_menu = cx.new(MenuState::new);
+        let overdraw = cx.theme().metrics.model_picker_height;
         let subscriptions = vec![
-            cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+            cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    cx.notify();
+                    this.rebuild(cx);
                 }
             }),
-            cx.subscribe(&slider, |this, _, event: &SliderEvent, cx| {
-                if let SliderEvent::Change(value) = event {
-                    this.set_effort(value.end().round() as u8, cx);
+            cx.subscribe(&effort_menu, |this, _, event: &MenuEvent, cx| {
+                if let MenuEvent::Activated(key) = event
+                    && let Ok(level) = key.parse::<u8>()
+                {
+                    this.set_effort(level, cx);
                 }
             }),
         ];
-        Self {
-            active: providers
+        let mut state = Self {
+            view: providers
                 .first()
-                .map(|provider| provider.id.clone())
-                .unwrap_or_default(),
+                .map(|provider| ModelView::Provider(provider.id.clone()))
+                .unwrap_or(ModelView::Favorites),
             providers,
             selected: None,
             effort: DEFAULT_EFFORT,
+            favorites: Vec::new(),
             search,
             focus: cx.focus_handle(),
-            slider,
+            effort_menu,
             open: false,
-            effort_open: false,
+            legacy_open: false,
+            rows: Vec::new(),
+            highlighted: None,
+            list: ListState::new(0, ListAlignment::Top, overdraw),
             _subscriptions: subscriptions,
-        }
+        };
+        state.refresh_rows("");
+        state
     }
 
     /// Chooses the model with `id`, if the catalog has it. The rail moves
@@ -272,8 +423,23 @@ impl ModelPickerState {
     pub fn with_selected(mut self, id: impl Into<SharedString>) -> Self {
         let id = id.into();
         if let Some(provider) = self.provider_of(&id) {
-            self.active = provider.id.clone();
+            self.view = ModelView::Provider(provider.id.clone());
             self.selected = Some(id);
+            self.refresh_rows("");
+        }
+        self
+    }
+
+    /// Starts on `view`: the favorites, or a provider the catalog holds.
+    /// A provider it does not hold changes nothing.
+    pub fn with_view(mut self, view: ModelView) -> Self {
+        let known = match &view {
+            ModelView::Favorites => true,
+            ModelView::Provider(id) => self.providers.iter().any(|provider| &provider.id == id),
+        };
+        if known {
+            self.view = view;
+            self.refresh_rows("");
         }
         self
     }
@@ -281,6 +447,22 @@ impl ModelPickerState {
     /// Starts the effort at `level`, clamped to the last level.
     pub fn with_effort(mut self, level: u8) -> Self {
         self.effort = level.min((EFFORT_LABELS.len() - 1) as u8);
+        self
+    }
+
+    /// Starts with these favorites, in this order. An id the catalog does
+    /// not hold is ignored, and so is a repeat.
+    pub fn with_favorites(
+        mut self,
+        ids: impl IntoIterator<Item = impl Into<SharedString>>,
+    ) -> Self {
+        for id in ids {
+            let id = id.into();
+            if find_model(&self.providers, &id).is_some() && !self.favorites.contains(&id) {
+                self.favorites.push(id);
+            }
+        }
+        self.refresh_rows("");
         self
     }
 
@@ -295,8 +477,8 @@ impl ModelPickerState {
         &self.providers
     }
 
-    /// Replaces the catalog. The choice stays when its model is still in
-    /// the catalog and is cleared when it is not.
+    /// Replaces the catalog. The choice and the favorites stay for models
+    /// still in the catalog and are dropped for the others.
     pub fn set_providers(
         &mut self,
         providers: impl IntoIterator<Item = ModelProvider>,
@@ -308,18 +490,19 @@ impl ModelPickerState {
         {
             self.selected = None;
         }
-        if !self
-            .providers
-            .iter()
-            .any(|provider| provider.id == self.active)
+        let providers = &self.providers;
+        self.favorites
+            .retain(|id| find_model(providers, id).is_some());
+        if let ModelView::Provider(id) = &self.view
+            && !self.providers.iter().any(|provider| &provider.id == id)
         {
-            self.active = self
+            self.view = self
                 .providers
                 .first()
-                .map(|provider| provider.id.clone())
-                .unwrap_or_default();
+                .map(|provider| ModelView::Provider(provider.id.clone()))
+                .unwrap_or(ModelView::Favorites);
         }
-        cx.notify();
+        self.rebuild(cx);
     }
 
     /// The id of the chosen model.
@@ -346,15 +529,14 @@ impl ModelPickerState {
         let Some(provider) = self.provider_of(&id) else {
             return;
         };
-        let provider = provider.id.clone();
+        let view = ModelView::Provider(provider.id.clone());
         self.selected = Some(id.clone());
-        self.effort_open = false;
-        if self.active != provider {
-            self.active = provider.clone();
-            cx.emit(ModelPickerEvent::ProviderChanged(provider));
+        if self.view != view && self.view != ModelView::Favorites {
+            self.view = view.clone();
+            cx.emit(ModelPickerEvent::ViewChanged(view));
         }
         cx.emit(ModelPickerEvent::Selected(id));
-        cx.notify();
+        self.rebuild(cx);
     }
 
     /// The effort level of the chosen model, from `0` to `5`, or `None`
@@ -382,50 +564,126 @@ impl ModelPickerState {
         cx.notify();
     }
 
-    /// The id of the provider the rail shows.
-    pub fn active_provider(&self) -> &SharedString {
-        &self.active
+    /// The favorite models' ids, in the order they were starred.
+    pub fn favorites(&self) -> &[SharedString] {
+        &self.favorites
     }
 
-    /// Shows the models of the provider with `id`, and clears the quick
-    /// search so they show.
-    pub fn set_active_provider(
+    /// Whether the model with `id` is a favorite.
+    pub fn is_favorite(&self, id: &str) -> bool {
+        self.favorites.iter().any(|favorite| favorite == id)
+    }
+
+    /// Stars or unstars the model with `id` and emits `FavoriteChanged`.
+    /// An unknown id, or a model already in that state, changes nothing.
+    pub fn set_favorite(
         &mut self,
         id: impl Into<SharedString>,
-        window: &mut Window,
+        favorite: bool,
         cx: &mut Context<Self>,
     ) {
         let id = id.into();
-        if !self.providers.iter().any(|provider| provider.id == id) {
+        if find_model(&self.providers, &id).is_none() || self.is_favorite(&id) == favorite {
+            return;
+        }
+        if favorite {
+            self.favorites.push(id.clone());
+        } else {
+            self.favorites.retain(|existing| existing != &id);
+        }
+        cx.emit(ModelPickerEvent::FavoriteChanged {
+            model: id,
+            favorite,
+        });
+        self.rebuild(cx);
+    }
+
+    /// Stars the model if it is not a favorite and unstars it if it is.
+    pub fn toggle_favorite(&mut self, id: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let id = id.into();
+        let favorite = !self.is_favorite(&id);
+        self.set_favorite(id, favorite, cx);
+    }
+
+    /// What the rail has selected.
+    pub fn view(&self) -> &ModelView {
+        &self.view
+    }
+
+    /// Shows `view` and clears the search so its models show. A provider
+    /// the catalog does not hold changes nothing.
+    pub fn set_view(&mut self, view: ModelView, window: &mut Window, cx: &mut Context<Self>) {
+        if let ModelView::Provider(id) = &view
+            && !self.providers.iter().any(|provider| &provider.id == id)
+        {
             return;
         }
         self.set_query("", window, cx);
-        if self.active != id {
-            self.active = id.clone();
-            cx.emit(ModelPickerEvent::ProviderChanged(id));
+        if self.view != view {
+            self.view = view.clone();
+            self.legacy_open = false;
+            cx.emit(ModelPickerEvent::ViewChanged(view));
         }
-        cx.notify();
+        self.rebuild(cx);
     }
 
-    /// The text of the quick search.
+    /// The text of the search.
     pub fn query(&self, cx: &App) -> SharedString {
         self.search.read(cx).value()
     }
 
-    /// Replaces the text of the quick search.
+    /// Replaces the text of the search.
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
         let query = SharedString::from(query.to_string());
         self.search
             .update(cx, |search, cx| search.set_value(query, window, cx));
-        cx.notify();
+        self.rebuild(cx);
     }
 
-    /// The models that show now, as `(provider, model)` pairs.
-    pub fn visible(&self, cx: &App) -> Vec<(&ModelProvider, &ModelEntry)> {
-        visible_models(&self.providers, &self.active, &self.query(cx))
-            .into_iter()
-            .map(|(p, m)| (&self.providers[p], &self.providers[p].models[m]))
+    /// The models the list shows now, as `(provider, model)` pairs, in
+    /// the order of the list.
+    pub fn visible(&self) -> Vec<(&ModelProvider, &ModelEntry)> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Model {
+                    provider, model, ..
+                } => Some((
+                    &self.providers[*provider],
+                    &self.providers[*provider].models[*model],
+                )),
+                Row::Legacy(_) => None,
+            })
             .collect()
+    }
+
+    /// Whether the list shows the "Legacy models" header.
+    pub fn has_legacy_group(&self) -> bool {
+        self.rows.iter().any(|row| matches!(row, Row::Legacy(_)))
+    }
+
+    /// Whether the legacy group is open.
+    pub fn is_legacy_open(&self) -> bool {
+        self.legacy_open
+    }
+
+    /// Opens or closes the legacy group. It is closed until it is opened,
+    /// and closes again when the view changes.
+    pub fn set_legacy_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.legacy_open != open {
+            self.legacy_open = open;
+            self.rebuild(cx);
+        }
+    }
+
+    /// The id of the model the keyboard or the pointer is on.
+    pub fn highlighted(&self) -> Option<SharedString> {
+        match self.rows.get(self.highlighted?)? {
+            Row::Model {
+                provider, model, ..
+            } => Some(self.providers[*provider].models[*model].id.clone()),
+            Row::Legacy(_) => None,
+        }
     }
 
     /// Whether the panel is open.
@@ -434,48 +692,168 @@ impl ModelPickerState {
     }
 
     /// Opens or closes the panel and emits `OpenChanged`. Closing clears
-    /// the quick search and closes the effort card.
+    /// the search.
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.open == open {
             return;
         }
         self.open = open;
         if !open {
-            self.effort_open = false;
             self.set_query("", window, cx);
+        } else {
+            self.rebuild(cx);
         }
         cx.emit(ModelPickerEvent::OpenChanged(open));
         cx.notify();
     }
 
-    /// Whether the effort card is open.
-    pub fn is_effort_open(&self) -> bool {
-        self.effort_open
+    /// Chooses the model on the `number`th row of the list, counting from
+    /// `1` and only models, as Cmd+1 to Cmd+9 do, and closes the panel.
+    pub fn select_number(&mut self, number: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.rows.iter().find_map(|row| match row {
+            Row::Model {
+                provider,
+                model,
+                number: Some(n),
+            } if *n == number => Some(self.providers[*provider].models[*model].id.clone()),
+            _ => None,
+        });
+        if let Some(id) = id {
+            self.select(id, cx);
+            self.set_open(false, window, cx);
+        }
     }
 
-    /// Opens or closes the effort card.
-    pub fn set_effort_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.effort_open != open {
-            self.effort_open = open;
+    /// Recomputes the rows from the search text and the rest of the state.
+    fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let query = self.query(cx);
+        self.refresh_rows(&query);
+        cx.notify();
+    }
+
+    fn refresh_rows(&mut self, query: &str) {
+        self.rows = build_rows(
+            &self.providers,
+            &self.view,
+            query,
+            &self.favorites,
+            self.legacy_open,
+        );
+        self.list.reset(self.rows.len());
+        let chosen = self.selected.as_ref().and_then(|id| {
+            self.rows.iter().position(|row| match row {
+                Row::Model {
+                    provider, model, ..
+                } => &self.providers[*provider].models[*model].id == id,
+                Row::Legacy(_) => false,
+            })
+        });
+        self.highlighted = chosen.or_else(|| {
+            self.rows
+                .iter()
+                .position(|row| matches!(row, Row::Model { .. }))
+        });
+        if let Some(row) = self.highlighted {
+            self.list.scroll_to_reveal_item(row);
+        }
+    }
+
+    /// Puts the highlight on `row`, from the pointer.
+    fn hover_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        if self.highlighted != Some(row) && row < self.rows.len() {
+            self.highlighted = Some(row);
             cx.notify();
         }
     }
+
+    /// Moves the highlight one row up or down, wrapping at the ends, and
+    /// scrolls it into view.
+    fn move_highlight(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = self.rows.len() as isize;
+        if count == 0 {
+            return;
+        }
+        let row = match self.highlighted {
+            Some(row) => (row as isize + delta).rem_euclid(count),
+            None if delta > 0 => 0,
+            None => count - 1,
+        } as usize;
+        self.highlight(row, cx);
+    }
+
+    fn highlight(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.highlighted = Some(row);
+        self.list.scroll_to_reveal_item(row);
+        cx.notify();
+    }
+
+    fn highlight_edge(&mut self, last: bool, cx: &mut Context<Self>) {
+        if self.rows.is_empty() {
+            return;
+        }
+        self.highlight(if last { self.rows.len() - 1 } else { 0 }, cx);
+    }
+
+    /// Chooses what `row` stands for: a model is chosen and the panel
+    /// closes, and the legacy header opens or closes its group.
+    fn choose_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.highlighted = Some(row);
+        match self.rows.get(row).copied() {
+            Some(Row::Model {
+                provider, model, ..
+            }) => {
+                let id = self.providers[provider].models[model].id.clone();
+                self.select(id, cx);
+                self.set_open(false, window, cx);
+            }
+            Some(Row::Legacy(_)) => {
+                let open = !self.legacy_open;
+                self.set_legacy_open(open, cx);
+            }
+            None => {}
+        }
+    }
+
+    /// The menu that lists the effort levels, owned here so the effort menu
+    /// and the picker's events stay in one place.
+    pub(super) fn effort_menu_state(&self) -> &Entity<MenuState> {
+        &self.effort_menu
+    }
+
+    /// Whether the keys that move within a query-less list apply: Home and
+    /// End belong to the search field while text is typed.
+    fn takes_edge_keys(&self, cx: &App) -> bool {
+        self.query(cx).is_empty()
+    }
 }
+
+type RailClick = Box<dyn Fn(&mut Window, &mut App)>;
 
 type TriggerBuilder = Box<dyn FnOnce(bool, &ModelPickerState) -> gpui_kit::AnyElement>;
 
-/// A picker for a model: a trigger that shows the chosen one, and a panel
-/// with a rail of providers, a quick search, and the models, each with a
-/// radio mark. The chosen model shows an effort chip, which opens a card
-/// under its row with a slider from `Faster` to `Smarter`. The card is part
-/// of the panel, not a second popover, so a press on it is never a press
-/// outside the panel.
+/// A picker for a model: a trigger pill that shows the chosen one, and a
+/// panel with a rail, a search field, and the list of models.
 ///
-/// A quick search matches model names and provider names across every
-/// provider. Press `/` while the panel is open to focus it.
+/// The rail holds the favorites, a hairline, and one mark per provider; the
+/// active entry is brightened and has an accent bar on the rail's edge. The
+/// list shows each model on two lines, its name over its provider, with a
+/// Cmd+1 to Cmd+9 shortcut on the first nine rows and a star that pins the
+/// model to the favorites. A provider's legacy models fold into a group at
+/// the top. A search matches model names and provider names across every
+/// provider, and the rail is dimmed with no active entry while it has text.
+/// The search takes the keyboard when the panel opens, and a letter or `/`
+/// typed anywhere in the panel goes to it.
+///
+/// Up and Down move the highlight and wrap, Home and End jump, Enter and
+/// Space choose the highlighted row, and Escape closes the panel. The
+/// highlight follows the pointer only while it moves.
+///
+/// The effort of the chosen model is not in the panel: the
+/// [`Composer`](crate::Composer) shows an [`EffortMenu`](crate::EffortMenu)
+/// beside the trigger.
 ///
 /// The picker works anywhere: [`trigger`](Self::trigger) replaces the
-/// default button, so a toolbar, a status bar, or a settings page can open
+/// default pill, so a toolbar, a status bar, or a settings page can open
 /// it.
 ///
 /// ```no_run
@@ -549,16 +927,17 @@ impl RenderOnce for ModelPicker {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let id = self.id;
         let state = self.state;
-        let (open, panel_focus) = {
+        let (open, search_focus) = {
             let read = state.read(cx);
-            (read.open, read.focus.clone())
+            (read.open, read.search.read(cx).focus_handle(cx))
         };
-        let (width, radius, text) = {
+        let (width, height, text, radius) = {
             let theme = cx.theme();
             (
                 theme.metrics.model_picker_width,
-                theme.metrics.model_picker_radius,
+                theme.metrics.model_picker_height,
                 theme.text_control,
+                theme.radius_xl(),
             )
         };
 
@@ -566,27 +945,32 @@ impl RenderOnce for ModelPicker {
             Some(build) => build(open, state.read(cx)),
             None => {
                 let read = state.read(cx);
-                let label = read
-                    .selected_model()
-                    .map_or("Select model".into(), |(_, model)| model.name.clone());
-                let effort = read.effort_label();
+                let (label, icon) = read.selected_model().map_or_else(
+                    || ("Select model".into(), None),
+                    |(provider, model)| (model.name.clone(), Some(provider.icon.clone())),
+                );
                 let (ink, muted) = {
                     let theme = cx.theme();
                     (theme.foreground(), theme.composer_muted)
                 };
-                let chevron =
-                    Icon::from(IconName::ChevronDown).when(open, |icon| icon.rotate(radians(PI)));
+                let chevron = Icon::from(IconName::ChevronDown)
+                    .size_3()
+                    .when(open, |icon| icon.rotate(radians(PI)));
                 Button::new(child(&id, "trigger"))
                     .ghost()
                     .size(ButtonSize::Sm)
+                    .when_some(icon, |button, icon| button.icon(icon))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(div().text_color(ink).child(label))
-                            .children(effort.map(|word| div().text_color(muted).child(word))),
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(ink)
+                            .child(label),
                     )
+                    .flex_shrink(1.)
+                    .min_w_0()
                     .trailing_icon(chevron)
                     .text_color(muted)
                     .selected(open)
@@ -607,10 +991,11 @@ impl RenderOnce for ModelPicker {
             .open(open)
             .on_open_change(on_open_change)
             .align(self.align)
-            .track_focus(&panel_focus)
+            .track_focus(&search_focus)
             .trigger(Slot { trigger, open })
             .content(content)
             .w(width)
+            .h(height)
             .p_0()
             .text_size(text.size)
             .line_height(text.line_height)
@@ -652,275 +1037,296 @@ impl RenderOnce for Slot {
     }
 }
 
-/// The panel: the rail, the search and the models, and the effort card.
+/// The colors the panel paints with: a menu's, from the same look as a
+/// select's menu, plus the one step between a menu's rest and its
+/// highlighted row that a hovered row takes.
+#[derive(Clone)]
+pub(crate) struct PickerLook {
+    pub(crate) menu: MenuLook,
+    pub(crate) hover: gpui_kit::Hsla,
+    pub(crate) accent: gpui_kit::Hsla,
+}
+
+impl PickerLook {
+    pub(crate) fn of(theme: &crate::ThemeTokens, rem_size: gpui_kit::Pixels) -> Self {
+        Self {
+            menu: MenuLook::of(theme, rem_size),
+            hover: theme.popover_hover,
+            accent: theme.control_accent,
+        }
+    }
+}
+
+/// The panel: the rail, the search, and the list.
 fn panel(
     id: &ElementId,
     state: &Entity<ModelPickerState>,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui_kit::AnyElement {
-    let look = MenuLook::of(cx.theme(), window.rem_size());
-    let search_width = cx.theme().metrics.model_search_width;
-    let (rail_width, row_height, list_height, card_height) = {
-        let metrics = &cx.theme().metrics;
-        (
-            metrics.model_picker_rail,
-            metrics.model_row,
-            metrics.model_list_height,
-            metrics.effort_card_height,
-        )
-    };
-    let (header_height, panel_radius, rail_fill, rail_selected, chip_fill, spacing, row_radius) = {
-        let theme = cx.theme();
-        (
-            theme.metrics.model_header,
-            theme.metrics.model_picker_radius,
-            theme.model_rail,
-            theme.model_rail_selected,
-            theme.model_chip,
-            theme.base.spacing.sm,
-            theme.radius_lg(),
-        )
-    };
-    let touch = cx.theme().touch;
+    let theme = cx.theme();
+    let look = PickerLook::of(theme, window.rem_size());
+    let (rail_width, header_height, spacing) = (
+        theme.metrics.model_picker_rail,
+        theme.metrics.model_header,
+        theme.base.spacing.sm,
+    );
+    let ring = theme.control_accent;
+    let row_height = theme.metrics.model_row;
+    let pointer_cursors = Theme::global(cx).pointer_cursors;
     let read = state.read(cx);
     let query = read.query(cx);
+    let searching = !query.trim().is_empty();
     let search = read.search.clone();
-    let read_focus = read.focus.clone();
-    let slider = read.slider.clone();
-    let effort_open = read.effort_open;
-    let selected = read.selected.clone();
-    let effort = read.effort();
-    let active = read.active.clone();
+    let search_focus = read.search.read(cx).focus_handle(cx);
+    let panel_focus = read.focus.clone();
+    let view = read.view.clone();
+    let list = read.list.clone();
+    let empty = read.rows.is_empty();
+    let empty_text = if view == ModelView::Favorites && !searching {
+        "Star a model to pin it here"
+    } else {
+        "No models found"
+    };
     let providers = read.providers.clone();
-    let rows: Vec<(ModelProvider, ModelEntry)> = visible_models(&providers, &active, &query)
-        .into_iter()
-        .map(|(p, m)| (providers[p].clone(), providers[p].models[m].clone()))
-        .collect();
-    let search_focus = search.read(cx).focus_handle(cx);
-    let panel_focus = read_focus.clone();
+    let searching_focused = search_focus.contains_focused(window, cx);
 
-    if let Some(level) = effort {
-        let current = slider.read(cx).value().end();
-        if (current - f32::from(level)).abs() > f32::EPSILON {
-            slider.update(cx, |slider, cx| {
-                slider.set_value(f32::from(level), window, cx)
-            });
-        }
-    }
-
-    let rail_marks = ScrollArea::new(child(id, "rail"))
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .p_1()
-                .children(providers.iter().map(|provider| {
-                    let (state, provider_id) = (state.clone(), provider.id.clone());
-                    let current = provider.id == active && query.trim().is_empty();
-                    Button::new(ElementId::NamedChild(
-                        child(id, "provider").into(),
-                        provider.id.clone(),
-                    ))
+    let entry = |entry_id: ElementId,
+                 icon: Icon,
+                 label: SharedString,
+                 active: bool,
+                 on_click: RailClick| {
+        let marked = active && !searching;
+        div()
+            .relative()
+            .w_full()
+            .py(look.menu.padding / 2.)
+            .child(
+                Button::new(entry_id)
                     .ghost()
                     .size(ButtonSize::Lg)
-                    .icon(provider.icon.clone())
-                    .accessibility_label(provider.name.clone())
-                    .tooltip(provider.name.clone())
-                    .w_full()
-                    .text_color(look.muted_foreground)
-                    .selected(current)
-                    .when(current, |button| button.bg(rail_selected))
-                    .on_click(move |_, window, cx| {
-                        let provider_id = provider_id.clone();
-                        state.update(cx, |state, cx| {
-                            state.set_active_provider(provider_id, window, cx)
-                        });
+                    .icon(icon)
+                    .accessibility_label(label.clone())
+                    .tooltip(label)
+                    .mx(look.menu.padding)
+                    .text_color(if marked {
+                        look.menu.foreground
+                    } else {
+                        look.menu.muted_foreground
                     })
-                })),
-        );
+                    .selected(marked)
+                    .when(marked, |button| button.bg(look.menu.accent))
+                    .on_click(move |_, window, cx| on_click(window, cx)),
+            )
+            .when(marked, |this| {
+                this.child(
+                    div()
+                        .id(child(id, "rail-indicator"))
+                        .test_support()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .bottom_0()
+                        .flex()
+                        .items_center()
+                        .child(div().w_0p5().h_5().rounded_l_full().bg(look.accent)),
+                )
+            })
+            .into_any_element()
+    };
+    let mut marks = vec![entry(
+        child(id, "favorites"),
+        Icon::from(IconName::StarFill),
+        "Favorites".into(),
+        view == ModelView::Favorites,
+        {
+            let state = state.clone();
+            Box::new(move |window, cx| {
+                state.update(cx, |state, cx| {
+                    state.set_view(ModelView::Favorites, window, cx)
+                });
+            })
+        },
+    )];
+    marks.push(
+        div()
+            .w_full()
+            .py(look.menu.padding)
+            .px(look.menu.padding * 2.)
+            .child(div().h_px().w_full().bg(look.menu.separator))
+            .into_any_element(),
+    );
+    marks.extend(providers.iter().map(|provider| {
+        let provider_id = provider.id.clone();
+        entry(
+            ElementId::NamedChild(child(id, "provider").into(), provider.id.clone()),
+            provider.icon.clone(),
+            provider.name.clone(),
+            view == ModelView::Provider(provider.id.clone()),
+            {
+                let state = state.clone();
+                Box::new(move |window, cx| {
+                    let view = ModelView::Provider(provider_id.clone());
+                    state.update(cx, |state, cx| state.set_view(view, window, cx));
+                })
+            },
+        )
+    }));
+    let rail = ScrollArea::new(child(id, "rail")).size_full().child(
+        div()
+            .flex()
+            .flex_col()
+            .py(look.menu.padding)
+            .children(marks),
+    );
     let rail = div()
-        .relative()
+        .id(child(id, "rail-box"))
+        .test_support()
         .flex_shrink_0()
         .w(rail_width)
-        .bg(rail_fill)
-        .rounded_l(panel_radius - gpui_kit::px(1.))
-        .child(rail_marks);
+        .h_full()
+        .border_r_1()
+        .border_color(look.menu.separator)
+        .when(searching, |this| this.opacity(0.5))
+        .child(rail);
 
-    let effort_card = effort_open && effort.is_some();
-    let model_rows = rows.iter().flat_map(|(provider, model)| {
-        let checked = selected.as_ref() == Some(&model.id);
-        let select = {
-            let (state, model_id) = (state.clone(), model.id.clone());
-            move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
-                let model_id = model_id.clone();
-                state.update(cx, |state, cx| {
-                    state.select(model_id, cx);
-                    state.set_open(false, window, cx);
-                });
-            }
-        };
-        let chip = (checked && model.effort).then(|| {
-            let toggle = state.clone();
-            Button::new(child(id, "effort"))
-                .size(ButtonSize::Sm)
-                .rounded_full()
-                .bg(chip_fill)
-                .text_color(look.muted_foreground)
-                .label(
-                    effort
-                        .map(|level| EFFORT_LABELS[usize::from(level)])
-                        .unwrap_or_default(),
-                )
-                .trailing_icon(
-                    Icon::from(IconName::ChevronRight)
-                        .size_3()
-                        .when(effort_open, |icon| icon.rotate(radians(PI / 2.))),
-                )
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    toggle.update(cx, |state, cx| {
-                        let open = !state.effort_open;
-                        state.set_effort_open(open, cx);
-                    });
-                })
-        });
-        let row = BaseRadio::new(ElementId::NamedChild(id.clone().into(), model.id.clone()))
-            .checked(checked)
-            .accessibility_label(format!("{} ({})", model.name, provider.name))
-            .on_change(move |_, event, window, cx| select(event, window, cx))
+    let body = if empty {
+        div()
+            .id(child(id, "empty"))
+            .test_support()
+            .size_full()
             .flex()
-            .flex_shrink_0()
             .items_center()
-            .gap_2()
-            .w_full()
-            .h(row_height)
-            .px(look.row_padding)
-            .rounded(row_radius)
-            .cursor_pointer()
-            .when(checked, |this| this.bg(look.accent))
-            .when(!touch, |this| this.hover(|style| style.bg(look.accent)))
-            .child(
-                provider
-                    .icon
-                    .clone()
-                    .size_4()
-                    .flex_shrink_0()
-                    .text_color(look.muted_foreground),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .text_color(look.foreground)
-                    .child(model.name.clone()),
-            )
-            .children(chip)
-            .child(RadioMark::new(checked));
-        let card = (checked && model.effort && effort_card).then(|| {
-            effort_card_view(
-                id,
-                &slider,
-                effort.unwrap_or_default(),
-                card_height,
-                &look,
-                cx,
-            )
-        });
-        [Some(row.into_any_element()), card]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-    });
-
-    let list: gpui_kit::AnyElement = div()
+            .justify_center()
+            .text_color(look.menu.muted_foreground)
+            .child(empty_text)
+            .into_any_element()
+    } else {
+        let rows = Rows {
+            id: id.clone(),
+            state: state.clone(),
+            look: look.clone(),
+            ring,
+            pointer_cursors,
+        };
+        ScrollArea::list(
+            child(id, "models"),
+            &list,
+            row_height,
+            move |row, window, cx| rows.render(row, window, cx),
+        )
+        .size_full()
+        .into_any_element()
+    };
+    let list_box = div()
         .id(child(id, "list"))
         .test_support()
+        .flex_1()
+        .min_h_0()
         .w_full()
-        .h(list_height)
-        .flex_shrink_0()
-        .child(if rows.is_empty() {
-            div()
-                .id(child(id, "empty"))
-                .test_support()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(look.muted_foreground)
-                .child("No models found")
-                .into_any_element()
-        } else {
-            ScrollArea::new(child(id, "models"))
-                .size_full()
-                .child(div().flex().flex_col().children(model_rows))
-                .into_any_element()
-        })
-        .into_any_element();
+        .child(body);
 
-    let main = div()
-        .flex()
-        .flex_col()
+    let search_row = search_row(&search, &look.menu, window, cx)
+        .id(child(id, "search"))
+        .test_support()
+        .h(header_height)
+        .w_full()
+        .mx(spacing);
+    let underline = div()
+        .id(child(id, "underline"))
+        .test_support()
+        .flex_shrink_0()
+        .mx(spacing * 2.)
+        .h_px()
+        .bg(if searching_focused {
+            look.accent
+        } else {
+            look.menu.separator
+        });
+    let main = v_flex()
         .flex_1()
         .min_w_0()
-        .px(spacing)
-        .pb(spacing)
-        .child(
-            div()
-                .flex()
-                .flex_shrink_0()
-                .items_center()
-                .justify_between()
-                .h(header_height)
-                .pl(look.row_padding)
-                .text_color(look.muted_foreground)
-                .child("Models")
-                .child(
-                    div().w(search_width).child(
-                        Input::new(&search)
-                            .id(child(id, "search"))
-                            .accessibility_label("Quick Search")
-                            .suffix(
-                                Icon::from(IconName::Search)
-                                    .size_4()
-                                    .text_color(look.muted_foreground),
-                            )
-                            .h(header_height - gpui_kit::px(4.))
-                            .min_h(gpui_kit::px(0.))
-                            .px_2()
-                            .text_right()
-                            .bg(gpui_kit::transparent_black())
-                            .border_color(gpui_kit::transparent_black()),
-                    ),
-                ),
-        )
-        .child(list);
+        .h_full()
+        .child(div().flex_shrink_0().child(search_row).child(underline))
+        .child(list_box);
 
-    let key_state = state.clone();
-    div()
-        .relative()
-        .flex()
-        .w_full()
+    let (up, down, confirm, first, last) = (
+        state.clone(),
+        state.clone(),
+        state.clone(),
+        state.clone(),
+        state.clone(),
+    );
+    let (key_state, focus_target) = (state.clone(), search_focus.clone());
+    h_flex()
+        .id(child(id, "body"))
+        .test_support()
+        .size_full()
         .items_stretch()
+        .key_context(CONTEXT)
         .track_focus(&panel_focus)
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if event.keystroke.key == "/" && !search_focus.is_focused(window) {
-                cx.stop_propagation();
-                window.focus(&search_focus, cx);
-            }
+        .on_action(move |_: &SelectUp, _, cx| {
+            up.update(cx, |state, cx| state.move_highlight(-1, cx));
         })
-        .on_action(move |_: &Cancel, _, cx| {
-            if key_state.read(cx).effort_open {
-                key_state.update(cx, |state, cx| state.set_effort_open(false, cx));
+        .on_action(move |_: &SelectDown, _, cx| {
+            down.update(cx, |state, cx| state.move_highlight(1, cx));
+        })
+        .on_action(move |_: &Confirm, window, cx| {
+            confirm.update(cx, |state, cx| {
+                if let Some(row) = state.highlighted {
+                    state.choose_row(row, window, cx);
+                }
+            });
+        })
+        .on_action(move |_: &FirstRow, _, cx| {
+            if first.read(cx).takes_edge_keys(cx) {
+                first.update(cx, |state, cx| state.highlight_edge(false, cx));
             } else {
                 cx.propagate();
+            }
+        })
+        .on_action(move |_: &LastRow, _, cx| {
+            if last.read(cx).takes_edge_keys(cx) {
+                last.update(cx, |state, cx| state.highlight_edge(true, cx));
+            } else {
+                cx.propagate();
+            }
+        })
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            let keystroke = &event.keystroke;
+            if keystroke.modifiers.secondary() {
+                if let Ok(number) = keystroke.key.parse::<usize>()
+                    && (1..=SHORTCUT_ROWS).contains(&number)
+                {
+                    cx.stop_propagation();
+                    key_state.update(cx, |state, cx| state.select_number(number, window, cx));
+                }
+                return;
+            }
+            let in_search = focus_target.contains_focused(window, cx);
+            if keystroke.key == "space" && !keystroke.modifiers.modified() {
+                let take = key_state.read(cx).takes_edge_keys(cx);
+                if take {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_state.update(cx, |state, cx| {
+                        if let Some(row) = state.highlighted {
+                            state.choose_row(row, window, cx);
+                        }
+                    });
+                }
+                return;
+            }
+            if !in_search
+                && !keystroke.modifiers.modified()
+                && let Some(text) = keystroke.key_char.as_ref()
+                && !text.is_empty()
+            {
+                cx.stop_propagation();
+                window.focus(&focus_target, cx);
+                let search = key_state.read(cx).search.clone();
+                let typed = format!("{}{text}", search.read(cx).value());
+                search.update(cx, |search, cx| search.set_value(typed, window, cx));
             }
         })
         .child(rail)
@@ -928,66 +1334,241 @@ fn panel(
         .into_any_element()
 }
 
-/// The effort card, which opens under the chosen model's row: the level's
-/// name, a slider from the first level to the last, and what its ends mean.
-/// The card has one padding on every side and one gap between its rows. The
-/// rows are inset by half the thumb, so the heading and the captions line up
-/// with the ends of the slider's rail.
-fn effort_card_view(
-    id: &ElementId,
-    slider: &Entity<SliderState>,
-    level: u8,
-    height: gpui_kit::Pixels,
-    look: &MenuLook,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    let theme = cx.theme();
-    let (padding, gap, inset, radius) = (
-        theme.metrics.effort_card_padding,
-        theme.base.spacing.sm,
-        theme.metrics.slider_thumb / 2.,
-        theme.radius_md(),
-    );
-    let row = || div().flex().justify_between().px(inset);
-    div()
-        .id(child(id, "effort-card"))
-        .test_support()
-        .flex_shrink_0()
-        .w_full()
-        .h(height + gpui_kit::px(2.))
-        .my_1()
-        .p(padding)
-        .flex()
-        .flex_col()
-        .justify_center()
-        .gap(gap)
-        .rounded(radius)
-        .bg(look.accent)
-        .border_1()
-        .border_color(look.border)
-        .child(
-            row()
-                .child(div().text_color(look.muted_foreground).child("Effort"))
+/// What a row is drawn from, owned by the list's row builder, which
+/// outlives the render that made it.
+struct Rows {
+    id: ElementId,
+    state: Entity<ModelPickerState>,
+    look: PickerLook,
+    ring: gpui_kit::Hsla,
+    pointer_cursors: bool,
+}
+
+impl Rows {
+    /// A row in its slot: the slot is the row's height and the row is a
+    /// step shorter on both sides, so the fills of two rows never touch.
+    fn render(&self, index: usize, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
+        let row_height = cx.theme().metrics.model_row;
+        div()
+            .w_full()
+            .h(row_height)
+            .py_0p5()
+            .child(self.row(index, window, cx))
+            .into_any_element()
+    }
+
+    fn row(&self, index: usize, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
+        let look = &self.look.menu;
+        let (row, highlighted, legacy_open) = {
+            let state = self.state.read(cx);
+            let Some(row) = state.rows.get(index).copied() else {
+                return div().into_any_element();
+            };
+            (row, state.highlighted == Some(index), state.legacy_open)
+        };
+        let touch = look.touch;
+        let hover_state = self.state.clone();
+        let click_state = self.state.clone();
+        let frame = |frame_id: ElementId, chosen: bool| {
+            div()
+                .id(frame_id)
+                .test_support()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap_2()
+                .w_full()
+                .h_full()
+                .px(look.row_padding)
+                .rounded(look.row_radius)
+                .border_1()
+                .border_color(gpui_kit::transparent_black())
+                .when(self.pointer_cursors, |this| this.cursor_pointer())
+                .when(highlighted && !touch, |this| this.bg(self.look.hover))
+                .when(chosen, |this| this.bg(look.accent))
+                .when(chosen && highlighted && !touch, |this| {
+                    this.border_color(self.ring)
+                })
+                .when(!touch, |this| {
+                    this.on_mouse_move(move |_, _, cx| {
+                        hover_state.update(cx, |state, cx| state.hover_row(index, cx));
+                    })
+                })
+        };
+        let name_text = cx.theme().text_control;
+        let caption_text = cx.theme().base.typography.xs;
+        match row {
+            Row::Legacy(count) => {
+                let progress = transition(
+                    ElementId::NamedChild(child(&self.id, "legacy-fade").into(), "x".into()),
+                    if legacy_open { 1. } else { 0. },
+                    Theme::global(cx).motion.fast_transition(),
+                    window,
+                    cx,
+                );
+                frame(child(&self.id, "legacy"), false)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(name_text.size)
+                                    .line_height(name_text.line_height)
+                                    .text_color(look.foreground)
+                                    .child("Legacy models"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(caption_text.size)
+                                    .line_height(caption_text.line_height)
+                                    .text_color(look.muted_foreground)
+                                    .child(format!("{count} models")),
+                            ),
+                    )
+                    .child(
+                        Icon::from(IconName::ChevronDown)
+                            .size_4()
+                            .flex_shrink_0()
+                            .text_color(look.muted_foreground)
+                            .rotate(radians(PI * progress)),
+                    )
+                    .on_click(move |_, window, cx| {
+                        click_state.update(cx, |state, cx| state.choose_row(index, window, cx));
+                    })
+                    .into_any_element()
+            }
+            Row::Model {
+                provider,
+                model,
+                number,
+            } => {
+                let (provider, model, chosen, favorite) = {
+                    let state = self.state.read(cx);
+                    let model = state.providers[provider].models[model].clone();
+                    (
+                        state.providers[provider].clone(),
+                        model.clone(),
+                        state.selected.as_ref() == Some(&model.id),
+                        state.is_favorite(&model.id),
+                    )
+                };
+                let star_state = self.state.clone();
+                let model_id = model.id.clone();
+                let star_id = model.id.clone();
+                let fade = if model.legacy {
+                    transition(
+                        ElementId::NamedChild(child(&self.id, "legacy-fade").into(), "x".into()),
+                        1.,
+                        Theme::global(cx).motion.fast_transition(),
+                        window,
+                        cx,
+                    )
+                } else {
+                    1.
+                };
+                frame(
+                    ElementId::NamedChild(self.id.clone().into(), model.id.clone()),
+                    chosen,
+                )
+                .opacity(fade)
                 .child(
-                    div()
-                        .font_medium()
-                        .text_color(look.foreground)
-                        .child(EFFORT_LABELS[usize::from(level)]),
-                ),
-        )
-        .child(
-            Slider::new(slider)
-                .id(child(id, "effort-slider"))
-                .accessibility_label("Effort")
-                .stops(EFFORT_LABELS.len()),
-        )
-        .child(
-            row()
-                .text_color(look.muted_foreground)
-                .child("Faster")
-                .child("Smarter"),
-        )
-        .into_any_element()
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(name_text.size)
+                                .line_height(name_text.line_height)
+                                .text_color(look.foreground)
+                                .child(model.name.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .text_size(caption_text.size)
+                                .line_height(caption_text.line_height)
+                                .text_color(look.muted_foreground)
+                                .child(provider.icon.clone().size_3().flex_shrink_0())
+                                .child(provider.name.clone()),
+                        ),
+                )
+                .when(chosen, |this| {
+                    this.child(
+                        Icon::from(IconName::Check)
+                            .size_4()
+                            .flex_shrink_0()
+                            .text_color(look.foreground),
+                    )
+                })
+                .when_some(number, |this, number| {
+                    this.child(
+                        div()
+                            .id(ElementId::NamedChild(
+                                child(&self.id, "shortcut").into(),
+                                model.id.clone(),
+                            ))
+                            .test_support()
+                            .flex_shrink_0()
+                            .px_1p5()
+                            .rounded(look.row_radius)
+                            .bg(look.separator)
+                            .text_size(caption_text.size)
+                            .line_height(caption_text.line_height)
+                            .text_color(look.muted_foreground)
+                            .child(shortcut_text(number)),
+                    )
+                })
+                .child(
+                    Button::new(ElementId::NamedChild(
+                        child(&self.id, "star").into(),
+                        model.id.clone(),
+                    ))
+                    .ghost()
+                    .size(ButtonSize::Sm)
+                    .icon(Icon::from(if favorite {
+                        IconName::StarFill
+                    } else {
+                        IconName::Star
+                    }))
+                    .text_color(if favorite {
+                        look.foreground
+                    } else {
+                        look.muted_foreground
+                    })
+                    .accessibility_label(if favorite {
+                        "Remove from favorites"
+                    } else {
+                        "Add to favorites"
+                    })
+                    .on_click(move |_: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        star_state
+                            .update(cx, |state, cx| state.toggle_favorite(star_id.clone(), cx));
+                    }),
+                )
+                .on_click(move |_, window, cx| {
+                    let _ = &model_id;
+                    click_state.update(cx, |state, cx| state.choose_row(index, window, cx));
+                })
+                .into_any_element()
+            }
+        }
+    }
+}
+
+/// The text of a row's number shortcut: the command key and the digit on
+/// macOS, Ctrl and the digit elsewhere.
+fn shortcut_text(number: usize) -> String {
+    if cfg!(target_os = "macos") {
+        format!("\u{2318}{number}")
+    } else {
+        format!("Ctrl+{number}")
+    }
 }
 
 #[cfg(test)]
@@ -998,6 +1579,7 @@ mod tests {
         vec![
             ModelProvider::new("acme", "Acme").models([
                 ModelEntry::new("acme-1", "Alpha One"),
+                ModelEntry::new("acme-old", "Alpha Old").legacy(true),
                 ModelEntry::new("acme-2", "Alpha Two"),
             ]),
             ModelProvider::new("zed", "Zed Labs").models([
@@ -1007,25 +1589,91 @@ mod tests {
         ]
     }
 
-    #[test]
-    fn an_empty_query_shows_the_active_provider_only() {
-        assert_eq!(visible_models(&catalog(), "zed", ""), [(1, 0), (1, 1)]);
-        assert_eq!(visible_models(&catalog(), "acme", "  "), [(0, 0), (0, 1)]);
+    fn ids(rows: &[Row], providers: &[ModelProvider]) -> Vec<String> {
+        rows.iter()
+            .map(|row| match row {
+                Row::Legacy(count) => format!("legacy:{count}"),
+                Row::Model {
+                    provider, model, ..
+                } => providers[*provider].models[*model].id.to_string(),
+            })
+            .collect()
+    }
+
+    fn rows(view: ModelView, query: &str, favorites: &[&str], open: bool) -> Vec<String> {
+        let providers = catalog();
+        let favorites: Vec<SharedString> = favorites.iter().map(|id| (*id).into()).collect();
+        ids(
+            &build_rows(&providers, &view, query, &favorites, open),
+            &providers,
+        )
     }
 
     #[test]
-    fn a_query_searches_every_provider_by_model_or_provider_name() {
+    fn a_provider_view_folds_its_legacy_models_under_a_header() {
+        let acme = || ModelView::Provider("acme".into());
         assert_eq!(
-            visible_models(&catalog(), "acme", "ALPHA"),
-            [(0, 0), (0, 1), (1, 1)]
+            rows(acme(), "", &[], false),
+            ["legacy:1", "acme-1", "acme-2"]
         );
-        assert_eq!(visible_models(&catalog(), "acme", "beta"), [(1, 0)]);
         assert_eq!(
-            visible_models(&catalog(), "acme", "zed"),
-            [(1, 0), (1, 1)],
+            rows(acme(), "", &[], true),
+            ["legacy:1", "acme-old", "acme-1", "acme-2"]
+        );
+        assert_eq!(
+            rows(ModelView::Provider("zed".into()), "", &[], true),
+            ["zed-1", "zed-2"],
+            "no legacy models, no header"
+        );
+    }
+
+    #[test]
+    fn a_query_searches_every_provider_flat_by_model_or_provider_name() {
+        let acme = || ModelView::Provider("acme".into());
+        assert_eq!(
+            rows(acme(), "ALPHA", &[], false),
+            ["acme-1", "acme-old", "acme-2", "zed-2"]
+        );
+        assert_eq!(rows(acme(), "beta", &[], false), ["zed-1"]);
+        assert_eq!(
+            rows(acme(), "zed", &[], false),
+            ["zed-1", "zed-2"],
             "a provider name matches all its models"
         );
-        assert!(visible_models(&catalog(), "acme", "nope").is_empty());
+        assert!(rows(acme(), "nope", &[], false).is_empty());
+    }
+
+    #[test]
+    fn the_favorites_view_lists_the_starred_models_in_the_order_starred() {
+        assert_eq!(
+            rows(
+                ModelView::Favorites,
+                "",
+                &["zed-2", "acme-old", "gone"],
+                false
+            ),
+            ["zed-2", "acme-old"]
+        );
+        assert!(rows(ModelView::Favorites, "", &[], false).is_empty());
+    }
+
+    #[test]
+    fn only_the_first_nine_models_get_a_number() {
+        let providers = vec![
+            ModelProvider::new("p", "P")
+                .models((0..12).map(|n| ModelEntry::new(format!("m{n}"), format!("Model {n}")))),
+        ];
+        let rows = build_rows(&providers, &ModelView::Provider("p".into()), "", &[], false);
+        let numbers: Vec<_> = rows
+            .iter()
+            .map(|row| match row {
+                Row::Model { number, .. } => *number,
+                Row::Legacy(_) => None,
+            })
+            .collect();
+        assert_eq!(numbers[0], Some(1));
+        assert_eq!(numbers[8], Some(9));
+        assert_eq!(numbers[9], None);
     }
 
     #[test]

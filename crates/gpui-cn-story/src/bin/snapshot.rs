@@ -84,6 +84,69 @@ mod macos {
             println!("{}", path.display());
         };
 
+        let snap_picker =
+            |cx: &mut HeadlessAppContext, parent: gpui_kit::ElementId, prefix: &str, name: &str| {
+                let part = |name: &'static str| {
+                    gpui_kit::ElementId::NamedChild(parent.clone().into(), name.into())
+                };
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.scroll(
+                        "page",
+                        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                            gpui_kit::px(0.),
+                            gpui_kit::px(100000.),
+                        )),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    gpui_cn_story::reveal(part("trigger"), window, cx);
+                    window.click(part("trigger"), cx);
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                })
+                .expect("open the model picker");
+                capture(cx, &format!("{prefix}-models-{name}"));
+                for (suffix, click, query) in [
+                    ("favorites", Some("favorites"), None),
+                    ("legacy", Some("provider-codex"), None),
+                    ("search", None, Some("opus")),
+                    ("empty", None, Some("zzzz")),
+                ] {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        match (click, query) {
+                            (Some("favorites"), _) => window.click(part("favorites"), cx),
+                            (Some(_), _) => {
+                                window.click(
+                                    gpui_kit::ElementId::NamedChild(
+                                        part("provider").into(),
+                                        "codex".into(),
+                                    ),
+                                    cx,
+                                );
+                                window.render_frame(cx);
+                                window.click(part("legacy"), cx);
+                            }
+                            (None, Some(query)) => {
+                                window.press("cmd-a", cx);
+                                window.input(query, cx);
+                            }
+                            _ => {}
+                        }
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("show a model picker view");
+                    capture(cx, &format!("{prefix}-models-{suffix}-{name}"));
+                }
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.press("escape", cx);
+                    window.render_frame(cx);
+                })
+                .expect("close the model picker");
+            };
+
         for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
             cx.update(|cx| Theme::change(mode, cx));
             capture(&mut cx, &format!("gallery-{name}"));
@@ -168,6 +231,7 @@ mod macos {
                 "File picker",
                 "Folder picker",
                 "Composer",
+                "Model picker",
                 "Avatar",
                 "Badge",
                 "Tag",
@@ -280,43 +344,47 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the permission menu");
+                    snap_picker(
+                        &mut cx,
+                        named("composer-agent", "models"),
+                        &format!("story-{slug}"),
+                        name,
+                    );
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
-                        gpui_cn_story::reveal(named("models", "trigger"), window, cx);
-                        window.click(named("models", "trigger"), cx);
+                        let trigger = gpui_kit::ElementId::NamedChild(
+                            named("composer-agent", "effort").into(),
+                            "trigger".into(),
+                        );
+                        window.scroll(
+                            "page",
+                            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                gpui_kit::px(0.),
+                                gpui_kit::px(100000.),
+                            )),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.click(trigger, cx);
                         window.render_frame(cx);
                         window.render_frame(cx);
                     })
-                    .expect("open the model picker");
-                    capture(&mut cx, &format!("story-{slug}-models-{name}"));
-                    cx.update_window(handle.into(), |_, window, cx| {
-                        window.click(named("models", "effort"), cx);
-                        window.render_frame(cx);
-                        window.render_frame(cx);
-                    })
-                    .expect("open the effort card");
-                    capture(&mut cx, &format!("story-{slug}-models-effort-{name}"));
-                    cx.update_window(handle.into(), |_, window, cx| {
-                        window.press("escape", cx);
-                        window.press("escape", cx);
-                        window.render_frame(cx);
-                    })
-                    .expect("close the model picker");
-                    cx.update_window(handle.into(), |_, window, cx| {
-                        window.click(named("models", "trigger"), cx);
-                        window.render_frame(cx);
-                        window.render_frame(cx);
-                        window.press("/", cx);
-                        window.input("zzzz", cx);
-                        window.render_frame(cx);
-                    })
-                    .expect("search the model picker for nothing");
-                    capture(&mut cx, &format!("story-{slug}-models-empty-{name}"));
+                    .expect("open the effort menu");
+                    capture(&mut cx, &format!("story-{slug}-effort-{name}"));
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.press("escape", cx);
                         window.render_frame(cx);
                     })
-                    .expect("close the model picker");
+                    .expect("close the effort menu");
+                }
+                if story == "Model picker" {
+                    snap_picker(
+                        &mut cx,
+                        gpui_kit::ElementId::Name("models".into()),
+                        &format!("story-{slug}"),
+                        name,
+                    );
                 }
                 if story == "Menu" {
                     use gpui_cn_story::stories::MenuStory;

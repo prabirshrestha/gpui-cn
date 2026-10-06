@@ -218,7 +218,7 @@ fn picking_a_story_keeps_the_sidebar_scrolled_where_it_was(cx: &mut TestAppConte
         gpui_kit::base::Root::new(view, window, cx)
     });
     let gallery = gallery.unwrap();
-    let row = gpui_cn_story::story_row("Spinner");
+    let row = gpui_cn_story::story_row("Avatar");
     let scrolled = cx
         .update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -235,7 +235,7 @@ fn picking_a_story_keeps_the_sidebar_scrolled_where_it_was(cx: &mut TestAppConte
         })
         .unwrap();
     click(&handle, cx, row.clone());
-    assert_eq!(state(&gallery, cx).0, Some(index_of("Spinner")));
+    assert_eq!(state(&gallery, cx).0, Some(index_of("Avatar")));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(

@@ -53,13 +53,7 @@ fn frames(handle: &WindowHandle<gpui_kit::base::Root>, cx: &mut TestAppContext) 
 
 /// The standalone and composer pickers, as (trigger id, panel id).
 fn pickers() -> Vec<(ElementId, ElementId)> {
-    let mut found = vec![
-        (named("models", "trigger"), named("models", "panel")),
-        (
-            ElementId::from("custom-models-trigger"),
-            named("custom-models", "panel"),
-        ),
-    ];
+    let mut found = Vec::new();
     for composer in [
         "composer-agent",
         "composer-basic",
@@ -167,8 +161,7 @@ fn every_sample_has_a_model_chosen_from_its_catalog(cx: &mut TestAppContext) {
         .iter()
         .flat_map(|p| p.models_of().iter().map(|m| m.name().to_string()))
         .collect();
-    let mut samples = story.read_with(cx, |story, cx| story.composers(cx));
-    samples.extend(story.read_with(cx, |story, _| story.pickers()));
+    let samples = story.read_with(cx, |story, cx| story.composers(cx));
     for (name, picker, custom) in samples {
         let chosen = picker.read_with(cx, |state, _| {
             state
@@ -185,12 +178,6 @@ fn every_sample_has_a_model_chosen_from_its_catalog(cx: &mut TestAppContext) {
             .composers(cx)
             .into_iter()
             .map(|(_, picker, _)| picker.entity_id())
-            .chain(
-                story
-                    .pickers()
-                    .into_iter()
-                    .map(|(_, picker, _)| picker.entity_id()),
-            )
             .collect()
     });
     let mut unique = ids.clone();

@@ -15,7 +15,7 @@ use gpui_kit::{
 
 use crate::{
     ActiveTheme as _, Attachment, AttachmentStatus, AttachmentStrip, Button, ButtonSize,
-    ModelPicker, ModelPickerEvent, ModelPickerState, PermissionEvent, PermissionMenu,
+    EffortMenu, ModelPicker, ModelPickerEvent, ModelPickerState, PermissionEvent, PermissionMenu,
     PermissionState, StatusSelectEvent, StatusSelectState, Textarea,
 };
 
@@ -652,21 +652,34 @@ impl RenderOnce for Composer {
             Slot::Custom(element) => Some(element),
         };
         let permission = match self.permission {
-            Slot::Default => {
-                Some(PermissionMenu::new(child(&id, "permission"), &permission).into_any_element())
-            }
-            Slot::Hidden => None,
-            Slot::Custom(element) => Some(element),
-        };
-        let models = match self.models {
             Slot::Default => Some(
-                ModelPicker::new(child(&id, "models"), &models)
-                    .align(gpui_kit::base::Align::End)
+                PermissionMenu::new(child(&id, "permission"), &permission)
+                    .flex_shrink(1.)
+                    .min_w_0()
                     .into_any_element(),
             ),
             Slot::Hidden => None,
             Slot::Custom(element) => Some(element),
         };
+        let model_state = models.clone();
+        let has_default_models = matches!(self.models, Slot::Default);
+        let models = match self.models {
+            Slot::Default => Some(
+                ModelPicker::new(child(&id, "models"), &models)
+                    .align(gpui_kit::base::Align::End)
+                    .flex_shrink(1.)
+                    .min_w_0()
+                    .into_any_element(),
+            ),
+            Slot::Hidden => None,
+            Slot::Custom(element) => Some(element),
+        };
+        let effort = (has_default_models && model_state.read(cx).effort().is_some()).then(|| {
+            EffortMenu::new(child(&id, "effort"), &model_state)
+                .flex_shrink(1.)
+                .min_w_0()
+                .into_any_element()
+        });
         let mic = match self.mic {
             Slot::Default if self.show_mic => Some(
                 Button::new(child(&id, "mic"))
@@ -754,6 +767,7 @@ impl RenderOnce for Composer {
             .child(
                 div()
                     .flex()
+                    .min_w_0()
                     .items_center()
                     .gap(gap)
                     .children(leading)
@@ -761,6 +775,7 @@ impl RenderOnce for Composer {
                     .children(self.toolbar)
                     .child(div().flex_1())
                     .children(models)
+                    .children(effort)
                     .children(mic)
                     .children(send),
             );

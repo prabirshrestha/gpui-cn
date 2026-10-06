@@ -14,6 +14,9 @@ use gpui_kit::{App, Context, ElementId, Entity, Window};
 /// The model every sample starts on.
 pub const DEFAULT_MODEL: &str = "gpt-5.6-mini";
 
+/// The models starred at the start: one of each provider.
+pub const FAVORITES: [&str; 2] = ["gpt-5.6-terra", "sonnet-5.5"];
+
 /// The two providers: Codex and Claude. This is the one catalog every
 /// composer and model picker sample in the story uses.
 pub fn catalog() -> Vec<ModelProvider> {
@@ -25,8 +28,12 @@ pub fn catalog() -> Vec<ModelProvider> {
                 ModelEntry::new("gpt-5.6-terra", "GPT-5.6 Terra").effort(true),
                 ModelEntry::new("gpt-5.6-sol", "GPT-5.6 Sol").effort(true),
                 ModelEntry::new("gpt-5.5", "GPT-5.5").effort(true),
-                ModelEntry::new("gpt-5.5-mini", "GPT-5.5 Mini").effort(true),
-                ModelEntry::new("gpt-5.4", "GPT-5.4").effort(true),
+                ModelEntry::new("gpt-5.5-mini", "GPT-5.5 Mini")
+                    .effort(true)
+                    .legacy(true),
+                ModelEntry::new("gpt-5.4", "GPT-5.4")
+                    .effort(true)
+                    .legacy(true),
             ]),
         ModelProvider::new("claude", "Claude")
             .icon(IconName::Star)
@@ -34,7 +41,7 @@ pub fn catalog() -> Vec<ModelProvider> {
                 ModelEntry::new("fable-5.1", "Fable 5.1").effort(true),
                 ModelEntry::new("opus-5.5", "Opus 5.5").effort(true),
                 ModelEntry::new("sonnet-5.5", "Sonnet 5.5").effort(true),
-                ModelEntry::new("haiku-4.5", "Haiku 4.5"),
+                ModelEntry::new("haiku-4.5", "Haiku 4.5").legacy(true),
             ]),
     ]
 }
@@ -54,7 +61,7 @@ pub fn permission_modes() -> Vec<PermissionMode> {
             .icon(IconName::ClipboardList),
         PermissionMode::new("bypass", "Bypass permissions")
             .description("Run everything without asking")
-            .icon(IconName::ShieldAlert)
+            .icon(IconName::LockOpen)
             .tone(PermissionTone::Warning),
     ]
 }
@@ -66,7 +73,11 @@ pub fn model_picker<T: 'static>(
     cx: &mut Context<T>,
 ) -> Entity<ModelPickerState> {
     use gpui_kit::AppContext as _;
-    cx.new(|cx| ModelPickerState::new(catalog(), window, cx).with_selected(DEFAULT_MODEL))
+    cx.new(|cx| {
+        ModelPickerState::new(catalog(), window, cx)
+            .with_selected(DEFAULT_MODEL)
+            .with_favorites(FAVORITES)
+    })
 }
 
 /// A composer state with the shared catalog on the default model, and the
@@ -116,6 +127,20 @@ impl SampleStatus {
             device: cx.new(|cx| StatusSelectState::new(options(&["Local", "Cloud"]), cx)),
             branch: cx.new(|cx| {
                 StatusSelectState::new(options(&["feature/composer", "main", "fix/popover"]), cx)
+            }),
+        }
+    }
+
+    /// Options with long names, to show a tab in a narrow column: a long
+    /// project, a long device, and a long branch.
+    pub fn long<T: 'static>(cx: &mut Context<T>) -> Self {
+        use gpui_kit::AppContext as _;
+        let one = |name: &str| vec![StatusOption::new(name.to_string(), name.to_string())];
+        Self {
+            project: cx.new(|cx| StatusSelectState::new(one("sample-application-monorepo"), cx)),
+            device: cx.new(|cx| StatusSelectState::new(one("Local machine in the office"), cx)),
+            branch: cx.new(|cx| {
+                StatusSelectState::new(one("feature/composer-redesign-with-a-long-name"), cx)
             }),
         }
     }

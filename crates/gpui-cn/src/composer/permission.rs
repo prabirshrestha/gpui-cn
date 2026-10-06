@@ -412,6 +412,8 @@ impl RenderOnce for PermissionMenu {
                 let button = Button::new(ElementId::NamedChild(self.id.into(), "trigger".into()))
                     .ghost()
                     .size(ButtonSize::Sm)
+                    .flex_shrink(1.)
+                    .min_w_0()
                     .accessibility_label("Permission mode");
                 let theme = cx.theme();
                 let (warning, muted) = (theme.warning_text, theme.composer_muted);

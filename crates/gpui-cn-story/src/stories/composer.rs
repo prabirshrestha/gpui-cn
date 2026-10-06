@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use gpui_cn::{
     ActiveTheme as _, Attachment, AttachmentStrip, Button, ButtonSize, Composer, ComposerEvent,
-    ComposerState, ComposerStatusTab, ModelEntry, ModelPicker, ModelPickerState, ModelProvider,
-    PermissionMenu, PermissionMode, PermissionState, StatusSelect, gpui_kit::assets::IconName,
+    ComposerState, ComposerStatusTab, ModelEntry, ModelPickerState, ModelProvider, PermissionMenu,
+    PermissionMode, PermissionState, StatusSelect, gpui_kit::assets::IconName,
 };
 use gpui_kit::base::Disableable as _;
 use gpui_kit::{
@@ -38,8 +38,6 @@ pub struct ComposerStory {
     upload: Option<Task<()>>,
     permission: Entity<PermissionState>,
     custom_permission: Entity<PermissionState>,
-    models: Entity<ModelPickerState>,
-    custom_models: Entity<ModelPickerState>,
     basic: Entity<ComposerState>,
     rich: Entity<ComposerState>,
     custom: Entity<ComposerState>,
@@ -49,6 +47,10 @@ pub struct ComposerStory {
     rich_status: agents::SampleStatus,
     tab_status: agents::SampleStatus,
     joined_status: agents::SampleStatus,
+    narrow_status: agents::SampleStatus,
+    wide_status: agents::SampleStatus,
+    narrow_composer_status: agents::SampleStatus,
+    narrow_composer: Entity<ComposerState>,
     branch_only: agents::SampleStatus,
 }
 
@@ -101,15 +103,6 @@ impl ComposerStory {
         .into_iter()
         .map(|(name, composer, custom)| (name, composer.read(cx).models().clone(), custom))
         .collect()
-    }
-
-    /// Every standalone picker example, and whether its catalog is the
-    /// labelled custom one.
-    pub fn pickers(&self) -> Vec<(&'static str, Entity<ModelPickerState>, bool)> {
-        vec![
-            ("models", self.models.clone(), false),
-            ("custom-models", self.custom_models.clone(), true),
-        ]
     }
 
     fn describe(event: &ComposerEvent) -> SharedString {
@@ -231,8 +224,6 @@ impl Story for ComposerStory {
             let permission = cx.new(PermissionState::new);
             let custom_permission =
                 cx.new(|cx| PermissionState::new(cx).with_modes(Self::custom_modes()));
-            let models = agents::model_picker(window, cx);
-            let custom_models = Self::custom_models(window, cx);
             let basic = cx.new(|cx| {
                 let models = agents::model_picker(window, cx);
                 ComposerState::new(window, cx).with_models(models, window, cx)
@@ -273,6 +264,13 @@ impl Story for ComposerStory {
             let tab_status = agents::SampleStatus::new(cx);
             let joined_status = agents::SampleStatus::new(cx);
             let branch_only = agents::SampleStatus::new(cx);
+            let narrow_status = agents::SampleStatus::long(cx);
+            let wide_status = agents::SampleStatus::long(cx);
+            let narrow_composer_status = agents::SampleStatus::long(cx);
+            let narrow_composer = agents::composer(window, cx);
+            narrow_composer_status.watch(&narrow_composer, cx);
+            cx.observe(&narrow_composer, |_, _, cx| cx.notify())
+                .detach();
             agent_status.watch(&agent, cx);
             rich_status.watch(&rich, cx);
             for status in [
@@ -281,6 +279,9 @@ impl Story for ComposerStory {
                 &tab_status,
                 &joined_status,
                 &branch_only,
+                &narrow_status,
+                &wide_status,
+                &narrow_composer_status,
             ] {
                 for state in [&status.project, &status.device, &status.branch] {
                     cx.observe(state, |_: &mut Self, _, cx| cx.notify())
@@ -289,8 +290,6 @@ impl Story for ComposerStory {
             }
             cx.observe(&agent, |_: &mut Self, _, cx| cx.notify())
                 .detach();
-            cx.observe(&models, |_, _, cx| cx.notify()).detach();
-            cx.observe(&custom_models, |_, _, cx| cx.notify()).detach();
             cx.observe(&permission, |_, _, cx| cx.notify()).detach();
             cx.observe(&custom_permission, |_, _, cx| cx.notify())
                 .detach();
@@ -299,8 +298,6 @@ impl Story for ComposerStory {
                 upload: None,
                 permission,
                 custom_permission,
-                models,
-                custom_models,
                 basic,
                 rich,
                 custom,
@@ -311,6 +308,10 @@ impl Story for ComposerStory {
                 tab_status,
                 joined_status,
                 branch_only,
+                narrow_status,
+                wide_status,
+                narrow_composer_status,
+                narrow_composer,
             };
             story.start_upload(cx);
             story
@@ -328,16 +329,6 @@ impl Render for ComposerStory {
                 .map_or_else(String::new, |mode| mode.label().to_string())
         };
         let (mode, custom_mode) = (chosen(&self.permission), chosen(&self.custom_permission));
-        let chosen = |state: &Entity<ModelPickerState>| {
-            state.read(cx).selected_model().map_or_else(
-                || "none".to_string(),
-                |(_, model)| match state.read(cx).effort_label() {
-                    Some(effort) => format!("{} ({effort})", model.name()),
-                    None => model.name().to_string(),
-                },
-            )
-        };
-        let (model, custom_model) = (chosen(&self.models), chosen(&self.custom_models));
         let log = self.log.clone();
         page([
             section(
@@ -485,6 +476,39 @@ impl Render for ComposerStory {
             )
             .into_any_element(),
             section(
+                "Narrow widths",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(note(
+                        "Items keep one gap and stay left. When the row is too narrow the labels \
+                         end in an ellipsis, the chevron stays beside its label, and the meter \
+                         keeps its place at the right. The toolbar below behaves the same.",
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .w(px(320.))
+                            .child(self.narrow_status.tab("status-narrow").context(57.)),
+                    )
+                    .child(
+                        div()
+                            .w(px(480.))
+                            .child(self.wide_status.tab("status-medium").context(57.)),
+                    )
+                    .child(
+                        div().w(px(340.)).child(
+                            Composer::new("composer-narrow", &self.narrow_composer).status(
+                                self.narrow_composer_status
+                                    .tab("composer-narrow-status")
+                                    .context(57.),
+                            ),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+            section(
                 "Status tab",
                 div()
                     .flex()
@@ -558,44 +582,6 @@ impl Render for ComposerStory {
                                     .learn_more(false),
                             )
                             .child(note(format!("Mode: {custom_mode}"), cx)),
-                    ),
-            )
-            .into_any_element(),
-            section(
-                "Model picker",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(note(
-                        "A rail of providers, a quick search across all of them (press / to \
-                         focus it), and the models. The chosen model shows an effort chip. The \
-                         catalog and the marks are the application's, and any trigger opens it.",
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_4()
-                            .child(ModelPicker::new("models", &self.models))
-                            .child(note(format!("Model: {model}"), cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_4()
-                            .child(
-                                ModelPicker::new("custom-models", &self.custom_models).trigger(
-                                    Button::new("custom-models-trigger")
-                                        .outline()
-                                        .size(ButtonSize::Sm)
-                                        .icon(IconName::Cpu)
-                                        .label("Choose a local model"),
-                                ),
-                            )
-                            .child(note(format!("Model: {custom_model}"), cx)),
                     ),
             )
             .into_any_element(),

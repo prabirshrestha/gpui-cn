@@ -235,3 +235,110 @@ fn escape_closes_a_dropdown_without_a_change_and_the_keyboard_opens_it(cx: &mut 
     .unwrap();
     assert!(setup.events.borrow().is_empty());
 }
+
+struct Narrow {
+    width: f32,
+    project: Entity<StatusSelectState>,
+    device: Entity<StatusSelectState>,
+    branch: Entity<StatusSelectState>,
+}
+
+impl Render for Narrow {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(self.width)).child(
+            ComposerStatusTab::new("status")
+                .select(StatusSelect::new("project", &self.project).icon(IconName::Folder))
+                .select(StatusSelect::new("device", &self.device).icon(IconName::Laptop))
+                .select(StatusSelect::new("branch", &self.branch).icon(IconName::GitBranch))
+                .context(57.),
+        )
+    }
+}
+
+fn child(parent: &str, name: &str) -> ElementId {
+    ElementId::NamedChild(
+        ElementId::Name(parent.to_string().into()).into(),
+        name.to_string().into(),
+    )
+}
+
+#[gpui_kit::test]
+fn items_never_overlap_and_the_meter_stays_at_the_right(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    for width in [280., 360., 480., 720.] {
+        let handle = cx.open_window(size(px(800.), px(200.)), |window, cx| {
+            let project = cx.new(|cx| {
+                StatusSelectState::new(options(&["sample-application-with-a-long-name"]), cx)
+            });
+            let device =
+                cx.new(|cx| StatusSelectState::new(options(&["Local machine in the office"]), cx));
+            let branch = cx.new(|cx| {
+                StatusSelectState::new(options(&["feature/composer-redesign-long-branch-name"]), cx)
+            });
+            let harness = cx.new(|_| Narrow {
+                width,
+                project,
+                device,
+                branch,
+            });
+            Root::new(harness, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.activate_window();
+            window.render_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let tab = window.find("status").bounds();
+            assert_eq!(tab.size.height, px(38.), "width {width}");
+            let items: Vec<_> = ["project", "device", "branch"]
+                .iter()
+                .map(|name| window.find(child(name, "trigger")).bounds())
+                .collect();
+            for (at, item) in items.iter().enumerate() {
+                assert!(
+                    item.left() >= tab.left() && item.right() <= tab.right(),
+                    "item {at} is inside the tab at {width}: {item:?} {tab:?}"
+                );
+                for other in &items[at + 1..] {
+                    assert!(
+                        !item.intersects(other),
+                        "items overlap at {width}: {item:?} {other:?}"
+                    );
+                }
+            }
+            let meter = window.find(child("status", "context")).bounds();
+            assert!(
+                meter.left() >= tab.left() && meter.right() <= tab.right(),
+                "the meter is inside the tab at {width}"
+            );
+            let last = items.last().unwrap();
+            assert!(
+                last.right() <= meter.left(),
+                "the last item ends before the meter at {width}"
+            );
+            let ring = window
+                .find(ElementId::NamedChild(
+                    child("status", "context").into(),
+                    "ring".into(),
+                ))
+                .bounds();
+            assert!(ring.left() >= meter.left() && ring.right() <= meter.right());
+            let inset = f32::from(tab.right() - meter.right());
+            assert!(
+                (inset - 12.).abs() < 6.,
+                "the meter keeps the tab's trailing padding at {width}: {inset}"
+            );
+            let _ = cx;
+        })
+        .unwrap();
+    }
+}

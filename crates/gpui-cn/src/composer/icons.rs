@@ -13,6 +13,8 @@ gpui_kit::assets::icon_assets!(
         Hand,
         Image,
         Laptop,
+        Lock,
+        LockOpen,
         Mic,
         Presentation,
         ShieldAlert,

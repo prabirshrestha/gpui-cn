@@ -182,6 +182,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::FilePickerStory>(StorySection::Overlays),
         StoryEntry::of::<stories::FolderPickerStory>(StorySection::Overlays),
         StoryEntry::of::<stories::ComposerStory>(StorySection::Ai),
+        StoryEntry::of::<stories::ModelPickerStory>(StorySection::Ai),
         StoryEntry::of::<stories::AvatarStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::BadgeStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::TagStory>(StorySection::FeedbackAndDisplay),
@@ -970,7 +971,7 @@ mod tests {
         let count = titles.len();
         titles.dedup();
         assert_eq!(titles.len(), count, "a title is registered twice");
-        assert_eq!(count, 28, "a story was dropped or added without this count");
+        assert_eq!(count, 29, "a story was dropped or added without this count");
         for section in super::StorySection::ALL {
             assert!(
                 entries.iter().any(|e| e.section() == section),

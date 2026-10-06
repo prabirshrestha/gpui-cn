@@ -1,9 +1,8 @@
 use gpui_kit::{
-    App, AppContext as _, Context, ElementId, Entity, EventEmitter, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled, Subscription, Window,
+    App, AppContext as _, Context, ElementId, Entity, EventEmitter, IntoElement, RenderOnce,
+    SharedString, StyleRefinement, Styled, Subscription, Window,
     assets::IconName,
     base::{Align, StyledExt as _},
-    div,
     prelude::FluentBuilder as _,
 };
 
@@ -216,10 +215,14 @@ impl RenderOnce for StatusSelect {
         .when_some(self.icon, |button, icon| {
             button.icon(icon.size(status_icon))
         })
-        .child(div().child(label))
+        .label(label)
+        .flex_shrink(1.)
+        .min_w_0()
         .trailing_icon(Icon::from(IconName::ChevronDown).size_3().text_color(muted));
         DropdownMenu::new(self.id, &menu)
             .align(Align::Start)
+            .flex_shrink(1.)
+            .min_w_0()
             .refine_style(&self.style)
             .trigger(trigger)
             .items(move |_, cx| {
