@@ -124,7 +124,11 @@ fn paint_arc(
 impl RenderOnce for ProgressRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let slide = Theme::global(cx).motion.slide_transition();
-        let color = window.text_style().color;
+        let color = self
+            .style
+            .text
+            .color
+            .unwrap_or_else(|| window.text_style().color);
         let (size, stroke) = {
             let metrics = &cx.theme().metrics;
             (metrics.ring_size, metrics.ring_stroke)

@@ -172,6 +172,29 @@ pub struct ThemeTokens {
     /// the link color most of the way over the fill. One pixel, no spread.
     /// The ring itself on light, as shadcn's `border-ring`.
     pub field_focus_border: Hsla,
+    /// The strip behind the top of a composer card: the `selected` step,
+    /// which reads against both the window and the card (BoardUI composer
+    /// spec: a grey strip; not measured from the reference app).
+    pub status_tab: Hsla,
+    /// The ring of a radio that is not chosen: the muted text at 60%, so it
+    /// reads on a popover surface where the `input` hairline vanishes
+    /// (shadcn's `border-input` is the hairline on light).
+    pub radio_border: Hsla,
+    /// The icon of a document attachment: the muted text, a neutral gray
+    /// (BoardUI composer spec; not measured from the reference app).
+    pub kind_document: Hsla,
+    /// The icon of a spreadsheet attachment: the accent, which is blue
+    /// (BoardUI composer spec).
+    pub kind_spreadsheet: Hsla,
+    /// The icon of a presentation attachment: the accent turned to purple,
+    /// at 280 degrees of hue (BoardUI composer spec).
+    pub kind_presentation: Hsla,
+    /// The icon of a code attachment: the accent turned to teal, at 176
+    /// degrees of hue (BoardUI composer spec).
+    pub kind_code: Hsla,
+    /// The icon of a video attachment: the accent turned to violet, at 252
+    /// degrees of hue (BoardUI composer spec).
+    pub kind_video: Hsla,
     /// The text of a multi-line field: 13px on an 18.5px line, the pitch
     /// measured from the reference app's settings textarea at 2x (37px),
     /// looser than `text_control` so lines of prose read apart.
@@ -292,6 +315,41 @@ pub struct MetricTokens {
     pub ring_size: Pixels,
     /// The stroke of a progress ring: 2px, the same source.
     pub ring_stroke: Pixels,
+    /// The side of an attachment tile: 56px (BoardUI composer spec; not
+    /// measured from the reference app).
+    pub attachment_tile: Pixels,
+    /// The icon of a file attachment tile: 18px, the same source.
+    pub attachment_icon: Pixels,
+    /// The file name and the percent on an attachment tile: 9px, the same
+    /// source.
+    pub attachment_text: Pixels,
+    /// The stroke of the arc that draws around an uploading tile: 2px.
+    pub attachment_arc: Pixels,
+    /// The width of the model picker's panel: 341px (BoardUI composer spec;
+    /// not measured from the reference app).
+    pub model_picker_width: Pixels,
+    /// The width of the provider rail at the picker's left: 44px, the same
+    /// source.
+    pub model_picker_rail: Pixels,
+    /// The height of a model row: 36px, the same source.
+    pub model_row: Pixels,
+    /// The tallest the list of models grows before it scrolls: six rows.
+    pub model_list_height: Pixels,
+    /// The height of the effort card that opens under the chosen model: 88px,
+    /// the same source.
+    pub effort_card_height: Pixels,
+    /// The height of a composer's status tab: 34px (BoardUI composer spec;
+    /// not measured from the reference app).
+    pub status_tab_height: Pixels,
+    /// How far the status tab is inset from each side of the card: 28px,
+    /// the same source.
+    pub status_tab_inset: Pixels,
+    /// How far the card of a composer covers the status tab behind it:
+    /// 12px, so the tab's items show above the card (BoardUI composer
+    /// spec; not measured from the reference app).
+    pub status_tab_overlap: Pixels,
+    /// The radius of a composer's card: 24px, the same source.
+    pub composer_radius: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
     /// the reference app at 2x.
     pub menu_gap: Pixels,
@@ -451,6 +509,19 @@ impl MetricTokens {
             radio_dot: scaled(8.),
             ring_size: scaled(16.),
             ring_stroke: scaled(2.),
+            attachment_tile: scaled(56.),
+            attachment_icon: scaled(18.),
+            attachment_text: scaled(9.),
+            attachment_arc: scaled(2.),
+            model_picker_width: scaled(341.),
+            model_picker_rail: scaled(44.),
+            model_row: scaled(36.),
+            model_list_height: scaled(216.),
+            effort_card_height: scaled(88.),
+            status_tab_height: scaled(34.),
+            status_tab_inset: scaled(28.),
+            status_tab_overlap: scaled(12.),
+            composer_radius: scaled(24.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
             menu_search_min_width: scaled(240.),
@@ -598,6 +669,10 @@ impl ThemeTokens {
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
         let tab_separator = muted_foreground.opacity(0.6);
+        let turned = |hue_degrees: f32| Hsla {
+            h: hue_degrees / 360.,
+            ..config.accent
+        };
         let field = if dark { toward_ink(0.104) } else { surface };
         let field_border = if dark { toward_ink(0.181) } else { input };
         let field_focus_border = if dark {
@@ -716,6 +791,13 @@ impl ThemeTokens {
             field,
             field_border,
             field_focus_border,
+            status_tab: selected,
+            radio_border: muted_foreground.opacity(0.6),
+            kind_document: muted_foreground,
+            kind_spreadsheet: config.accent,
+            kind_presentation: turned(280.),
+            kind_code: turned(176.),
+            kind_video: turned(252.),
             text_textarea,
         }
     }
@@ -1401,5 +1483,60 @@ mod tests {
         let default = light();
         assert_eq!(default.metrics.ring_size, px(16.));
         assert_eq!(default.metrics.ring_stroke, px(2.));
+    }
+
+    #[test]
+    fn attachment_kind_tints_turn_the_accent_and_the_tile_metrics_scale() {
+        let (dark, light) = (dark(), light());
+        let hexes = |t: &ThemeTokens| {
+            [
+                t.kind_document,
+                t.kind_spreadsheet,
+                t.kind_presentation,
+                t.kind_code,
+                t.kind_video,
+            ]
+            .map(to_hex)
+        };
+        assert_eq!(
+            hexes(&dark),
+            ["#969696", "#539af8", "#c153f8", "#53f8ed", "#7453f8"]
+        );
+        assert_eq!(
+            hexes(&light),
+            ["#67696b", "#339cff", "#bb33ff", "#33fff1", "#5c33ff"]
+        );
+        assert_eq!(
+            dark.kind_spreadsheet, dark.info,
+            "blue is the accent itself"
+        );
+        assert_eq!(dark.metrics.attachment_tile, px(56.));
+        assert_eq!(dark.metrics.attachment_icon, px(18.));
+        assert_eq!(dark.metrics.attachment_text, px(9.));
+    }
+
+    #[test]
+    fn model_picker_metrics_and_the_radio_ring_are_derived() {
+        let (dark, light) = (dark(), light());
+        assert_eq!(dark.metrics.model_picker_width, px(341.));
+        assert_eq!(dark.metrics.model_picker_rail, px(44.));
+        assert_eq!(dark.metrics.model_row, px(36.));
+        assert_eq!(dark.metrics.model_list_height, px(216.), "six rows");
+        assert_eq!(dark.metrics.effort_card_height, px(88.));
+        assert_eq!(dark.radio_border.a, 0.6);
+        assert_eq!(to_hex(dark.radio_border.alpha(1.)), "#969696");
+        assert_eq!(to_hex(light.radio_border.alpha(1.)), "#67696b");
+    }
+
+    #[test]
+    fn status_tab_metrics_and_fill_are_derived() {
+        let (dark, light) = (dark(), light());
+        assert_eq!(dark.metrics.status_tab_height, px(34.));
+        assert_eq!(dark.metrics.status_tab_inset, px(28.));
+        assert_eq!(dark.metrics.status_tab_overlap, px(12.));
+        assert_eq!(dark.metrics.composer_radius, px(24.));
+        assert_eq!(dark.status_tab, dark.selected);
+        assert_eq!(to_hex(dark.status_tab), "#2c2c2c");
+        assert_eq!(to_hex(light.status_tab), "#e8e8e8");
     }
 }

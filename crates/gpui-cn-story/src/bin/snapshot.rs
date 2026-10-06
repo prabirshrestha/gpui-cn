@@ -23,11 +23,10 @@ fn main() {
 mod macos {
     use std::{path::PathBuf, sync::Arc};
 
-    use gpui_cn::{ReduceMotion, Theme, ThemeMode};
+    use gpui_cn::{ComposerAssets, ReduceMotion, Theme, ThemeMode};
     use gpui_cn_story::Gallery;
     use gpui_kit::{
-        AppContext as _, Entity, HeadlessAppContext, assets::Assets, px, size,
-        test::TestWindowExt as _,
+        AppContext as _, Entity, HeadlessAppContext, px, size, test::TestWindowExt as _,
     };
 
     pub fn run() {
@@ -44,7 +43,7 @@ mod macos {
             .unwrap_or_else(|| f32::from(gpui_cn_story::WINDOW_SIZE.height));
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
+            Arc::new(ComposerAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(|cx| {
@@ -68,6 +67,10 @@ mod macos {
         let gallery = gallery.expect("the gallery view");
 
         let capture = |cx: &mut HeadlessAppContext, name: &str| {
+            cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                .expect("render");
+            // Pictures decode off the main thread; wait for them.
+            cx.run_until_parked();
             cx.update_window(handle.into(), |_, window, cx| {
                 window.render_frame(cx);
                 window.render_frame(cx);
@@ -135,6 +138,7 @@ mod macos {
                 "Popover",
                 "Dialog",
                 "Folder picker",
+                "Composer",
                 "Avatar",
                 "Badge",
                 "Tag",
@@ -195,6 +199,62 @@ mod macos {
                 }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                if story == "Composer" {
+                    let named = |parent: &'static str, child: &'static str| {
+                        gpui_kit::ElementId::NamedChild(
+                            gpui_kit::ElementId::Name(parent.into()).into(),
+                            child.into(),
+                        )
+                    };
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(named("composer-basic", "text"), cx);
+                        window.press("cmd-a", cx);
+                        window.input("Summarize the attached forecast", cx);
+                        window.press("shift-enter", cx);
+                        window.input("and list the three biggest risks.", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("type a prompt");
+                    capture(&mut cx, &format!("story-{slug}-typed-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(named("permission", "trigger"), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.hover(named("permission", "manual"), cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the permission menu");
+                    capture(&mut cx, &format!("story-{slug}-permission-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the permission menu");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal(named("models", "trigger"), window, cx);
+                        window.click(named("models", "trigger"), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the model picker");
+                    capture(&mut cx, &format!("story-{slug}-models-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.click(named("models", "effort"), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the effort card");
+                    capture(&mut cx, &format!("story-{slug}-models-effort-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the model picker");
+                }
                 if story == "Menu" {
                     use gpui_cn_story::stories::MenuStory;
                     let named = |parent: &'static str, child: &'static str| {

@@ -40,6 +40,7 @@ mod avatar;
 mod badge;
 mod button;
 mod command;
+mod composer;
 mod dialog;
 mod folder_picker;
 mod icon;
@@ -75,6 +76,12 @@ pub use button::{Button, ButtonSize, ButtonVariant};
 pub use command::{
     Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
     CommandSearchHandler, CommandState,
+};
+pub use composer::{
+    Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
+    ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
+    ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider, PermissionEvent,
+    PermissionMenu, PermissionMode, PermissionState, StatusLabel,
 };
 pub use dialog::Dialog;
 pub use folder_picker::{

@@ -67,7 +67,7 @@ impl RenderOnce for RadioMark {
             .border_color(if self.checked {
                 theme.primary()
             } else {
-                theme.input()
+                theme.radio_border
             })
             .when(self.checked, |this| {
                 this.child(div().size(dot).rounded(radius).bg(theme.primary()))
