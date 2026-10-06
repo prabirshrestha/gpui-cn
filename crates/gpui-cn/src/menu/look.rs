@@ -218,11 +218,17 @@ pub(crate) fn row_line() -> gpui_kit::Div {
 /// virtual list measures a row without its margin, so a margin would
 /// fold the gap away and paint the line on the next row.
 pub(crate) fn separator(look: &MenuLook) -> AnyElement {
+    separator_in(look, look.separator)
+}
+
+/// [`separator`] in `color`: a search field's underline takes the accent
+/// while the field has focus.
+pub(crate) fn separator_in(look: &MenuLook, color: Hsla) -> AnyElement {
     div()
         .w_full()
         .py(look.padding)
         .px(look.padding * 2.)
-        .child(div().h_px().w_full().bg(look.separator))
+        .child(div().h_px().w_full().bg(color))
         .into_any_element()
 }
 

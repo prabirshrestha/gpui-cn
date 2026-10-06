@@ -48,6 +48,7 @@ pub struct ComposerStory {
     tab_status: agents::SampleStatus,
     joined_status: agents::SampleStatus,
     narrow_status: agents::SampleStatus,
+    short_status: agents::SampleStatus,
     wide_status: agents::SampleStatus,
     narrow_composer_status: agents::SampleStatus,
     narrow_composer: Entity<ComposerState>,
@@ -265,6 +266,7 @@ impl Story for ComposerStory {
             let joined_status = agents::SampleStatus::new(cx);
             let branch_only = agents::SampleStatus::new(cx);
             let narrow_status = agents::SampleStatus::long(cx);
+            let short_status = agents::SampleStatus::short(cx);
             let wide_status = agents::SampleStatus::long(cx);
             let narrow_composer_status = agents::SampleStatus::long(cx);
             let narrow_composer = agents::composer(window, cx);
@@ -280,6 +282,7 @@ impl Story for ComposerStory {
                 &joined_status,
                 &branch_only,
                 &narrow_status,
+                &short_status,
                 &wide_status,
                 &narrow_composer_status,
             ] {
@@ -309,6 +312,7 @@ impl Story for ComposerStory {
                 joined_status,
                 branch_only,
                 narrow_status,
+                short_status,
                 wide_status,
                 narrow_composer_status,
                 narrow_composer,
@@ -473,6 +477,24 @@ impl Render for ComposerStory {
                                     .on_click(cx.listener(|this, _, _, cx| this.reset_upload(cx))),
                             ),
                     ),
+            )
+            .into_any_element(),
+            section(
+                "Menu or search",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .w(px(560.))
+                    .child(note(
+                        "A dropdown with three options or more opens a list with a search \
+                         field that ranks what is typed, and a shorter one opens a plain \
+                         menu. Here the project and the branch have three options, so they \
+                         search, and the device has two, so it is a menu. The tabs above have \
+                         twelve projects and thirty refs.",
+                        cx,
+                    ))
+                    .child(self.short_status.tab("status-short").context(57.)),
             )
             .into_any_element(),
             section(

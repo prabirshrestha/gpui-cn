@@ -27,4 +27,6 @@ pub use permission::{
 };
 pub use prompt::{Composer, ComposerEvent, ComposerState};
 pub use status::{ComposerStatusTab, ContextMeter};
-pub use status_select::{StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState};
+pub use status_select::{
+    SEARCH_MIN_OPTIONS, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
+};

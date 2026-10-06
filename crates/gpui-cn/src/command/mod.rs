@@ -31,7 +31,8 @@ pub use item::{CommandEntry, CommandGroup, CommandItem, CommandRow};
 use crate::{
     ActiveTheme as _, ScrollArea, Theme,
     menu::{
-        MenuLook, label_block, line_slot, row_line, search_row, search_style, separator, shortcut,
+        MenuLook, label_block, line_slot, row_line, search_row, search_style, separator,
+        separator_in, shortcut,
     },
 };
 
@@ -477,6 +478,11 @@ impl RenderOnce for Command {
             )
         };
         let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
+        let underline = if input.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            cx.theme().control_accent
+        } else {
+            look.separator
+        };
         let body = if empty {
             div()
                 .py_6()
@@ -556,7 +562,7 @@ impl RenderOnce for Command {
                     .id(child("search"))
                     .test_support(),
             )
-            .child(separator(&look))
+            .child(separator_in(&look, underline))
             .child(body)
     }
 }

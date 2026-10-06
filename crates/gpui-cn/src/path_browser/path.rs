@@ -3,29 +3,12 @@
 //! a typed separator goes into. It works on plain strings, so it needs no
 //! window and no file system.
 
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-};
-
-use gpui_kit::SharedString;
-use nucleo_matcher::{
-    Config, Matcher, Utf32Str,
-    pattern::{Atom, AtomKind, CaseMatching, Normalization},
-};
+use std::path::{Path, PathBuf};
 
 use super::Entry;
+use gpui_kit::SharedString;
 
-/// A folder that matches the query, and where.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Match {
-    /// The index of the folder in the listing.
-    pub(crate) index: usize,
-    /// The score: a higher one ranks first.
-    pub(crate) score: u32,
-    /// The byte ranges of the name the query matched.
-    pub(crate) ranges: Vec<Range<usize>>,
-}
+pub(crate) use crate::fuzzy::Match;
 
 /// Whether `c` separates the parts of a path.
 pub(crate) fn is_separator(c: char, windows: bool) -> bool {
@@ -162,65 +145,25 @@ pub(crate) fn all_visible<E: Entry>(entries: &[E], visible: &dyn Fn(&E) -> bool)
         .collect()
 }
 
-/// [`filter`] over the entries `visible` lets through.
+/// [`filter`] over the entries `visible` lets through, ranked by
+/// [`crate::fuzzy::rank`] on their names.
 pub(crate) fn rank<E: Entry>(
     entries: &[E],
     visible: &dyn Fn(&E) -> bool,
     query: &str,
 ) -> Vec<Match> {
-    let atom = Atom::new(
-        query,
-        CaseMatching::Ignore,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-        false,
-    );
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let mut buffer = Vec::new();
-    let mut indices = Vec::new();
-    let mut matches: Vec<Match> = entries
+    let shown: Vec<(usize, &E)> = entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| visible(entry))
-        .filter_map(|(index, entry)| {
-            indices.clear();
-            let haystack = Utf32Str::new(entry.name(), &mut buffer);
-            let score = atom.indices(haystack, &mut matcher, &mut indices)?;
-            indices.sort_unstable();
-            indices.dedup();
-            Some(Match {
-                index,
-                score: u32::from(score),
-                ranges: byte_ranges(entry.name(), &indices),
-            })
-        })
         .collect();
-    matches.sort_by(|a, b| {
-        let length = |found: &Match| entries[found.index].name().chars().count();
-        b.score
-            .cmp(&a.score)
-            .then_with(|| length(a).cmp(&length(b)))
-            .then_with(|| a.index.cmp(&b.index))
-    });
-    matches
-}
-
-/// The byte ranges of the characters at `indices`, joined where they run
-/// together.
-fn byte_ranges(text: &str, indices: &[u32]) -> Vec<Range<usize>> {
-    let mut ranges: Vec<Range<usize>> = Vec::new();
-    let mut chars = text.char_indices().enumerate();
-    for &wanted in indices {
-        let Some((_, (start, c))) = chars.by_ref().find(|(at, _)| *at == wanted as usize) else {
-            break;
-        };
-        let end = start + c.len_utf8();
-        match ranges.last_mut() {
-            Some(last) if last.end == start => last.end = end,
-            _ => ranges.push(start..end),
-        }
-    }
-    ranges
+    crate::fuzzy::rank(query, &shown, |(_, entry)| entry.name())
+        .into_iter()
+        .map(|found| Match {
+            index: shown[found.index].0,
+            ..found
+        })
+        .collect()
 }
 
 /// The folder a typed separator goes into: the one named exactly like the

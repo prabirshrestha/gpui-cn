@@ -45,11 +45,13 @@ mod composer;
 mod dialog;
 mod file_picker;
 mod folder_picker;
+pub mod fuzzy;
 mod icon;
 mod input;
 mod label;
 mod looping;
 mod menu;
+mod middle_text;
 mod nav;
 mod path_browser;
 mod popover;
@@ -85,7 +87,7 @@ pub use composer::{
     ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
     EffortMenu, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,
     ModelView, PermissionEvent, PermissionMenu, PermissionMode, PermissionState, PermissionTone,
-    StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
+    SEARCH_MIN_OPTIONS, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
 pub use file_picker::{

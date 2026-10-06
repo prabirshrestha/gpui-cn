@@ -27,8 +27,16 @@ impl Render for Harness {
             ComposerStatusTab::new("status")
         } else {
             ComposerStatusTab::new("status")
-                .select(StatusSelect::new("project", &self.project).icon(IconName::Folder))
-                .select(StatusSelect::new("branch", &self.branch).icon(IconName::GitBranch))
+                .select(
+                    StatusSelect::new("project", &self.project)
+                        .icon(IconName::Folder)
+                        .searchable(false),
+                )
+                .select(
+                    StatusSelect::new("branch", &self.branch)
+                        .icon(IconName::GitBranch)
+                        .searchable(false),
+                )
                 .context(self.percent)
         })
     }

@@ -46,6 +46,47 @@ pub fn catalog() -> Vec<ModelProvider> {
     ]
 }
 
+/// About thirty refs, as a repository lists them: the current branch, a
+/// worktree, local branches, and remote ones, some with long names.
+fn refs() -> Vec<StatusOption> {
+    let mut refs = vec![
+        StatusOption::new("main", "main").trailing("current"),
+        StatusOption::new("feat/local-tts", "feat/local-tts").trailing("worktree"),
+        StatusOption::new("feature/composer", "feature/composer"),
+        StatusOption::new("fix/popover", "fix/popover"),
+        StatusOption::new("release/0.4", "release/0.4"),
+    ];
+    for name in [
+        "origin/main",
+        "origin/renovate/mermaid-12.x",
+        "origin/renovate/dotenv-18.x",
+        "origin/renovate/dotenv-17.x",
+        "origin/renovate/anthropic-ai-sdk-0.x",
+        "origin/fix/psmode-current-evidence",
+        "origin/fix/psmode-current-turn-evidence-x-evidence",
+        "origin/feat/model-picker-favorites",
+        "origin/feat/status-select-search-list",
+        "origin/feat/file-picker-new-folder-support",
+        "origin/docs/github-cli-attachments",
+        "origin/docs/composer-guide",
+        "origin/chore/deps-update-nucleo",
+        "origin/chore/ci-cache",
+        "origin/refactor/path-browser",
+        "origin/refactor/progress-ring-into-progress",
+        "origin/test/headless-picker-footers",
+        "origin/release/0.3",
+        "origin/release/0.2",
+        "origin/hotfix/dialog-focus-restore",
+        "origin/spike/command-dialog",
+        "origin/wip/theme-color-page",
+        "origin/wip/effort-menu",
+        "origin/dependabot/cargo/smol-2",
+    ] {
+        refs.push(StatusOption::new(name, name).trailing("remote"));
+    }
+    refs
+}
+
 /// The permission modes of a Claude Code style agent. The first is the
 /// default.
 pub fn permission_modes() -> Vec<PermissionMode> {
@@ -109,10 +150,42 @@ pub struct SampleStatus {
 }
 
 impl SampleStatus {
-    /// Sample options: projects sample-app, northwind, and playground;
-    /// devices Local and Cloud; branches feature/composer, main, and
-    /// fix/popover. The first of each is chosen.
+    /// Sample options: twelve projects, devices Local and Cloud, and about
+    /// thirty refs with kinds, so the search lists have something to
+    /// search. The first of each is chosen.
     pub fn new<T: 'static>(cx: &mut Context<T>) -> Self {
+        use gpui_kit::AppContext as _;
+        let options = |names: &[&str]| -> Vec<StatusOption> {
+            names
+                .iter()
+                .map(|name| StatusOption::new(name.to_string(), name.to_string()))
+                .collect()
+        };
+        let projects = options(&[
+            "sample-app",
+            "northwind",
+            "playground",
+            "billing-service",
+            "design-system",
+            "docs-site",
+            "mobile-client",
+            "data-pipeline",
+            "infra-config",
+            "internal-tools",
+            "marketing-site",
+            "release-notes",
+        ]);
+        Self {
+            project: cx.new(|cx| StatusSelectState::new(projects, cx)),
+            device: cx.new(|cx| StatusSelectState::new(options(&["Local", "Cloud"]), cx)),
+            branch: cx.new(|cx| StatusSelectState::new(refs(), cx)),
+        }
+    }
+
+    /// A short list for each dropdown: three projects, two devices, and
+    /// three branches, which shows the rule that picks a plain menu or a
+    /// search list from the number of options.
+    pub fn short<T: 'static>(cx: &mut Context<T>) -> Self {
         use gpui_kit::AppContext as _;
         let options = |names: &[&str]| -> Vec<StatusOption> {
             names
@@ -126,7 +199,7 @@ impl SampleStatus {
             }),
             device: cx.new(|cx| StatusSelectState::new(options(&["Local", "Cloud"]), cx)),
             branch: cx.new(|cx| {
-                StatusSelectState::new(options(&["feature/composer", "main", "fix/popover"]), cx)
+                StatusSelectState::new(options(&["main", "feature/composer", "fix/popover"]), cx)
             }),
         }
     }
@@ -150,9 +223,19 @@ impl SampleStatus {
         let child =
             |name: &'static str| ElementId::NamedChild(ElementId::from(id).into(), name.into());
         ComposerStatusTab::new(id)
-            .select(StatusSelect::new(child("project"), &self.project).icon(IconName::Folder))
+            .select(
+                StatusSelect::new(child("project"), &self.project)
+                    .icon(IconName::Folder)
+                    .placeholder("Search projects...")
+                    .empty("No projects found"),
+            )
             .select(StatusSelect::new(child("device"), &self.device).icon(IconName::Laptop))
-            .select(StatusSelect::new(child("branch"), &self.branch).icon(IconName::GitBranch))
+            .select(
+                StatusSelect::new(child("branch"), &self.branch)
+                    .icon(IconName::GitBranch)
+                    .placeholder("Search refs...")
+                    .empty("No refs found"),
+            )
     }
 
     /// Forwards the three dropdowns' changes to `composer` as status

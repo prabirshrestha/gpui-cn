@@ -30,6 +30,7 @@ pub use state::{MenuAnchor, MenuEvent, MenuState};
 
 pub(crate) use look::{
     MenuLook, MenuMotion, label_block, line_slot, row_line, search_row, search_style, separator,
+    separator_in,
 };
 pub(crate) use panel::{MenuPanels, corner, measure, placement, shortcut};
 pub(crate) use text::{TextMenuBuilder, open_text_menu};
