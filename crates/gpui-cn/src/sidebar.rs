@@ -492,10 +492,6 @@ impl RenderOnce for SidebarLayout {
             })
             .map(|this| {
                 if sheet {
-                    // The sheet is base's: it traps focus, closes on Escape
-                    // and on a press outside the panel, and sits over the
-                    // content. The scrim and the slide are ours, and fade
-                    // and move with the sheet's motion.
                     let progress = f32::from(shown) / f32::from(sheet_width);
                     let scrim = cx.theme().scrim.opacity(progress);
                     let close_state = self.state.clone();
@@ -520,8 +516,6 @@ impl RenderOnce for SidebarLayout {
                                         .absolute()
                                         .top_0()
                                         .bottom_0()
-                                        // A click in the sheet is the sheet's,
-                                        // not the scrim's under it.
                                         .occlude()
                                         .map(|this| match side {
                                             SidebarSide::Left => this.left_0(),
@@ -666,9 +660,6 @@ impl ParentElement for Sidebar {
 
 impl RenderOnce for Sidebar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // The content scrolls under the header's bottom edge. A hairline
-        // fades in there once the content has moved, so rows that pass
-        // under the header read as cut by an edge, and none shows at rest.
         let scroll = window
             .use_keyed_state("sidebar-scroll", cx, |_, _| ScrollHandle::new())
             .read(cx)

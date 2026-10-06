@@ -654,10 +654,6 @@ impl RenderOnce for Composer {
             Slot::Hidden => None,
             Slot::Custom(element) => Some(element),
         };
-        // The toolbar's width is last frame's. When the default controls do
-        // not fit it, the model name and the permission label shrink to
-        // their minimums first, and then the effort control and the
-        // permission control become icons, in that order.
         let model_state = models.clone();
         let has_default_models = matches!(self.models, Slot::Default);
         let permission_menu = matches!(self.permission, Slot::Default)

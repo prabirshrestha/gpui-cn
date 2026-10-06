@@ -69,7 +69,6 @@ mod macos {
         let capture = |cx: &mut HeadlessAppContext, name: &str| {
             cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
                 .expect("render");
-            // Pictures decode off the main thread; wait for them.
             cx.run_until_parked();
             cx.update_window(handle.into(), |_, window, cx| {
                 window.render_frame(cx);
@@ -871,7 +870,6 @@ mod macos {
             .expect("select the story");
         }
 
-        // A phone-width window shows the sidebar as a sheet over the page.
         let mut narrow: Option<Entity<Gallery>> = None;
         let narrow_handle = cx
             .open_window(size(px(430.), px(900.)), |window, cx| {

@@ -170,9 +170,6 @@ impl RenderOnce for ComposerStatusTab {
         let (pad_left, pad_right) = (metrics.status_tab_inset, theme.base.spacing.lg);
         let tight = theme.base.spacing.sm;
         let (fill, radius, text) = (theme.sidebar, theme.radius_lg(), theme.text_control);
-        // The tab's width and its trailing element's come from the last
-        // frame. The selects give up their labels from the right, until the
-        // row fits what is left of the tab.
         let widths = window
             .use_keyed_state(
                 ElementId::NamedChild(self.id.clone().into(), "widths".into()),
