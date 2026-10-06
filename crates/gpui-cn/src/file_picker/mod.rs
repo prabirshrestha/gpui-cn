@@ -34,8 +34,8 @@ use crate::{
     MenuItem, MenuState, ScrollArea, Switch, Theme,
     menu::MenuLook,
     path_browser::{
-        self, Body, Browser, Host, ListError, Page, PageToken, PathStyle, Source, SourcePath,
-        Submit, view,
+        self, Body, Browser, CreateFolderError, Host, ListError, NewFolder, Page, PageToken,
+        PathStyle, Source, SourcePath, Submit, view,
     },
 };
 
@@ -137,6 +137,10 @@ pub enum FilePickerEvent {
     Cancelled,
     /// The user selected or deselected files.
     SelectionChanged,
+    /// A folder was made in the directory that is listed, from the "New
+    /// folder" row or [`FilePickerState::create_folder`]. The listing is
+    /// read again, and the picker puts the highlight on the new folder.
+    FolderCreated(SourcePath),
 }
 
 /// The path text, the listings, the filtered rows, and the selection of a
@@ -178,6 +182,11 @@ impl Host<FileEntry> for FilePickerState {
 
     fn browser_mut(&mut self) -> &mut Browser<FileEntry> {
         &mut self.browser
+    }
+
+    fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>) {
+        self.browser.focus_path(window, cx);
+        cx.emit(FilePickerEvent::FolderCreated(path));
     }
 }
 
@@ -236,9 +245,24 @@ impl FilePickerState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        self.set_source(source, window, cx);
+        self
+    }
+
+    /// Lists from `source` from now on, as [`with_source`](Self::with_source)
+    /// does for a picker being built: the listings cached so far are
+    /// dropped, the requests in flight are cancelled, and the picker goes
+    /// to the new source's home, or keeps the path it was given with
+    /// `with_initial`.
+    pub fn set_source(
+        &mut self,
+        source: impl FileSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.browser
             .set_source(Rc::new(Adapter(Rc::new(source))), window, cx);
-        self
+        cx.notify();
     }
 
     /// Starts in `path`, which is listed at once. A path that starts with
@@ -322,6 +346,61 @@ impl FilePickerState {
     /// Why the directory could not be listed, when it could not.
     pub fn failure(&self) -> Option<&crate::ListError> {
         self.browser.failure()
+    }
+
+    /// Offers a "New folder" button, which opens a row at the top of the
+    /// list to name a folder in the directory that is listed. It is off
+    /// by default, and shows only when the source
+    /// [can make folders](FileSource::can_create_folders).
+    pub fn allow_new_folder(mut self, allow: bool) -> Self {
+        self.browser.set_allow_new_folder_seed(allow);
+        self
+    }
+
+    /// Whether the picker is set to offer a "New folder" button.
+    pub fn allows_new_folder(&self) -> bool {
+        self.browser.allows_new_folder()
+    }
+
+    /// Offers or withdraws the "New folder" button.
+    pub fn set_allow_new_folder(&mut self, allow: bool, cx: &mut Context<Self>) {
+        self.browser.set_allow_new_folder(allow, cx);
+    }
+
+    /// Whether the button shows: it is on and the source can make folders.
+    pub fn can_create_folder(&self) -> bool {
+        self.browser.can_create_folder()
+    }
+
+    /// Whether the row that names a new folder is open.
+    pub fn is_naming_folder(&self) -> bool {
+        self.browser.new_folder.is_some()
+    }
+
+    /// The name typed in the row that names a new folder, or `None` while
+    /// the row is closed.
+    pub fn new_folder_name(&self, cx: &App) -> Option<SharedString> {
+        self.browser
+            .new_folder
+            .as_ref()
+            .map(|row| row.input.read(cx).value())
+    }
+
+    /// Opens the row that names a new folder, with "Untitled folder"
+    /// selected. Nothing is made until the name is confirmed with Enter.
+    /// It does nothing while the directory loads, or when the source
+    /// cannot make folders.
+    pub fn begin_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.browser.begin_default_new_folder(window, cx);
+    }
+
+    /// Makes the folder `name` in the directory that is listed, the way
+    /// the row does: the name is checked, the source is asked, and the
+    /// result shows in the row, which opens if it is not open. The picker
+    /// reports [`FilePickerEvent::FolderCreated`] when the folder exists.
+    pub fn create_folder(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.browser.begin_new_folder(name, window, cx);
+        self.browser.commit_new_folder(window, cx);
     }
 
     /// The path field's state.
@@ -668,6 +747,19 @@ impl Source<FileEntry> for Adapter {
     fn env(&self, name: &str) -> Option<String> {
         self.0.env(name)
     }
+
+    fn can_create_folders(&self) -> bool {
+        self.0.can_create_folders()
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        self.0.create_folder(parent, name, cx)
+    }
 }
 
 type CloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -866,6 +958,18 @@ impl RenderOnce for FilePicker {
                     state.update(cx, |state, cx| state.go_up(window, cx));
                 })
         };
+        let new_folder = state.read(cx).can_create_folder().then(|| {
+            let ready = state.read(cx).browser.new_folder_ready();
+            let state = state.clone();
+            Button::new(child("new-folder-button"))
+                .ghost()
+                .icon(Icon::from(IconName::Plus))
+                .label("New folder")
+                .disabled(!ready)
+                .on_click(move |_, window, cx| {
+                    state.update(cx, |state, cx| state.begin_new_folder(window, cx));
+                })
+        });
         let options = h_flex()
             .w_full()
             .items_center()
@@ -873,50 +977,52 @@ impl RenderOnce for FilePicker {
             .gap_2()
             .px(look.row_padding)
             .text_color(look.muted_foreground)
-            .child(if filters.len() > 1 {
-                let active_label = {
-                    let state = state.read(cx);
-                    state
-                        .active_filter()
-                        .map(|filter| filter.label.clone())
-                        .unwrap_or_default()
-                };
-                let items = state.clone();
-                DropdownMenu::new(child("filter-menu"), &menu)
-                    .align(Align::Start)
-                    .trigger(
-                        Button::new(child("filter-trigger"))
-                            .ghost()
-                            .size(ButtonSize::Sm)
-                            .accessibility_label(active_label.clone())
-                            .child(active_label)
-                            .trailing_icon(Icon::from(IconName::ChevronDown).size_3()),
-                    )
-                    .items(move |_, cx| {
-                        let state = items.read(cx);
+            .child(h_flex().gap_2().items_center().children(new_folder).child(
+                if filters.len() > 1 {
+                    let active_label = {
+                        let state = state.read(cx);
                         state
-                            .filters
-                            .iter()
-                            .enumerate()
-                            .map(|(index, filter)| {
-                                MenuEntry::from(
-                                    MenuItem::new(index.to_string(), filter.label.clone())
-                                        .checked(index == state.active_filter),
-                                )
-                            })
-                            .collect()
-                    })
-                    .into_any_element()
-            } else {
-                div()
-                    .id(child("filter"))
-                    .test_support()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .children(filters.first().cloned())
-                    .into_any_element()
-            })
+                            .active_filter()
+                            .map(|filter| filter.label.clone())
+                            .unwrap_or_default()
+                    };
+                    let items = state.clone();
+                    DropdownMenu::new(child("filter-menu"), &menu)
+                        .align(Align::Start)
+                        .trigger(
+                            Button::new(child("filter-trigger"))
+                                .ghost()
+                                .size(ButtonSize::Sm)
+                                .accessibility_label(active_label.clone())
+                                .child(active_label)
+                                .trailing_icon(Icon::from(IconName::ChevronDown).size_3()),
+                        )
+                        .items(move |_, cx| {
+                            let state = items.read(cx);
+                            state
+                                .filters
+                                .iter()
+                                .enumerate()
+                                .map(|(index, filter)| {
+                                    MenuEntry::from(
+                                        MenuItem::new(index.to_string(), filter.label.clone())
+                                            .checked(index == state.active_filter),
+                                    )
+                                })
+                                .collect()
+                        })
+                        .into_any_element()
+                } else {
+                    div()
+                        .id(child("filter"))
+                        .test_support()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .children(filters.first().cloned())
+                        .into_any_element()
+                },
+            ))
             .child(
                 h_flex()
                     .gap_2()
@@ -934,6 +1040,12 @@ impl RenderOnce for FilePicker {
                     .child("Show hidden"),
             )
             .into_any_element();
+        let top = {
+            let read = state.read(cx);
+            read.browser.new_folder.as_ref().map(|row| {
+                view::new_folder_row::<FileEntry, FilePickerState>(&self.id, &look, &state, row, cx)
+            })
+        };
         let (up_key, down_key, enter_key, all_key) =
             (state.clone(), state.clone(), state.clone(), state.clone());
         let content = view::stack()
@@ -953,6 +1065,12 @@ impl RenderOnce for FilePicker {
                 let state = state.clone();
                 move |_: &Submit, _, cx| state.update(cx, |state, cx| state.confirm(cx))
             })
+            .on_action({
+                let state = state.clone();
+                move |_: &NewFolder, window, cx| {
+                    state.update(cx, |state, cx| state.begin_new_folder(window, cx));
+                }
+            })
             .on_action(move |_: &Confirm, window, cx| {
                 enter_key.update(cx, |state, cx| state.enter(window, cx));
             })
@@ -964,7 +1082,7 @@ impl RenderOnce for FilePicker {
                     .child(div().flex_1().child(crate::Input::new(&input))),
             )
             .child(view::slot(&look, Some(options)))
-            .child(view::list_box(child("list"), &look, list_height, body))
+            .child(view::list_box(child("list"), &look, list_height, top, body))
             .child(status_row(
                 child("status"),
                 &look,

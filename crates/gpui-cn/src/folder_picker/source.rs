@@ -2,11 +2,13 @@
 //! remote machine, or API can implement, and the local disk as the
 //! default.
 
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui_kit::{App, AppContext as _, SharedString, Task};
 
-use crate::path_browser::{Entry, ListError, Page, PageToken, PathStyle, Source, SourcePath};
+use crate::path_browser::{
+    CreateFolderError, Entry, ListError, Page, PageToken, PathStyle, Source, SourcePath,
+};
 use smol::stream::StreamExt as _;
 
 /// A folder in a listing.
@@ -151,6 +153,29 @@ pub trait FolderSource: 'static {
         let _ = name;
         None
     }
+
+    /// Whether the source can make folders. The default is `false`, which
+    /// hides the picker's "New folder" button.
+    fn can_create_folders(&self) -> bool {
+        false
+    }
+
+    /// Makes the folder `name` inside `parent` and answers with its path.
+    /// The picker has checked `name` already: it is not empty, has no
+    /// separator, and is not `.` or `..`. Answer
+    /// [`CreateFolderError::Exists`] when something has that name. The
+    /// picker lists the directory again afterward, so the new folder
+    /// shows in the order the source lists. The default answers
+    /// [`CreateFolderError::Unsupported`].
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let _ = (parent, name, cx);
+        Task::ready(Err(CreateFolderError::Unsupported))
+    }
 }
 
 /// The local file system, in one page. It reads on a background task,
@@ -168,6 +193,24 @@ impl FolderSource for LocalFolders {
 
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let path = parent.join(name);
+        let made = path.to_path_buf();
+        cx.background_spawn(async move {
+            smol::fs::create_dir(&made).await?;
+            Ok(path)
+        })
     }
 
     fn list(
@@ -252,5 +295,129 @@ impl Source<FolderEntry> for Adapter {
 
     fn env(&self, name: &str) -> Option<String> {
         self.0.env(name)
+    }
+
+    fn can_create_folders(&self) -> bool {
+        self.0.can_create_folders()
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        self.0.create_folder(parent, name, cx)
+    }
+}
+
+/// Folders held in memory, for fixtures, demos, and tests. It lists a
+/// directory the application named, visible folders first and hidden ones
+/// after, fails with [`ListError::NotFound`] for any other, and makes
+/// folders: a new one shows in its parent's next listing and is an empty
+/// directory itself. Clones share the folders.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryFolders {
+    style: PathStyle,
+    home: Option<SourcePath>,
+    dirs: Rc<RefCell<HashMap<SourcePath, Vec<FolderEntry>>>>,
+}
+
+impl MemoryFolders {
+    /// A file system with no directories.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Writes the paths in `style`. Set it before the home and the
+    /// directories. The default is the host's style.
+    pub fn with_style(mut self, style: PathStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Sets the home folder, which `~` stands for.
+    pub fn with_home(mut self, home: impl AsRef<str>) -> Self {
+        self.home = Some(self.style.path(home));
+        self
+    }
+
+    /// Adds the directory `path` with the folders `names`.
+    pub fn with_dir<S: Into<SharedString>>(
+        self,
+        path: impl AsRef<str>,
+        names: impl IntoIterator<Item = S>,
+    ) -> Self {
+        let style = self.style;
+        let mut entries: Vec<FolderEntry> = names
+            .into_iter()
+            .map(|name| {
+                let name = name.into();
+                let hidden = style.is_hidden_name(&name);
+                FolderEntry::new(name).with_hidden(hidden)
+            })
+            .collect();
+        sort_folders(&mut entries, &style);
+        self.dirs.borrow_mut().insert(style.path(path), entries);
+        self
+    }
+}
+
+fn sort_folders(entries: &mut [FolderEntry], style: &PathStyle) {
+    entries.sort_by(|a, b| {
+        a.hidden()
+            .cmp(&b.hidden())
+            .then_with(|| style.compare_names(a.name(), b.name()))
+    });
+}
+
+impl FolderSource for MemoryFolders {
+    fn home(&self) -> Option<SourcePath> {
+        self.home.clone()
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.style
+    }
+
+    fn list(
+        &self,
+        dir: &SourcePath,
+        _page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<Result<FolderPage, ListError>> {
+        let found = self.dirs.borrow().get(dir).cloned();
+        cx.background_spawn(async move { found.map(FolderPage::new).ok_or(ListError::NotFound) })
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        _: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let mut dirs = self.dirs.borrow_mut();
+        let style = self.style;
+        let Some(entries) = dirs.get_mut(parent) else {
+            return Task::ready(Err(CreateFolderError::Other(
+                "That directory does not exist".into(),
+            )));
+        };
+        if entries
+            .iter()
+            .any(|entry| style.fold(entry.name()) == style.fold(name))
+        {
+            return Task::ready(Err(CreateFolderError::Exists));
+        }
+        let hidden = style.is_hidden_name(name);
+        entries.push(FolderEntry::new(name.to_string()).with_hidden(hidden));
+        sort_folders(entries, &style);
+        let path = parent.join(name);
+        dirs.insert(path.clone(), Vec::new());
+        Task::ready(Ok(path))
     }
 }

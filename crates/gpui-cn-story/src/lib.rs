@@ -4,6 +4,7 @@
 //! the gallery is also the first consumer of the library.
 
 pub mod agents;
+pub mod remote;
 pub mod settings;
 pub mod stories;
 

@@ -27,12 +27,12 @@ use gpui_kit::{
 };
 
 pub use crate::path_browser::{MoreState, PageToken};
-pub use source::{FolderEntry, FolderPage, FolderSource, LocalFolders};
+pub use source::{FolderEntry, FolderPage, FolderSource, LocalFolders, MemoryFolders};
 
 use crate::{
     ActiveTheme as _, Button, Dialog, Icon, ScrollArea, Theme,
     menu::MenuLook,
-    path_browser::{self, Body, Browser, Host, SourcePath, Submit, view},
+    path_browser::{self, Body, Browser, Host, NewFolder, SourcePath, Submit, view},
 };
 
 /// The key context of the picker, which takes Up, Down, and Enter the
@@ -60,6 +60,10 @@ pub enum FolderPickerEvent {
     Chosen(SourcePath),
     /// The picker was cancelled.
     Cancelled,
+    /// A folder was made in the directory that is listed, from the "New
+    /// folder" row or [`FolderPickerState::create_folder`]. The listing is
+    /// read again, and the new folder is the one "Use folder" chooses.
+    FolderCreated(SourcePath),
 }
 
 /// The path text, the listings, and the filtered rows of a
@@ -92,6 +96,17 @@ impl Host<FolderEntry> for FolderPickerState {
 
     fn browser_mut(&mut self) -> &mut Browser<FolderEntry> {
         &mut self.browser
+    }
+
+    fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>) {
+        let text = format!(
+            "{}{}",
+            self.browser.dir_text,
+            path.file_name().unwrap_or_default()
+        );
+        self.browser.set_text(&text, window, cx);
+        self.browser.focus_path(window, cx);
+        cx.emit(FolderPickerEvent::FolderCreated(path));
     }
 }
 
@@ -131,9 +146,24 @@ impl FolderPickerState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        self.set_source(source, window, cx);
+        self
+    }
+
+    /// Lists from `source` from now on, as [`with_source`](Self::with_source)
+    /// does for a picker being built: the listings cached so far are
+    /// dropped, the requests in flight are cancelled, and the picker goes
+    /// to the new source's home, or keeps the path it was given with
+    /// `with_initial`.
+    pub fn set_source(
+        &mut self,
+        source: impl FolderSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.browser
             .set_source(Rc::new(source::Adapter(Rc::new(source))), window, cx);
-        self
+        cx.notify();
     }
 
     /// Starts in `path`, which is listed at once. A path that starts with
@@ -171,6 +201,62 @@ impl FolderPickerState {
     /// Why the directory could not be listed, when it could not.
     pub fn failure(&self) -> Option<&crate::ListError> {
         self.browser.failure()
+    }
+
+    /// Offers a "New folder" button, which opens a row at the top of the
+    /// list to name a folder in the directory that is listed. It is off
+    /// by default, and shows only when the source
+    /// [can make folders](FolderSource::can_create_folders). The new folder
+    /// becomes the one "Use folder" chooses.
+    pub fn allow_new_folder(mut self, allow: bool) -> Self {
+        self.browser.set_allow_new_folder_seed(allow);
+        self
+    }
+
+    /// Whether the picker is set to offer a "New folder" button.
+    pub fn allows_new_folder(&self) -> bool {
+        self.browser.allows_new_folder()
+    }
+
+    /// Offers or withdraws the "New folder" button.
+    pub fn set_allow_new_folder(&mut self, allow: bool, cx: &mut Context<Self>) {
+        self.browser.set_allow_new_folder(allow, cx);
+    }
+
+    /// Whether the button shows: it is on and the source can make folders.
+    pub fn can_create_folder(&self) -> bool {
+        self.browser.can_create_folder()
+    }
+
+    /// Whether the row that names a new folder is open.
+    pub fn is_naming_folder(&self) -> bool {
+        self.browser.new_folder.is_some()
+    }
+
+    /// The name typed in the row that names a new folder, or `None` while
+    /// the row is closed.
+    pub fn new_folder_name(&self, cx: &App) -> Option<SharedString> {
+        self.browser
+            .new_folder
+            .as_ref()
+            .map(|row| row.input.read(cx).value())
+    }
+
+    /// Opens the row that names a new folder, with "Untitled folder"
+    /// selected. Nothing is made until the name is confirmed with Enter.
+    /// It does nothing while the directory loads, or when the source
+    /// cannot make folders.
+    pub fn begin_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.browser.begin_default_new_folder(window, cx);
+    }
+
+    /// Makes the folder `name` in the directory that is listed, the way
+    /// the row does: the name is checked, the source is asked, and the
+    /// result shows in the row, which opens if it is not open. The picker
+    /// reports [`FolderPickerEvent::FolderCreated`] when the folder exists.
+    pub fn create_folder(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.browser.begin_new_folder(name, window, cx);
+        self.browser.commit_new_folder(window, cx);
     }
 
     /// The path field's state.
@@ -452,6 +538,26 @@ impl RenderOnce for FolderPicker {
                 .on_click(move |_, _, cx| state.update(cx, |state, cx| state.choose(cx)))
                 .into_any_element()
         });
+        let top = {
+            let read = state.read(cx);
+            read.browser.new_folder.as_ref().map(|row| {
+                view::new_folder_row::<FolderEntry, FolderPickerState>(
+                    &self.id, &look, &state, row, cx,
+                )
+            })
+        };
+        let new_folder = state.read(cx).can_create_folder().then(|| {
+            let ready = state.read(cx).browser.new_folder_ready();
+            let state = state.clone();
+            Button::new(child("new-folder-button"))
+                .ghost()
+                .icon(Icon::from(IconName::Plus))
+                .label("New folder")
+                .disabled(!ready)
+                .on_click(move |_, window, cx| {
+                    state.update(cx, |state, cx| state.begin_new_folder(window, cx));
+                })
+        });
         let (up_key, down_key, confirm_key) = (state.clone(), state.clone(), state.clone());
         let content = view::stack()
             .key_context(CONTEXT)
@@ -465,6 +571,12 @@ impl RenderOnce for FolderPicker {
                 let state = state.clone();
                 move |_: &Submit, _, cx| state.update(cx, |state, cx| state.choose(cx))
             })
+            .on_action({
+                let state = state.clone();
+                move |_: &NewFolder, window, cx| {
+                    state.update(cx, |state, cx| state.begin_new_folder(window, cx));
+                }
+            })
             .on_action(move |_: &Confirm, window, cx| {
                 confirm_key.update(cx, |state, cx| state.confirm(window, cx));
             })
@@ -476,25 +588,33 @@ impl RenderOnce for FolderPicker {
                     .child(div().flex_1().child(crate::Input::new(&input))),
             )
             .child(view::slot(&look, current))
-            .child(view::list_box(child("list"), &look, list_height, body));
+            .child(view::list_box(child("list"), &look, list_height, top, body));
 
         let footer = h_flex()
-            .gap_2()
-            .child({
-                let close = close.clone();
-                Button::new(child("cancel"))
-                    .ghost()
-                    .label("Cancel")
-                    .on_click(move |_, window, cx| close(window, cx))
-            })
-            .child({
-                let state = state.clone();
-                Button::new(child("use"))
-                    .primary()
-                    .label("Use folder")
-                    .disabled(selected.is_none())
-                    .on_click(move |_, _, cx| state.update(cx, |state, cx| state.choose(cx)))
-            });
+            .w_full()
+            .justify_between()
+            .child(div().children(new_folder))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child({
+                        let close = close.clone();
+                        Button::new(child("cancel"))
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| close(window, cx))
+                    })
+                    .child({
+                        let state = state.clone();
+                        Button::new(child("use"))
+                            .primary()
+                            .label("Use folder")
+                            .disabled(selected.is_none())
+                            .on_click(move |_, _, cx| {
+                                state.update(cx, |state, cx| state.choose(cx))
+                            })
+                    }),
+            );
 
         Dialog::new(self.id.clone())
             .open(self.open)

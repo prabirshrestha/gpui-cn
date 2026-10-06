@@ -59,6 +59,7 @@ mod plural;
 mod popover;
 mod progress;
 mod radio;
+pub mod remote;
 mod root;
 mod scroll_area;
 mod select;
@@ -98,7 +99,7 @@ pub use file_picker::{
 };
 pub use folder_picker::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
-    Listing, Loaded, LocalFolders, MoreState, PageToken,
+    Listing, Loaded, LocalFolders, MemoryFolders, MoreState, PageToken,
 };
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
@@ -114,7 +115,7 @@ pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
 };
-pub use path_browser::{ListError, PathStyle, SourcePath};
+pub use path_browser::{CreateFolderError, ListError, PathStyle, SourcePath};
 pub use popover::Popover;
 pub use progress::Progress;
 pub use radio::{Radio, RadioGroup, RadioMark};
@@ -199,6 +200,7 @@ pub fn init(cx: &mut App) {
     menu::init(cx);
     command::init(cx);
     composer::init_model_picker(cx);
+    path_browser::init(cx);
     folder_picker::init(cx);
     file_picker::init(cx);
     cx.set_global(Initialized);

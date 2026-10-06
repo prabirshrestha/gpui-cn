@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+pub mod harness;
+
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
@@ -14,8 +16,8 @@ use std::{
 };
 
 use gpui_cn::{
-    FileEntry, FilePage, FileSource, FolderEntry, FolderPage, FolderSource, ListError, PageToken,
-    PathStyle, SourcePath,
+    CreateFolderError, FileEntry, FilePage, FileSource, FolderEntry, FolderPage, FolderSource,
+    ListError, PageToken, PathStyle, SourcePath,
 };
 use gpui_kit::{App, Task};
 
@@ -66,6 +68,8 @@ pub struct Shared {
     pub creatable: Cell<bool>,
     /// Folder creations asked for, as `parent|name`.
     pub created: RefCell<Vec<String>>,
+    /// Failures to answer folder creation with, one per request.
+    pub create_failures: RefCell<VecDeque<CreateFolderError>>,
 }
 
 #[derive(Clone)]
@@ -163,6 +167,15 @@ impl FakeRemote {
         self
     }
 
+    pub fn fail_create(&self, error: CreateFolderError) {
+        self.shared.create_failures.borrow_mut().push_back(error);
+    }
+
+    /// The folders asked for so far, as `parent|name`.
+    pub fn created(&self) -> Vec<String> {
+        self.shared.created.borrow().clone()
+    }
+
     pub fn fail_next(&self, error: ListError) {
         self.shared.failures.borrow_mut().push_back(error);
     }
@@ -236,6 +249,49 @@ impl FakeRemote {
     }
 }
 
+impl FakeRemote {
+    fn make(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let shared = self.shared.clone();
+        let style = self.style;
+        let parent = parent.clone();
+        let name = name.to_string();
+        shared.created.borrow_mut().push(format!("{parent}|{name}"));
+        cx.spawn(async move |cx| {
+            let latency = shared.latency.get();
+            if !latency.is_zero() {
+                cx.background_executor().timer(latency).await;
+            }
+            if let Some(error) = shared.create_failures.borrow_mut().pop_front() {
+                return Err(error);
+            }
+            let mut dirs = shared.dirs.borrow_mut();
+            let items = dirs
+                .get_mut(&parent)
+                .ok_or_else(|| CreateFolderError::Other("No such directory".into()))?;
+            if items
+                .iter()
+                .any(|item| style.fold(&item.name) == style.fold(&name))
+            {
+                return Err(CreateFolderError::Exists);
+            }
+            items.push(folder(&name));
+            items.sort_by(|a, b| {
+                b.folder
+                    .cmp(&a.folder)
+                    .then_with(|| style.compare_names(&a.name, &b.name))
+            });
+            let path = parent.join(&name);
+            dirs.insert(path.clone(), Vec::new());
+            Ok(path)
+        })
+    }
+}
+
 /// Counts a request that was dropped before it answered.
 struct Guard {
     cancelled: Rc<Cell<usize>>,
@@ -253,6 +309,19 @@ impl Drop for Guard {
 impl FolderSource for FakeRemote {
     fn path_style(&self) -> PathStyle {
         self.style
+    }
+
+    fn can_create_folders(&self) -> bool {
+        self.shared.creatable.get()
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        self.make(parent, name, cx)
     }
 
     fn home(&self) -> Option<SourcePath> {
@@ -284,6 +353,19 @@ impl FolderSource for FakeRemote {
 impl FileSource for FakeRemote {
     fn path_style(&self) -> PathStyle {
         self.style
+    }
+
+    fn can_create_folders(&self) -> bool {
+        self.shared.creatable.get()
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        self.make(parent, name, cx)
     }
 
     fn home(&self) -> Option<SourcePath> {

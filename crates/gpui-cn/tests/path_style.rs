@@ -410,3 +410,23 @@ fn a_chosen_folder_is_written_in_the_sources_style(cx: &mut TestAppContext) {
     );
     assert_eq!(*path, windows_remote().style.path("c:/USERS/me/docs"));
 }
+
+#[gpui_kit::test]
+fn a_fragment_pasted_into_a_path_only_gets_the_styles_separators(cx: &mut TestAppContext) {
+    let setup = start(cx, windows_remote(), Some("C:\\"));
+    clear(&setup, cx);
+    for key in ["C", ":", "/", "U", "s", "e", "r", "s", "/"] {
+        type_text(&setup, key, cx);
+    }
+    type_text(&setup, "me/docs/", cx);
+    assert_eq!(
+        text(&setup, cx),
+        "C:/Users/me\\docs\\",
+        "what was typed stays, the pasted part is written the style's way"
+    );
+    assert_eq!(dir(&setup, cx), "C:\\Users\\me\\docs");
+    let setup = start(cx, windows_remote(), Some("C:\\"));
+    clear(&setup, cx);
+    type_text(&setup, " \"C:/Users\" ", cx);
+    assert_eq!(text(&setup, cx), "C:\\Users", "a whole path is cleaned");
+}

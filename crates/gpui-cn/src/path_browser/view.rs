@@ -9,8 +9,11 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use super::{Entry, Host, ListError, MoreState};
-use crate::{Button, ButtonSize, Spinner, menu::MenuLook};
+use super::{
+    CancelNewFolder, CommitNewFolder, Entry, Host, ListError, MoreState, NEW_FOLDER_CONTEXT,
+    NewFolderRow,
+};
+use crate::{ActiveTheme as _, Button, ButtonSize, Icon, Input, Spinner, menu::MenuLook};
 
 pub(crate) const EMPTY_FOLDERS: &str = "No folders found in this directory.";
 pub(crate) const EMPTY_FILES: &str = "Nothing to show in this directory.";
@@ -98,12 +101,87 @@ pub(crate) fn loading(id: ElementId, look: &MenuLook) -> AnyElement {
         .into_any_element()
 }
 
+/// The row that names a new folder, at the top of the list: a folder
+/// icon and a field with the name, or a spinner while the source makes the
+/// folder. A refusal shows under the row in the destructive color.
+pub(crate) fn new_folder_row<E: Entry, O: Host<E>>(
+    id: &ElementId,
+    look: &MenuLook,
+    state: &Entity<O>,
+    row: &NewFolderRow,
+    cx: &gpui_kit::App,
+) -> AnyElement {
+    let child = |name: &'static str| ElementId::NamedChild(id.clone().into(), name.into());
+    let cancel = state.clone();
+    let commit = state.clone();
+    let error_color = cx.theme().destructive();
+    let caption = cx.theme().base.typography.xs;
+    v_flex()
+        .id(child("new-folder"))
+        .test_support()
+        .w_full()
+        .flex_shrink_0()
+        .pb(look.padding)
+        .key_context(NEW_FOLDER_CONTEXT)
+        .on_action(move |_: &CancelNewFolder, window, cx| {
+            cancel.update(cx, |state, cx| {
+                state.browser_mut().dismiss_new_folder(window, cx);
+            });
+        })
+        .on_action(move |_: &CommitNewFolder, window, cx| {
+            commit.update(cx, |state, cx| {
+                state.browser_mut().commit_new_folder(window, cx);
+            });
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .px(look.row_padding)
+                .child(if row.creating {
+                    div()
+                        .size_4()
+                        .flex_shrink_0()
+                        .text_color(look.muted_foreground)
+                        .child(Spinner::new(child("new-folder-spinner")))
+                        .into_any_element()
+                } else {
+                    Icon::from(gpui_kit::assets::IconName::Folder)
+                        .size_4()
+                        .flex_shrink_0()
+                        .text_color(look.muted_foreground)
+                        .into_any_element()
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&row.input).readonly(row.creating)),
+                ),
+        )
+        .children(row.error.clone().map(|message| {
+            div()
+                .id(child("new-folder-error"))
+                .test_support()
+                .px(look.row_padding)
+                .pt(look.padding)
+                .text_size(caption.size)
+                .line_height(caption.line_height)
+                .text_color(error_color)
+                .child(message)
+        }))
+        .into_any_element()
+}
+
 /// The bordered box that holds the list, as tall as the theme's list
-/// height in every state, so the dialog never changes size.
+/// height in every state, so the dialog never changes size. The row that
+/// names a new folder, when there is one, sits above the list inside the
+/// box.
 pub(crate) fn list_box(
     id: ElementId,
     look: &MenuLook,
     list_height: Pixels,
+    top: Option<AnyElement>,
     body: AnyElement,
 ) -> AnyElement {
     div()
@@ -115,7 +193,10 @@ pub(crate) fn list_box(
         .border_1()
         .border_color(look.border)
         .overflow_hidden()
-        .child(body)
+        .flex()
+        .flex_col()
+        .children(top)
+        .child(div().flex_1().min_h_0().child(body))
         .into_any_element()
 }
 

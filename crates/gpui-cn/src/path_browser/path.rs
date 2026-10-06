@@ -120,7 +120,11 @@ pub(crate) fn collapse_home(text: &str, home: Option<&SourcePath>, style: &PathS
     };
     let home = style.parse(home.as_str());
     let at = style.parse(text);
-    let sep = style.separator();
+    let sep = text
+        .chars()
+        .rev()
+        .find(|c| style.is_separator(*c))
+        .unwrap_or(style.separator());
     if home.parts.is_empty() || style.key(&home.prefix) != style.key(&at.prefix) {
         return text.to_string();
     }
@@ -285,7 +289,12 @@ mod tests {
         let style = windows();
         let home = Some(style.path("C:\\Users\\Me"));
         let at = |text: &str| collapse_home(text, home.as_ref(), &style);
-        assert_eq!(at("c:/users/me/code/"), "~\\code\\");
+        assert_eq!(
+            at("c:/users/me/code/"),
+            "~/code/",
+            "the typed separator stays"
+        );
+        assert_eq!(at("c:\\users\\me\\code\\"), "~\\code\\");
         assert_eq!(at("C:\\Users\\Me\\"), "~\\");
         assert_eq!(at("D:\\Users\\Me\\"), "D:\\Users\\Me\\");
         assert_eq!(

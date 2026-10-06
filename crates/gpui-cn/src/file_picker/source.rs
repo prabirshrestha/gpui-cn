@@ -2,12 +2,12 @@
 //! machine, or API can implement, the local disk as the default, and an
 //! in-memory source for fixtures.
 
-use std::{collections::HashMap, time::SystemTime};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, time::SystemTime};
 
 use gpui_kit::{App, AppContext as _, SharedString, Task};
 use smol::stream::StreamExt as _;
 
-use crate::path_browser::{Entry, ListError, PageToken, PathStyle, SourcePath};
+use crate::path_browser::{CreateFolderError, Entry, ListError, PageToken, PathStyle, SourcePath};
 
 /// What an entry of a listing is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +240,29 @@ pub trait FileSource: 'static {
         let _ = name;
         None
     }
+
+    /// Whether the source can make folders. The default is `false`, which
+    /// hides the picker's "New folder" button.
+    fn can_create_folders(&self) -> bool {
+        false
+    }
+
+    /// Makes the folder `name` inside `parent` and answers with its path.
+    /// The picker has checked `name` already: it is not empty, has no
+    /// separator, and is not `.` or `..`. Answer
+    /// [`CreateFolderError::Exists`] when something has that name. The
+    /// picker lists the directory again afterward, so the new folder
+    /// shows in the order the source lists. The default answers
+    /// [`CreateFolderError::Unsupported`].
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let _ = (parent, name, cx);
+        Task::ready(Err(CreateFolderError::Unsupported))
+    }
 }
 
 /// The local file system, in one page. It reads on a background task,
@@ -256,6 +279,24 @@ impl FileSource for LocalFiles {
 
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let path = parent.join(name);
+        let made = path.to_path_buf();
+        cx.background_spawn(async move {
+            smol::fs::create_dir(&made).await?;
+            Ok(path)
+        })
     }
 
     fn list(
@@ -302,13 +343,15 @@ async fn list_local(dir: std::path::PathBuf) -> std::io::Result<FilePage> {
 }
 
 /// A file system held in memory, for fixtures, demos, and tests. It lists
-/// a directory the application named, in the order of [`LocalFiles`], and
-/// fails for any other directory.
+/// a directory the application named, in the order of [`LocalFiles`], fails
+/// with [`ListError::NotFound`] for any other directory, and makes folders:
+/// a new one shows in its parent's next listing and is an empty directory
+/// itself. Clones share the directories.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryFiles {
     style: PathStyle,
     home: Option<SourcePath>,
-    dirs: HashMap<SourcePath, Vec<FileEntry>>,
+    dirs: Rc<RefCell<HashMap<SourcePath, Vec<FileEntry>>>>,
 }
 
 impl MemoryFiles {
@@ -332,13 +375,15 @@ impl MemoryFiles {
 
     /// Adds the directory `path` with `entries`.
     pub fn with_dir(
-        mut self,
+        self,
         path: impl AsRef<str>,
         entries: impl IntoIterator<Item = FileEntry>,
     ) -> Self {
         let mut entries: Vec<FileEntry> = entries.into_iter().collect();
         sort_entries(&mut entries, &self.style);
-        self.dirs.insert(self.style.path(path), entries);
+        self.dirs
+            .borrow_mut()
+            .insert(self.style.path(path), entries);
         self
     }
 }
@@ -358,8 +403,39 @@ impl FileSource for MemoryFiles {
         _page: Option<PageToken>,
         cx: &mut App,
     ) -> Task<Result<FilePage, ListError>> {
-        let found = self.dirs.get(dir).cloned();
+        let found = self.dirs.borrow().get(dir).cloned();
         cx.background_spawn(async move { found.map(FilePage::new).ok_or(ListError::NotFound) })
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        _: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let mut dirs = self.dirs.borrow_mut();
+        let style = self.style;
+        let Some(entries) = dirs.get_mut(parent) else {
+            return Task::ready(Err(CreateFolderError::Other(
+                "That directory does not exist".into(),
+            )));
+        };
+        if entries
+            .iter()
+            .any(|entry| style.fold(entry.name()) == style.fold(name))
+        {
+            return Task::ready(Err(CreateFolderError::Exists));
+        }
+        let hidden = style.is_hidden_name(name);
+        entries.push(FileEntry::folder(name.to_string()).with_hidden(hidden));
+        sort_entries(entries, &style);
+        let path = parent.join(name);
+        dirs.insert(path.clone(), Vec::new());
+        Task::ready(Ok(path))
     }
 }
 

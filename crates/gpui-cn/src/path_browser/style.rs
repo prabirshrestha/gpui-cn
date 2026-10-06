@@ -192,6 +192,23 @@ impl PathStyle {
         out
     }
 
+    /// A fragment pasted into the middle of other path text: a Windows
+    /// style writes its separators, and nothing else changes.
+    pub(crate) fn normalize_fragment(&self, text: &str) -> String {
+        if !self.is_windows() {
+            return text.to_string();
+        }
+        text.chars()
+            .map(|c| {
+                if self.is_separator(c) {
+                    self.display_separator
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
     /// Splits path text into its root and its parts. The text may mix
     /// separators in a Windows style. Empty parts, from a doubled or a
     /// trailing separator, are dropped.

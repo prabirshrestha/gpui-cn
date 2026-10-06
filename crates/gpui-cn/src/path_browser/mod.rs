@@ -3,6 +3,7 @@
 //! list. A picker owns a [`Browser`] and is its [`Host`]; the browser does
 //! the work and the host decides what a row means.
 
+mod create;
 pub(crate) mod path;
 mod style;
 pub(crate) mod view;
@@ -23,6 +24,8 @@ use gpui_kit::{
 };
 
 use crate::ActiveTheme as _;
+pub use create::CreateFolderError;
+use create::validate_folder_name;
 pub(crate) use path::Match;
 use path::{
     all_visible, collapse_home, is_home_text, join_dir, parent_text, rank, resolve_descend,
@@ -34,7 +37,13 @@ actions!(
     gpui_cn_path_picker,
     [
         /// Chooses what the picker shows, as its confirm button does.
-        Submit
+        Submit,
+        /// Opens the row that names a new folder.
+        NewFolder,
+        /// Closes the row that names a new folder without making it.
+        CancelNewFolder,
+        /// Makes the folder the open row names.
+        CommitNewFolder
     ]
 );
 
@@ -45,12 +54,38 @@ const SUBMIT_KEY: &str = if cfg!(target_os = "macos") {
     "ctrl-enter"
 };
 
+/// The shortcut that opens the new folder row: Cmd+Shift+N on macOS,
+/// Ctrl+Shift+N elsewhere.
+const NEW_FOLDER_KEY: &str = if cfg!(target_os = "macos") {
+    "cmd-shift-n"
+} else {
+    "ctrl-shift-n"
+};
+
+/// The key context of the row that names a new folder. Its Escape binding
+/// is deeper than the input's own, so the row closes before the dialog.
+pub(crate) const NEW_FOLDER_CONTEXT: &str = "GpuiCnNewFolder";
+
+/// The name the new folder row starts with, selected.
+const DEFAULT_FOLDER_NAME: &str = "Untitled folder";
+
+/// Binds the keys of the new folder row, once: Escape closes the row
+/// before it can close the dialog, and Enter makes the folder before it
+/// can enter a row of the list.
+pub(crate) fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("escape", CancelNewFolder, Some("GpuiCnNewFolder > Input")),
+        KeyBinding::new("enter", CommitNewFolder, Some("GpuiCnNewFolder > Input")),
+    ]);
+}
+
 /// Binds the keys a picker's dialog takes, in its key `context`: Up and
-/// Down move the highlight, Enter confirms the row, and the submit
-/// shortcut chooses.
+/// Down move the highlight, Enter confirms the row, the submit shortcut
+/// chooses, and the new folder shortcut opens the row that names one.
 pub(crate) fn bind_keys(context: &'static str, cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(SUBMIT_KEY, Submit, Some(context)),
+        KeyBinding::new(NEW_FOLDER_KEY, NewFolder, Some(context)),
         KeyBinding::new("up", SelectUp, Some(context)),
         KeyBinding::new("down", SelectDown, Some(context)),
         KeyBinding::new("enter", Confirm { secondary: false }, Some(context)),
@@ -107,6 +142,15 @@ pub(crate) trait Source<E>: 'static {
     fn style(&self) -> PathStyle;
 
     fn env(&self, name: &str) -> Option<String>;
+
+    fn can_create_folders(&self) -> bool;
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>>;
 }
 
 /// Where the request for the next page of a listing stands.
@@ -213,23 +257,29 @@ pub(crate) enum Body {
     List,
 }
 
-/// How many characters `new` has that `old` does not, counting what lies
-/// between their common start and common end: a keystroke inserts one, a
-/// paste more, and a deletion none.
-fn inserted_chars(old: &str, new: &str) -> usize {
+/// What `new` added to `old`: the text before it, the text that was added,
+/// and the text after it. A deletion adds nothing.
+fn insertion<'a>(old: &str, new: &'a str) -> (&'a str, &'a str, &'a str) {
     let start = old
         .chars()
         .zip(new.chars())
         .take_while(|(a, b)| a == b)
-        .count();
+        .map(|(c, _)| c.len_utf8())
+        .sum::<usize>();
+    let room = old.len().min(new.len()) - start;
     let end = old
         .chars()
         .rev()
         .zip(new.chars().rev())
-        .take(old.chars().count().min(new.chars().count()) - start)
         .take_while(|(a, b)| a == b)
-        .count();
-    new.chars().count() - start - end
+        .map(|(c, _)| c.len_utf8())
+        .sum::<usize>()
+        .min(room);
+    (
+        &new[..start],
+        &new[start..new.len() - end],
+        &new[new.len() - end..],
+    )
 }
 
 /// A separator typed after a query, waiting for the filter of that query
@@ -248,6 +298,20 @@ pub(crate) type AuthHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 pub(crate) trait Host<E: Entry>: 'static + Sized {
     fn browser(&self) -> &Browser<E>;
     fn browser_mut(&mut self) -> &mut Browser<E>;
+
+    /// The source made the folder at `path`, and the listing is being read
+    /// again. The host reports it and decides what the new folder is.
+    fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>);
+}
+
+/// The row that names a new folder, open at the top of the list.
+pub(crate) struct NewFolderRow {
+    pub(crate) input: Entity<InputState>,
+    /// Whether the source is making the folder, which the row waits out.
+    pub(crate) creating: bool,
+    /// Why the last try failed, shown under the row.
+    pub(crate) error: Option<SharedString>,
+    _events: Subscription,
 }
 
 /// The path text, the listings, and the filtered rows.
@@ -290,6 +354,12 @@ pub(crate) struct Browser<E: Entry> {
     /// source's home.
     pub(crate) explicit_start: bool,
     auth_handler: Option<AuthHandler>,
+    allow_new_folder: bool,
+    pub(crate) new_folder: Option<NewFolderRow>,
+    /// The running request to make a folder. Dropping it cancels it.
+    creating: Option<Task<()>>,
+    /// A folder to put the highlight on once the listing shows it.
+    reveal: Option<SharedString>,
 }
 
 impl<E: Entry> Browser<E> {
@@ -336,6 +406,10 @@ impl<E: Entry> Browser<E> {
             visible: Arc::new(|_| true),
             explicit_start: false,
             auth_handler: None,
+            allow_new_folder: false,
+            new_folder: None,
+            creating: None,
+            reveal: None,
         }
     }
 
@@ -365,6 +439,245 @@ impl<E: Entry> Browser<E> {
         self.refilter(false, cx);
     }
 
+    /// Whether the picker offers to make a folder.
+    pub(crate) fn allows_new_folder(&self) -> bool {
+        self.allow_new_folder
+    }
+
+    /// Sets whether the picker offers the new folder button, before the
+    /// picker is shown.
+    pub(crate) fn set_allow_new_folder_seed(&mut self, allow: bool) {
+        self.allow_new_folder = allow;
+    }
+
+    /// Offers or withdraws the new folder button. Withdrawing closes the
+    /// row that names a folder.
+    pub(crate) fn set_allow_new_folder<O: Host<E>>(&mut self, allow: bool, cx: &mut Context<O>) {
+        if self.allow_new_folder != allow {
+            self.allow_new_folder = allow;
+            if !allow {
+                self.cancel_new_folder(cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// Whether the picker shows the new folder button: it is on, and the
+    /// source can make folders.
+    pub(crate) fn can_create_folder(&self) -> bool {
+        self.allow_new_folder && self.source.can_create_folders()
+    }
+
+    /// Whether the button works now: the listed directory has loaded.
+    pub(crate) fn new_folder_ready(&self) -> bool {
+        self.can_create_folder() && self.loaded().is_some()
+    }
+
+    /// Opens the row that names a new folder, with the default name
+    /// selected, or puts the caret back in it when it is open. Nothing is
+    /// made until the name is confirmed.
+    pub(crate) fn begin_new_folder<O: Host<E>>(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<O>,
+    ) {
+        if !self.new_folder_ready() {
+            return;
+        }
+        if let Some(open) = &self.new_folder {
+            let input = open.input.clone();
+            input.update(cx, |input, cx| input.focus(window, cx));
+            return;
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(name.to_string()));
+        let events = cx.subscribe_in(
+            &input,
+            window,
+            |this: &mut O, _, event: &InputEvent, _, cx| match event {
+                InputEvent::Change => this.browser_mut().clear_new_folder_error(cx),
+                InputEvent::Blur => {
+                    let browser = this.browser_mut();
+                    if browser.new_folder_is_blank(cx) {
+                        browser.cancel_new_folder(cx);
+                    }
+                }
+                InputEvent::Focus | InputEvent::PressEnter { .. } => {}
+            },
+        );
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        self.new_folder = Some(NewFolderRow {
+            input,
+            creating: false,
+            error: None,
+            _events: events,
+        });
+        cx.notify();
+    }
+
+    /// Opens the row with the default name.
+    pub(crate) fn begin_default_new_folder<O: Host<E>>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<O>,
+    ) {
+        self.begin_new_folder(DEFAULT_FOLDER_NAME, window, cx);
+    }
+
+    fn new_folder_is_blank(&self, cx: &App) -> bool {
+        self.new_folder
+            .as_ref()
+            .is_some_and(|open| !open.creating && open.input.read(cx).value().trim().is_empty())
+    }
+
+    fn clear_new_folder_error<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        if let Some(open) = &mut self.new_folder
+            && open.error.take().is_some()
+        {
+            cx.notify();
+        }
+    }
+
+    /// Closes the row without making the folder. A folder that the source
+    /// is making is not undone, and the row waits for it.
+    pub(crate) fn cancel_new_folder<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        if self.new_folder.as_ref().is_some_and(|open| !open.creating) {
+            self.new_folder = None;
+            cx.notify();
+        }
+    }
+
+    /// [`cancel_new_folder`](Self::cancel_new_folder) for a key or a click,
+    /// which puts the caret back in the path field so the dialog still has
+    /// the keyboard.
+    pub(crate) fn dismiss_new_folder<O: Host<E>>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<O>,
+    ) {
+        if self.new_folder.as_ref().is_some_and(|open| !open.creating) {
+            self.cancel_new_folder(cx);
+            self.focus_path(window, cx);
+        }
+    }
+
+    /// Puts the caret in the path field.
+    pub(crate) fn focus_path<O: Host<E>>(&self, window: &mut Window, cx: &mut Context<O>) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    /// Makes the folder the row names: the name is checked here, so a
+    /// name the source would refuse never reaches it, and then the source
+    /// is asked off the UI thread. A refusal stays under the row, which
+    /// stays open to edit.
+    pub(crate) fn commit_new_folder<O: Host<E>>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<O>,
+    ) {
+        let Some(open) = &self.new_folder else {
+            return;
+        };
+        if open.creating {
+            return;
+        }
+        let typed = open.input.read(cx).value().to_string();
+        let name = match validate_folder_name(&typed, &self.style) {
+            Ok(name) => name,
+            Err(error) => {
+                self.refuse_new_folder(&typed, error, cx);
+                return;
+            }
+        };
+        if self
+            .loaded()
+            .is_some_and(|loaded| loaded.entry_named(&name).is_some())
+        {
+            self.refuse_new_folder(&name, CreateFolderError::Exists, cx);
+            return;
+        }
+        if !self.source.can_create_folders() {
+            self.refuse_new_folder(&name, CreateFolderError::Unsupported, cx);
+            return;
+        }
+        if let Some(open) = &mut self.new_folder {
+            open.creating = true;
+            open.error = None;
+        }
+        let dir = self.dir.clone();
+        let handle = self.window;
+        let _ = window;
+        cx.notify();
+        self.creating = Some(cx.spawn(async move |this, cx| {
+            let Ok(answer) = this.update(cx, |this: &mut O, cx| {
+                let source = this.browser().source.clone();
+                source.create_folder(&dir, &name, cx)
+            }) else {
+                return;
+            };
+            let result = answer.await;
+            let made = this
+                .update(cx, |this: &mut O, cx| {
+                    this.browser_mut().created(dir, name, result, cx)
+                })
+                .ok()
+                .flatten();
+            if let Some(path) = made {
+                cx.update_window(handle, |_, window, cx| {
+                    this.update(cx, |this: &mut O, cx| this.folder_created(path, window, cx))
+                        .ok();
+                })
+                .ok();
+            }
+        }));
+    }
+
+    fn refuse_new_folder<O: Host<E>>(
+        &mut self,
+        name: &str,
+        error: CreateFolderError,
+        cx: &mut Context<O>,
+    ) {
+        if let Some(open) = &mut self.new_folder {
+            open.error = Some(error.message(name));
+            open.creating = false;
+        }
+        cx.notify();
+    }
+
+    /// The source answered for the folder `name` of `dir`. A made folder
+    /// closes the row, reads the listing again, and is handed back so the
+    /// host can report it; a refusal reopens the row for editing.
+    fn created<O: Host<E>>(
+        &mut self,
+        dir: SourcePath,
+        name: String,
+        result: Result<SourcePath, CreateFolderError>,
+        cx: &mut Context<O>,
+    ) -> Option<SourcePath> {
+        self.creating = None;
+        match result {
+            Ok(path) => {
+                self.new_folder = None;
+                self.reveal = Some(path.file_name().unwrap_or(&name).to_string().into());
+                self.listings.remove(&dir);
+                if dir == self.dir {
+                    self.enter(dir, cx);
+                    self.refilter(false, cx);
+                }
+                cx.notify();
+                Some(path)
+            }
+            Err(error) => {
+                self.refuse_new_folder(&name, error, cx);
+                None
+            }
+        }
+    }
+
     /// Cancels every request in flight: a running listing is dropped, so
     /// its answer never arrives, and a directory that was still loading
     /// is forgotten so it is listed again when the picker shows.
@@ -374,6 +687,8 @@ impl<E: Entry> Browser<E> {
         self.filter = None;
         self.filter_id += 1;
         self.pending = None;
+        self.creating = None;
+        self.new_folder = None;
         self.load_id += 1;
         match self.listings.get_mut(&self.dir) {
             Some(Listing::Loading) => {
@@ -452,6 +767,8 @@ impl<E: Entry> Browser<E> {
         self.listings.clear();
         self.load = None;
         self.load_more = None;
+        self.creating = None;
+        self.new_folder = None;
         self.dir = self.style.path("");
         let text = if self.explicit_start {
             self.input.read(cx).value().to_string()
@@ -635,10 +952,18 @@ impl<E: Entry> Browser<E> {
 
     /// The user edited the path text.
     fn text_changed<O: Host<E>>(&mut self, text: String, window: &mut Window, cx: &mut Context<O>) {
-        if inserted_chars(&self.last_text, &text) > 1 {
+        let (before, added, after) = insertion(&self.last_text, &text);
+        if added.chars().count() > 1 {
             let source = self.source.clone();
             let env = move |name: &str| source.env(name);
-            let clean = self.style.normalize_pasted(&text, &env);
+            // A path pasted into an empty field is cleaned whole. One
+            // pasted into the middle of other text only has its separators
+            // written the style's way, so what is around it stays.
+            let clean = if before.is_empty() && after.is_empty() {
+                self.style.normalize_pasted(&text, &env)
+            } else {
+                format!("{before}{}{after}", self.style.normalize_fragment(added))
+            };
             if clean != text {
                 self.set_text(&clean, window, cx);
                 return;
@@ -702,6 +1027,9 @@ impl<E: Entry> Browser<E> {
     /// only the listings that finished, and lists `dir` unless it is
     /// cached.
     fn enter<O: Host<E>>(&mut self, dir: SourcePath, cx: &mut Context<O>) {
+        if dir != self.dir {
+            self.cancel_new_folder(cx);
+        }
         self.load = None;
         self.load_more = None;
         self.load_id += 1;
@@ -841,7 +1169,31 @@ impl<E: Entry> Browser<E> {
             self.highlighted = (!self.shown.is_empty()).then_some(0);
         }
         self.list_count = count;
+        self.reveal_new_folder();
         cx.notify();
+    }
+
+    /// Puts the highlight on the folder that was just made, once the
+    /// listing shows it, and scrolls to it.
+    fn reveal_new_folder(&mut self) {
+        let Some(name) = self.reveal.clone() else {
+            return;
+        };
+        let Some(loaded) = self.loaded() else {
+            return;
+        };
+        let wanted = self.style.fold(&name);
+        let row = self.shown.iter().position(|found| {
+            loaded
+                .entries
+                .get(found.index)
+                .is_some_and(|entry| self.style.fold(entry.name()) == wanted)
+        });
+        if let Some(row) = row {
+            self.reveal = None;
+            self.highlighted = Some(row);
+            self.list.scroll_to_reveal_item(row);
+        }
     }
 
     /// Moves the highlight one row up or down, wrapping at the ends.

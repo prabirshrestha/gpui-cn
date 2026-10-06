@@ -596,6 +596,47 @@ mod macos {
                             capture(&mut cx, &format!("story-{slug}-{suffix}{extra}-{name}"));
                         }
                         if suffix == "one" {
+                            for (extra, typed) in [
+                                ("-new-folder", None),
+                                ("-new-folder-error", Some("Documents")),
+                            ] {
+                                cx.update_window(handle.into(), |_, window, cx| {
+                                    window.render_frame(cx);
+                                    if let Some(typed) = typed {
+                                        window.input(typed, cx);
+                                    } else {
+                                        window.click(
+                                            gpui_kit::ElementId::NamedChild(
+                                                gpui_kit::ElementId::Name("file-picker-one".into())
+                                                    .into(),
+                                                "new-folder-button".into(),
+                                            ),
+                                            cx,
+                                        );
+                                    }
+                                    window.render_frame(cx);
+                                })
+                                .expect("name a folder");
+                                cx.run_until_parked();
+                                if typed.is_some() {
+                                    cx.update_window(handle.into(), |_, window, cx| {
+                                        window.press("enter", cx);
+                                    })
+                                    .expect("confirm the name");
+                                    cx.run_until_parked();
+                                }
+                                cx.update_window(handle.into(), |_, window, cx| {
+                                    window.render_frame(cx);
+                                    window.render_frame(cx);
+                                })
+                                .expect("draw the picker");
+                                capture(&mut cx, &format!("story-{slug}-one{extra}-{name}"));
+                            }
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.press("escape", cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("close the row");
                             cx.update(|cx| {
                                 let story = gallery
                                     .read(cx)
@@ -659,6 +700,105 @@ mod macos {
                         capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
                     }
                     cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("cmd-a", cx);
+                        window.input("/home/prabirshrestha/", cx);
+                    })
+                    .expect("go home");
+                    cx.run_until_parked();
+                    for (suffix, typed) in
+                        [("new-folder", None), ("new-folder-error", Some("code"))]
+                    {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            if let Some(typed) = typed {
+                                window.input(typed, cx);
+                            } else {
+                                window.click(
+                                    gpui_kit::ElementId::NamedChild(
+                                        gpui_kit::ElementId::Name("folder-picker".into()).into(),
+                                        "new-folder-button".into(),
+                                    ),
+                                    cx,
+                                );
+                            }
+                            window.render_frame(cx);
+                        })
+                        .expect("name a folder");
+                        cx.run_until_parked();
+                        if typed.is_some() {
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.press("enter", cx);
+                            })
+                            .expect("confirm the name");
+                            cx.run_until_parked();
+                        }
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("draw the picker");
+                        capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the row");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.read(cx).sim().reset();
+                        story.read(cx).sim().hold();
+                        story.update(cx, |story, cx| story.set_remote(true, window, cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("list a remote");
+                    cx.run_until_parked();
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("draw the picker");
+                    capture(&mut cx, &format!("story-{slug}-remote-loading-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.read(cx).sim().release();
+                        let state = story.read(cx).state().clone();
+                        state.update(cx, |state, cx| state.retry(cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("release the remote");
+                    cx.run_until_parked();
+                    for (suffix, path) in [
+                        ("remote-error", "/srv/data/"),
+                        ("remote-auth", "/secure/"),
+                        ("remote-listed", "/home/deploy/"),
+                    ] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("cmd-a", cx);
+                            window.input(path, cx);
+                        })
+                        .expect("type a remote path");
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("draw the picker");
+                        capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.update(cx, |story, cx| story.set_remote(false, window, cx));
+                        story.read(cx).sim().reset();
                         window.press("escape", cx);
                         window.render_frame(cx);
                     })
