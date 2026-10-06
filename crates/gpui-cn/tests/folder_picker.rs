@@ -207,6 +207,11 @@ fn click(setup: &Setup, id: impl Into<ElementId>, cx: &mut TestAppContext) {
     settle(setup, cx);
 }
 
+/// The row of the folder `name`.
+fn entry(name: &str) -> ElementId {
+    ElementId::NamedChild(part("entry").into(), name.to_string().into())
+}
+
 fn part(name: &str) -> ElementId {
     ElementId::NamedChild(
         ElementId::Name("fp".into()).into(),
@@ -258,7 +263,7 @@ fn a_listing_shows_a_spinner_while_it_loads_and_then_the_rows(cx: &mut TestAppCo
     let setup = setup(cx, "/home/me");
     assert_eq!(setup.fake.requested(), ["/home/me"]);
     assert!(present(&setup, part("loading"), cx));
-    assert!(!present(&setup, part("code"), cx));
+    assert!(!present(&setup, entry("code"), cx));
     cx.update(|cx| {
         assert!(matches!(
             setup.state.read(cx).listing(),
@@ -270,11 +275,11 @@ fn a_listing_shows_a_spinner_while_it_loads_and_then_the_rows(cx: &mut TestAppCo
     settle(&setup, cx);
     assert!(!present(&setup, part("loading"), cx));
     for name in HOME {
-        assert!(present(&setup, part(name), cx), "{name}");
+        assert!(present(&setup, entry(name), cx), "{name}");
     }
     assert_eq!(highlighted(&setup, cx).as_deref(), Some("code"));
     cx.update_window(setup.handle.into(), |_, window, _| {
-        assert_eq!(window.find(part("code")).bounds().size.height, px(28.));
+        assert_eq!(window.find(entry("code")).bounds().size.height, px(28.));
     })
     .unwrap();
 }
@@ -288,8 +293,8 @@ fn typing_filters_fuzzily_and_ranks_the_best_first(cx: &mut TestAppContext) {
     assert_eq!(text(&setup, cx), "/home/me/co");
     assert_eq!(rows(&setup, cx), 3);
     assert_eq!(highlighted(&setup, cx).as_deref(), Some("code"));
-    assert!(!present(&setup, part("docs"), cx));
-    assert!(!present(&setup, part(".cache"), cx));
+    assert!(!present(&setup, entry("docs"), cx));
+    assert!(!present(&setup, entry(".cache"), cx));
     assert_eq!(setup.fake.requested(), ["/home/me"], "no new listing");
 
     type_text(&setup, "x", cx);
@@ -361,8 +366,8 @@ fn a_listing_for_a_directory_the_path_left_is_dropped(cx: &mut TestAppContext) {
     settle(&setup, cx);
     setup.fake.resolve("/home/me", ready(&["stale"]));
     settle(&setup, cx);
-    assert!(present(&setup, part("me"), cx));
-    assert!(!present(&setup, part("stale"), cx));
+    assert!(present(&setup, entry("me"), cx));
+    assert!(!present(&setup, entry("stale"), cx));
     assert_eq!(rows(&setup, cx), 2);
 
     press(&setup, "enter", cx);
@@ -404,7 +409,7 @@ fn enter_and_a_click_go_inside_a_folder(cx: &mut TestAppContext) {
 
     setup.fake.resolve("/home/me/docs", ready(&["a", "b"]));
     settle(&setup, cx);
-    click(&setup, part("b"), cx);
+    click(&setup, entry("b"), cx);
     assert_eq!(text(&setup, cx), "/home/me/docs/b/");
     assert_eq!(dir(&setup, cx), sp("/home/me/docs/b"));
 }
@@ -678,7 +683,7 @@ fn a_page_with_a_next_token_ends_in_a_load_more_row_that_appends_the_next_page(
     settle(&setup, cx);
     assert_eq!(rows(&setup, cx), 4);
     for name in ["a", "b", "c", "d"] {
-        assert!(present(&setup, part(name), cx), "{name}");
+        assert!(present(&setup, entry(name), cx), "{name}");
     }
     assert!(!present(&setup, part("more"), cx), "no more pages");
     assert_eq!(more_state(&setup, cx), Some(MoreState::Idle));
@@ -707,11 +712,11 @@ fn a_page_for_a_directory_the_path_left_is_ignored(cx: &mut TestAppContext) {
         .resolve_page("/home/me", "2", folders(&["stale"]));
     settle(&setup, cx);
     assert_eq!(rows(&setup, cx), 2);
-    assert!(!present(&setup, part("stale"), cx));
+    assert!(!present(&setup, entry("stale"), cx));
 
-    click(&setup, part("me"), cx);
+    click(&setup, entry("me"), cx);
     assert_eq!(more_state(&setup, cx), Some(MoreState::Idle));
-    assert!(present(&setup, part("a"), cx));
+    assert!(present(&setup, entry("a"), cx));
     click(&setup, part("more"), cx);
     assert_eq!(
         setup.fake.requested(),
@@ -736,7 +741,7 @@ fn a_failed_page_keeps_the_rows_and_the_row_retries(cx: &mut TestAppContext) {
     settle(&setup, cx);
     assert_eq!(more_state(&setup, cx), Some(MoreState::Failed));
     assert_eq!(rows(&setup, cx), 2, "the loaded folders stay");
-    assert!(present(&setup, part("a"), cx));
+    assert!(present(&setup, entry("a"), cx));
     assert!(present(&setup, part("more"), cx));
     assert!(!present(&setup, part("more-spinner"), cx));
 
@@ -779,7 +784,7 @@ fn the_filter_reaches_a_folder_that_only_a_later_page_has(cx: &mut TestAppContex
     settle(&setup, cx);
     assert_eq!(rows(&setup, cx), 1);
     assert_eq!(highlighted(&setup, cx).as_deref(), Some("zulu"));
-    assert!(present(&setup, part("zulu"), cx));
+    assert!(present(&setup, entry("zulu"), cx));
 }
 
 #[gpui_kit::test]
@@ -894,7 +899,7 @@ fn the_dialog_and_the_list_keep_their_height_in_every_state(cx: &mut TestAppCont
     settle(&setup, cx);
     same(&setup, cx, "one row");
 
-    click(&setup, part("new"), cx);
+    click(&setup, entry("new"), cx);
     same(&setup, cx, "descend loading");
     setup
         .fake
@@ -961,7 +966,7 @@ fn a_typed_tilde_lists_the_home_and_a_tilde_path_its_child(cx: &mut TestAppConte
     assert_eq!(dir(&setup, cx), sp("/Users/me"));
     setup.fake.resolve("/Users/me", ready(&["code", "docs"]));
     settle(&setup, cx);
-    assert!(present(&setup, part("code"), cx));
+    assert!(present(&setup, entry("code"), cx));
 
     type_text(&setup, "/", cx);
     assert_eq!(text(&setup, cx), "~/");
@@ -975,7 +980,7 @@ fn a_typed_tilde_lists_the_home_and_a_tilde_path_its_child(cx: &mut TestAppConte
     );
     setup.fake.resolve("/Users/me/code", ready(&["gpui-cn"]));
     settle(&setup, cx);
-    assert!(present(&setup, part("gpui-cn"), cx));
+    assert!(present(&setup, entry("gpui-cn"), cx));
     click(&setup, part("use"), cx);
     assert_eq!(
         events(&setup),
@@ -1015,7 +1020,7 @@ fn clicking_inside_home_shows_the_tilde_form_and_up_goes_back_out(cx: &mut TestA
         "/Users/me/",
         "the typed start stays as given"
     );
-    click(&setup, part("code"), cx);
+    click(&setup, entry("code"), cx);
     assert_eq!(text(&setup, cx), "~/code/", "a click shows the tilde form");
     assert_eq!(dir(&setup, cx), sp("/Users/me/code"));
     setup.fake.resolve("/Users/me/code", ready(&["gpui-cn"]));

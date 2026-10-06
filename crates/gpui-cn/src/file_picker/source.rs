@@ -208,7 +208,9 @@ impl FilePage {
 /// ```
 pub trait FileSource: 'static {
     /// Lists the entries of `dir`, from the start when `page` is `None`,
-    /// or else from the page `token` a previous page named.
+    /// or else from the page `token` a previous page named. An entry whose
+    /// name is empty, `.` or `..`, or has a separator of the source's style
+    /// or a control character is dropped by the picker.
     fn list(
         &self,
         dir: &SourcePath,

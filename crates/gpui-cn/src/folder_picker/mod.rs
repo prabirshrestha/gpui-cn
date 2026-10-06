@@ -32,7 +32,9 @@ pub use source::{FolderEntry, FolderPage, FolderSource, LocalFolders, MemoryFold
 use crate::{
     ActiveTheme as _, Button, Dialog, Icon, ScrollArea, Theme,
     menu::MenuLook,
-    path_browser::{self, Body, Browser, Host, NewFolder, SourcePath, Submit, view},
+    path_browser::{
+        self, Body, Browser, CreateFolderError, Host, NewFolder, SourcePath, Submit, view,
+    },
 };
 
 /// The key context of the picker, which takes Up, Down, and Enter the
@@ -99,13 +101,15 @@ impl Host<FolderEntry> for FolderPickerState {
     }
 
     fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>) {
-        let text = format!(
-            "{}{}",
-            self.browser.dir_text,
-            path.file_name().unwrap_or_default()
-        );
-        self.browser.set_text(&text, window, cx);
-        self.browser.focus_path(window, cx);
+        if path.parent().as_ref() == Some(&self.browser.dir) {
+            let text = format!(
+                "{}{}",
+                self.browser.dir_text,
+                path.file_name().unwrap_or_default()
+            );
+            self.browser.set_text(&text, window, cx);
+            self.browser.focus_path(window, cx);
+        }
         cx.emit(FolderPickerEvent::FolderCreated(path));
     }
 }
@@ -251,12 +255,24 @@ impl FolderPickerState {
     }
 
     /// Makes the folder `name` in the directory that is listed, the way
-    /// the row does: the name is checked, the source is asked, and the
-    /// result shows in the row, which opens if it is not open. The picker
-    /// reports [`FolderPickerEvent::FolderCreated`] when the folder exists.
-    pub fn create_folder(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.browser.begin_new_folder(name, window, cx);
-        self.browser.commit_new_folder(window, cx);
+    /// the row does: the row opens with `name`, or takes it when it is
+    /// already open, the name is checked, the source is asked, and the
+    /// result shows in the row. The picker reports
+    /// [`FolderPickerEvent::FolderCreated`] when the folder exists.
+    ///
+    /// Fails with [`CreateFolderError::NotReady`] while the directory
+    /// loads or a folder is being made, [`CreateFolderError::Unsupported`]
+    /// when new folders are off or the source cannot make them, and
+    /// [`CreateFolderError::InvalidName`] or
+    /// [`CreateFolderError::Exists`] for a name that is refused before the
+    /// source is asked.
+    pub fn create_folder(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CreateFolderError> {
+        self.browser.create_folder(name, window, cx)
     }
 
     /// The path field's state.
@@ -315,6 +331,7 @@ impl FolderPickerState {
     /// Chooses [`selected`](Self::selected), if there is one.
     pub fn choose(&mut self, cx: &mut Context<Self>) {
         if let Some(path) = self.selected() {
+            self.browser.stop_requests(cx);
             cx.emit(FolderPickerEvent::Chosen(path));
         }
     }
@@ -646,7 +663,11 @@ impl Rows {
                     &self.id,
                     look,
                     &self.state,
-                    browser.more_state(),
+                    view::MoreRow {
+                        state: browser.more_state(),
+                        error: browser.more_error().cloned(),
+                        can_sign_in: browser.auth_handler().is_some(),
+                    },
                     browser.highlighted == Some(row),
                     row,
                     self.pointer_cursors,
@@ -665,7 +686,10 @@ impl Rows {
         let state = self.state.clone();
         let hover = self.state.clone();
         view::row_frame(
-            ElementId::NamedChild(self.id.clone().into(), name),
+            ElementId::NamedChild(
+                ElementId::NamedChild(self.id.clone().into(), "entry".into()).into(),
+                name,
+            ),
             look,
             Role::ListBoxOption,
             highlighted,

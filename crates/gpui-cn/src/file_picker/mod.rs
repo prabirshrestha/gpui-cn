@@ -170,6 +170,8 @@ pub struct FilePickerState {
     show_hidden: bool,
     selected: HashSet<SharedString>,
     selected_visit: u64,
+    /// The selection last reported, so a change is reported once.
+    reported: Vec<SourcePath>,
     anchor: Option<SharedString>,
     _subscription: Subscription,
     _menu_events: Subscription,
@@ -182,6 +184,10 @@ impl Host<FileEntry> for FilePickerState {
 
     fn browser_mut(&mut self) -> &mut Browser<FileEntry> {
         &mut self.browser
+    }
+
+    fn browser_changed(&mut self, cx: &mut Context<Self>) {
+        self.sync_selection(cx);
     }
 
     fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>) {
@@ -224,6 +230,7 @@ impl FilePickerState {
             show_hidden: false,
             selected: HashSet::new(),
             selected_visit: 0,
+            reported: Vec::new(),
             anchor: None,
             _subscription: subscription,
             _menu_events: menu_events,
@@ -322,6 +329,7 @@ impl FilePickerState {
             },
             cx,
         );
+        self.sync_selection(cx);
     }
 
     /// Sets what the "Sign in" button does. A source that needs the user to
@@ -341,6 +349,7 @@ impl FilePickerState {
     /// the "Retry" button call it.
     pub fn retry(&mut self, cx: &mut Context<Self>) {
         self.browser.retry(cx);
+        self.sync_selection(cx);
     }
 
     /// Why the directory could not be listed, when it could not.
@@ -395,12 +404,24 @@ impl FilePickerState {
     }
 
     /// Makes the folder `name` in the directory that is listed, the way
-    /// the row does: the name is checked, the source is asked, and the
-    /// result shows in the row, which opens if it is not open. The picker
-    /// reports [`FilePickerEvent::FolderCreated`] when the folder exists.
-    pub fn create_folder(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.browser.begin_new_folder(name, window, cx);
-        self.browser.commit_new_folder(window, cx);
+    /// the row does: the row opens with `name`, or takes it when it is
+    /// already open, the name is checked, the source is asked, and the
+    /// result shows in the row. The picker reports
+    /// [`FilePickerEvent::FolderCreated`] when the folder exists.
+    ///
+    /// Fails with [`CreateFolderError::NotReady`] while the directory
+    /// loads or a folder is being made, [`CreateFolderError::Unsupported`]
+    /// when new folders are off or the source cannot make them, and
+    /// [`CreateFolderError::InvalidName`] or
+    /// [`CreateFolderError::Exists`] for a name that is refused before the
+    /// source is asked.
+    pub fn create_folder(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CreateFolderError> {
+        self.browser.create_folder(name, window, cx)
     }
 
     /// The path field's state.
@@ -547,14 +568,23 @@ impl FilePickerState {
         anchor: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        let before = self.selection();
+        self.sync_selection(cx);
         self.retarget();
         self.selected = names;
         self.anchor = anchor;
-        if self.selection() != before {
+        self.sync_selection(cx);
+        cx.notify();
+    }
+
+    /// Reports a change of the selection that was not made by a click:
+    /// leaving the folder, a filter, the hidden switch, or a listing that
+    /// no longer holds a selected file.
+    fn sync_selection(&mut self, cx: &mut Context<Self>) {
+        let now = self.selection();
+        if now != self.reported {
+            self.reported = now;
             cx.emit(FilePickerEvent::SelectionChanged);
         }
-        cx.notify();
     }
 
     /// The rows that hold files, as (row, name).
@@ -585,6 +615,7 @@ impl FilePickerState {
     pub fn confirm(&mut self, cx: &mut Context<Self>) {
         let paths = self.selection();
         if !paths.is_empty() {
+            self.browser.stop_requests(cx);
             cx.emit(FilePickerEvent::Confirmed(paths));
         }
     }
@@ -601,11 +632,13 @@ impl FilePickerState {
     /// parent.
     pub fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.browser.go_up(window, cx);
+        self.sync_selection(cx);
     }
 
     /// Goes inside the folder `name` of the listed directory.
     pub fn descend(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.browser.descend(name, window, cx);
+        self.sync_selection(cx);
     }
 
     /// Asks the source for the next page of the listed directory, when it
@@ -644,6 +677,7 @@ impl FilePickerState {
         let name = entry.name().clone();
         if entry.is_folder() {
             self.browser.descend(&name, window, cx);
+            self.sync_selection(cx);
             return;
         }
         if !self.is_selected(&name) {
@@ -677,6 +711,7 @@ impl FilePickerState {
         if entry.is_folder() {
             if clicks >= 2 || tap_opens {
                 self.browser.descend(&name, window, cx);
+                self.sync_selection(cx);
             } else {
                 cx.notify();
             }
@@ -1270,7 +1305,11 @@ impl Rows {
                     &self.id,
                     look,
                     &self.state,
-                    browser.more_state(),
+                    view::MoreRow {
+                        state: browser.more_state(),
+                        error: browser.more_error().cloned(),
+                        can_sign_in: browser.auth_handler().is_some(),
+                    },
                     browser.highlighted == Some(row),
                     row,
                     self.pointer_cursors,

@@ -25,7 +25,7 @@ use gpui_kit::{
 
 use crate::ActiveTheme as _;
 pub use create::CreateFolderError;
-use create::validate_folder_name;
+use create::{is_plain_name, validate_folder_name};
 pub(crate) use path::Match;
 use path::{
     all_visible, collapse_home, is_home_text, join_dir, parent_text, rank, resolve_descend,
@@ -96,7 +96,9 @@ pub(crate) fn bind_keys(context: &'static str, cx: &mut App) {
 /// only so the listing types can name it; applications implement their own
 /// entry types, not this trait.
 pub trait Entry: Clone + Send + Sync + 'static {
-    /// The name, without a path.
+    /// The name, without a path. A name that is empty, is `.` or `..`, or
+    /// has a separator of the source's style or a control character is not
+    /// a name: the pickers drop the entry.
     fn name(&self) -> &SharedString;
     /// Whether the entry is hidden.
     fn hidden(&self) -> bool;
@@ -175,6 +177,8 @@ pub struct Loaded<E> {
     names: HashSet<String>,
     pub(crate) next: Option<PageToken>,
     pub(crate) more: MoreState,
+    /// Why the last request for a later page failed.
+    more_error: Option<ListError>,
 }
 
 impl<E: Entry> Loaded<E> {
@@ -185,6 +189,7 @@ impl<E: Entry> Loaded<E> {
             names: HashSet::new(),
             next: None,
             more: MoreState::Idle,
+            more_error: None,
         };
         loaded.append(page);
         loaded
@@ -196,6 +201,9 @@ impl<E: Entry> Loaded<E> {
         self.next = page.next;
         let entries = Arc::make_mut(&mut self.entries);
         for entry in page.entries {
+            if !is_plain_name(entry.name(), &self.style) {
+                continue;
+            }
             if self
                 .names
                 .insert(self.style.fold(entry.name()).into_owned())
@@ -204,6 +212,7 @@ impl<E: Entry> Loaded<E> {
             }
         }
         self.more = MoreState::Idle;
+        self.more_error = None;
     }
 }
 
@@ -302,6 +311,11 @@ pub(crate) trait Host<E: Entry>: 'static + Sized {
     /// The source made the folder at `path`, and the listing is being read
     /// again. The host reports it and decides what the new folder is.
     fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>);
+
+    /// The browser's rows or directory changed after an answer or an edit.
+    fn browser_changed(&mut self, cx: &mut Context<Self>) {
+        let _ = cx;
+    }
 }
 
 /// The row that names a new folder, open at the top of the list.
@@ -340,6 +354,10 @@ pub(crate) struct Browser<E: Entry> {
     load_more: Option<Task<()>>,
     /// Which directory visit the running requests belong to.
     load_id: u64,
+    /// Which stay in a directory the browser is in. It changes when the
+    /// browser moves to another directory, and not when the same one is
+    /// listed again.
+    place: u64,
     pub(crate) shown: Vec<Match>,
     pub(crate) highlighted: Option<usize>,
     pub(crate) list: ListState,
@@ -396,6 +414,7 @@ impl<E: Entry> Browser<E> {
             load: None,
             load_more: None,
             load_id: 0,
+            place: 0,
             shown: Vec::new(),
             highlighted: None,
             list,
@@ -518,6 +537,35 @@ impl<E: Entry> Browser<E> {
         cx.notify();
     }
 
+    /// Makes the folder `name` through the row: the row opens with `name`,
+    /// or takes `name` when it is already open, and is committed. It fails
+    /// with [`CreateFolderError::NotReady`] while the directory loads or a
+    /// folder is being made, with [`CreateFolderError::Unsupported`] when
+    /// the picker does not offer new folders, and with what the name check
+    /// finds, which also shows under the row.
+    pub(crate) fn create_folder<O: Host<E>>(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<O>,
+    ) -> Result<(), CreateFolderError> {
+        if !self.can_create_folder() {
+            return Err(CreateFolderError::Unsupported);
+        }
+        if !self.new_folder_ready() || self.new_folder.as_ref().is_some_and(|row| row.creating) {
+            return Err(CreateFolderError::NotReady);
+        }
+        match &self.new_folder {
+            Some(open) => {
+                let name = name.to_string();
+                open.input
+                    .update(cx, |input, cx| input.set_value(name, window, cx));
+            }
+            None => self.begin_new_folder(name, window, cx),
+        }
+        self.commit_new_folder(cx)
+    }
+
     /// Opens the row with the default name.
     pub(crate) fn begin_default_new_folder<O: Host<E>>(
         &mut self,
@@ -575,21 +623,20 @@ impl<E: Entry> Browser<E> {
     /// stays open to edit.
     pub(crate) fn commit_new_folder<O: Host<E>>(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<O>,
-    ) {
+    ) -> Result<(), CreateFolderError> {
         let Some(open) = &self.new_folder else {
-            return;
+            return Err(CreateFolderError::NotReady);
         };
         if open.creating {
-            return;
+            return Err(CreateFolderError::NotReady);
         }
         let typed = open.input.read(cx).value().to_string();
         let name = match validate_folder_name(&typed, &self.style) {
             Ok(name) => name,
             Err(error) => {
-                self.refuse_new_folder(&typed, error, cx);
-                return;
+                self.refuse_new_folder(&typed, error.clone(), cx);
+                return Err(error);
             }
         };
         if self
@@ -597,11 +644,11 @@ impl<E: Entry> Browser<E> {
             .is_some_and(|loaded| loaded.entry_named(&name).is_some())
         {
             self.refuse_new_folder(&name, CreateFolderError::Exists, cx);
-            return;
+            return Err(CreateFolderError::Exists);
         }
         if !self.source.can_create_folders() {
             self.refuse_new_folder(&name, CreateFolderError::Unsupported, cx);
-            return;
+            return Err(CreateFolderError::Unsupported);
         }
         if let Some(open) = &mut self.new_folder {
             open.creating = true;
@@ -609,7 +656,6 @@ impl<E: Entry> Browser<E> {
         }
         let dir = self.dir.clone();
         let handle = self.window;
-        let _ = window;
         cx.notify();
         self.creating = Some(cx.spawn(async move |this, cx| {
             let Ok(answer) = this.update(cx, |this: &mut O, cx| {
@@ -621,7 +667,9 @@ impl<E: Entry> Browser<E> {
             let result = answer.await;
             let made = this
                 .update(cx, |this: &mut O, cx| {
-                    this.browser_mut().created(dir, name, result, cx)
+                    let made = this.browser_mut().created(dir, name, result, cx);
+                    this.browser_changed(cx);
+                    made
                 })
                 .ok()
                 .flatten();
@@ -633,6 +681,7 @@ impl<E: Entry> Browser<E> {
                 .ok();
             }
         }));
+        Ok(())
     }
 
     fn refuse_new_folder<O: Host<E>>(
@@ -662,9 +711,9 @@ impl<E: Entry> Browser<E> {
         match result {
             Ok(path) => {
                 self.new_folder = None;
-                self.reveal = Some(path.file_name().unwrap_or(&name).to_string().into());
                 self.listings.remove(&dir);
                 if dir == self.dir {
+                    self.reveal = Some(path.file_name().unwrap_or(&name).to_string().into());
                     self.enter(dir, cx);
                     self.refilter(false, cx);
                 }
@@ -689,6 +738,7 @@ impl<E: Entry> Browser<E> {
         self.pending = None;
         self.creating = None;
         self.new_folder = None;
+        self.reveal = None;
         self.load_id += 1;
         match self.listings.get_mut(&self.dir) {
             Some(Listing::Loading) => {
@@ -726,6 +776,7 @@ impl<E: Entry> Browser<E> {
                 if matches!(event, InputEvent::Change) {
                     let text = input.read(cx).value().to_string();
                     this.browser_mut().text_changed(text, window, cx);
+                    this.browser_changed(cx);
                 }
             },
         )
@@ -796,7 +847,7 @@ impl<E: Entry> Browser<E> {
     /// Which visit to a directory the browser is in: it changes every
     /// time the browser moves to another directory, and when it comes back.
     pub(crate) fn visit(&self) -> u64 {
-        self.load_id
+        self.place
     }
 
     /// What is known about the directory that is listed.
@@ -841,6 +892,14 @@ impl<E: Entry> Browser<E> {
                     Body::NoMatch
                 }
             }
+        }
+    }
+
+    /// Why the request for the next page failed, when it did.
+    pub(crate) fn more_error(&self) -> Option<&ListError> {
+        match self.listing() {
+            Some(Listing::Ready(loaded)) => loaded.more_error.as_ref(),
+            _ => None,
         }
     }
 
@@ -933,7 +992,8 @@ impl<E: Entry> Browser<E> {
             };
             let result = answer.await;
             this.update(cx, |this: &mut O, cx| {
-                this.browser_mut().paged(dir, id, result, cx)
+                this.browser_mut().paged(dir, id, result, cx);
+                this.browser_changed(cx);
             })
             .ok();
         }));
@@ -1014,6 +1074,15 @@ impl<E: Entry> Browser<E> {
         } else {
             split_path(&text, &self.style)
         };
+        // A query of `..` or `.` names a directory, not a name to match.
+        let (dir_text, query) = match query.as_str() {
+            ".." => (
+                format!("{dir_text}..{}", self.style.separator()),
+                String::new(),
+            ),
+            "." => (dir_text, String::new()),
+            _ => (dir_text, query),
+        };
         let dir = resolve_dir(&dir_text, self.source.home().as_ref(), &self.style);
         self.dir_text = dir_text;
         self.query = query.into();
@@ -1029,6 +1098,8 @@ impl<E: Entry> Browser<E> {
     fn enter<O: Host<E>>(&mut self, dir: SourcePath, cx: &mut Context<O>) {
         if dir != self.dir {
             self.cancel_new_folder(cx);
+            self.place += 1;
+            self.reveal = None;
         }
         self.load = None;
         self.load_more = None;
@@ -1058,7 +1129,8 @@ impl<E: Entry> Browser<E> {
             };
             let result = answer.await;
             this.update(cx, |this: &mut O, cx| {
-                this.browser_mut().first_page(dir, id, result, cx)
+                this.browser_mut().first_page(dir, id, result, cx);
+                this.browser_changed(cx);
             })
             .ok();
         }));
@@ -1101,7 +1173,10 @@ impl<E: Entry> Browser<E> {
         };
         match result {
             Ok(page) => loaded.append(page),
-            Err(_) => loaded.more = MoreState::Failed,
+            Err(error) => {
+                loaded.more = MoreState::Failed;
+                loaded.more_error = Some(error);
+            }
         }
         self.refilter(true, cx);
     }
@@ -1139,7 +1214,9 @@ impl<E: Entry> Browser<E> {
                     }
                     browser.filter = None;
                     browser.show(matches, keep_place, cx);
-                    browser.pending.take()
+                    let pending = browser.pending.take();
+                    this.browser_changed(cx);
+                    pending
                 })
                 .ok()
                 .flatten();
@@ -1159,11 +1236,53 @@ impl<E: Entry> Browser<E> {
     }
 
     fn show<O: Host<E>>(&mut self, shown: Vec<Match>, keep_place: bool, cx: &mut Context<O>) {
+        let kept = keep_place.then(|| {
+            let was_more = self.highlighted == Some(self.shown.len());
+            let name = self
+                .highlighted
+                .and_then(|row| self.entry_at(row))
+                .map(|(entry, _)| entry.name().clone());
+            (
+                self.list.logical_scroll_top(),
+                name,
+                was_more,
+                self.shown.len(),
+            )
+        });
         self.shown = shown;
         let count = self.item_count();
-        if keep_place {
-            self.list.splice(0..self.list_count, count);
-            self.highlighted = self.highlighted.filter(|row| *row < count);
+        if let Some((top, name, was_more, previous)) = kept {
+            // Rows that did not change stay out of the replaced range, and the
+            // place the list was scrolled to is put back.
+            let common = if self.query.is_empty() {
+                previous.min(self.shown.len())
+            } else {
+                0
+            };
+            self.list
+                .splice(common..self.list_count, count.saturating_sub(common));
+            self.list.scroll_to(top);
+            self.highlighted = match (name, self.loaded()) {
+                (Some(name), Some(loaded)) => {
+                    let wanted = self.style.fold(&name);
+                    self.shown.iter().position(|found| {
+                        loaded
+                            .entries
+                            .get(found.index)
+                            .is_some_and(|entry| self.style.fold(entry.name()) == wanted)
+                    })
+                }
+                _ => None,
+            };
+            if was_more {
+                // The highlight was on the Load more row: it stays on the
+                // row, or moves to the first row the page added.
+                self.highlighted = if self.has_more_row() {
+                    Some(self.shown.len())
+                } else {
+                    (previous < self.shown.len()).then_some(previous)
+                };
+            }
         } else {
             self.list.reset(count);
             self.highlighted = (!self.shown.is_empty()).then_some(0);

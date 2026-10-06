@@ -128,7 +128,7 @@ fn table() -> Vec<(Kind, Option<ElementId>, ElementId, ElementId)> {
             Kind::Folder,
             None,
             deep(&["fp", "list"]),
-            deep(&["fp", "beta"]),
+            deep(&["fp", "entry", "beta"]),
         ),
         (
             Kind::File,

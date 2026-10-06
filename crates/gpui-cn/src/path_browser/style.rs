@@ -164,8 +164,10 @@ impl PathStyle {
     /// POSIX-style path is left as it is: a Windows-looking path pasted
     /// there is not guessed at.
     pub fn normalize_pasted(&self, text: &str, env: &dyn Fn(&str) -> Option<String>) -> String {
-        let text = match file_url_path(text.trim(), self) {
+        let unquoted = text.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+        let text = match file_url_path(unquoted, self) {
             Some(path) => path,
+            None if unquoted.starts_with("file://") => return text.to_string(),
             None if self.is_windows() => text.trim().to_string(),
             None => return text.to_string(),
         };
@@ -218,11 +220,7 @@ impl PathStyle {
             let rooted = text.starts_with('/');
             return Parsed {
                 prefix: if rooted { "/".into() } else { String::new() },
-                parts: text
-                    .split('/')
-                    .filter(|part| !part.is_empty())
-                    .map(str::to_string)
-                    .collect(),
+                parts: fold_dots(text.split('/').map(str::to_string).collect()),
                 rooted,
                 computer: false,
             };
@@ -231,10 +229,11 @@ impl PathStyle {
         let first = chars.next();
         let second = chars.next();
         let split = |rest: &str| -> Vec<String> {
-            rest.split(|c| self.is_separator(c))
-                .filter(|part| !part.is_empty())
-                .map(str::to_string)
-                .collect()
+            fold_dots(
+                rest.split(|c| self.is_separator(c))
+                    .map(str::to_string)
+                    .collect(),
+            )
         };
         if let (Some(a), Some(':')) = (first, second)
             && a.is_ascii_alphabetic()
@@ -249,13 +248,33 @@ impl PathStyle {
         if first.is_some_and(|c| self.is_separator(c))
             && second.is_some_and(|c| self.is_separator(c))
         {
-            let mut parts = split(text);
+            let mut parts: Vec<String> = text
+                .split(|c| self.is_separator(c))
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect();
+            if parts.len() == 1 {
+                return Parsed {
+                    prefix: format!("{sep}{sep}{}{sep}", parts[0]),
+                    parts: Vec::new(),
+                    rooted: true,
+                    computer: false,
+                };
+            }
+            if parts.is_empty() {
+                return Parsed {
+                    prefix: format!("{sep}{sep}"),
+                    parts,
+                    rooted: true,
+                    computer: false,
+                };
+            }
             if parts.len() >= 2 {
                 let server = parts.remove(0);
                 let share = parts.remove(0);
                 return Parsed {
                     prefix: format!("{sep}{sep}{server}{sep}{share}{sep}"),
-                    parts,
+                    parts: fold_dots(parts),
                     rooted: true,
                     computer: false,
                 };
@@ -333,6 +352,23 @@ impl Parsed {
     }
 }
 
+/// The parts of a path with the empty ones dropped, `.` dropped, and `..`
+/// taking the part before it away. A `..` with nothing before it goes, so a
+/// path never climbs above its root.
+fn fold_dots(parts: Vec<String>) -> Vec<String> {
+    let mut folded: Vec<String> = Vec::new();
+    for part in parts {
+        match part.as_str() {
+            "" | "." => {}
+            ".." => {
+                folded.pop();
+            }
+            _ => folded.push(part),
+        }
+    }
+    folded
+}
+
 fn is_drive_only(text: &str) -> bool {
     let mut chars = text.chars();
     matches!(
@@ -379,6 +415,9 @@ fn file_url_path(text: &str, style: &PathStyle) -> Option<String> {
         None => (rest, ""),
     };
     let path = percent_decode(path);
+    if path.chars().any(char::is_control) {
+        return None;
+    }
     if style.is_windows() {
         let bytes = path.as_bytes();
         let drive = bytes.len() >= 3
@@ -634,6 +673,45 @@ mod tests {
             PathStyle::posix().with_case_sensitive(false).path("/A"),
             PathStyle::posix().with_case_sensitive(false).path("/a")
         );
+    }
+
+    #[test]
+    fn dots_fold_and_never_climb_above_the_root() {
+        let posix = PathStyle::posix();
+        assert_eq!(posix.path("/home/me/..").as_str(), "/home");
+        assert_eq!(posix.path("/home/./me/../you").as_str(), "/home/you");
+        assert_eq!(posix.path("/../..").as_str(), "/");
+        assert_eq!(posix.path("/a/../../b").as_str(), "/b");
+        let windows = PathStyle::windows();
+        assert_eq!(windows.path("C:\\a\\..\\b").as_str(), "C:\\b");
+        assert_eq!(windows.path("C:/a/../../..").as_str(), "C:\\");
+        assert_eq!(
+            windows.path("\\\\srv\\share\\..\\x").as_str(),
+            "\\\\srv\\share\\x"
+        );
+        assert_eq!(posix.path("/home/me/..").join("..").as_str(), "/");
+        assert_eq!(posix.path("/a").join("..").as_str(), "/");
+    }
+
+    #[test]
+    fn a_partial_unc_path_is_a_root_not_a_rooted_name() {
+        let windows = PathStyle::windows();
+        let server = windows.path("\\\\srv\\");
+        assert_eq!(server.as_str(), "\\\\srv\\");
+        assert!(server.is_root());
+        assert_eq!(server.parent(), None);
+        assert_eq!(windows.path("\\\\").parent(), None);
+        assert_eq!(windows.path("//srv").as_str(), "\\\\srv\\");
+    }
+
+    #[test]
+    fn a_quoted_file_url_is_unquoted_first_and_a_control_character_refuses_it() {
+        let posix = PathStyle::posix();
+        let windows = PathStyle::windows();
+        assert_eq!(pasted(posix, "\"file:///home/me\""), "/home/me");
+        assert_eq!(pasted(windows, "'file:///C:/Users/me'"), "C:\\Users\\me");
+        assert_eq!(pasted(posix, "file:///home/a%00b"), "file:///home/a%00b");
+        assert_eq!(pasted(windows, "file:///C:/a%0Ab"), "file:///C:/a%0Ab");
     }
 
     #[test]

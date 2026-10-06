@@ -26,6 +26,9 @@ pub enum CreateFolderError {
     InvalidName(SharedString),
     /// The user may not make folders there.
     PermissionDenied,
+    /// The picker cannot make a folder yet: the directory is still
+    /// loading, or another folder is being made.
+    NotReady,
     /// Any other failure. The text is shown to the user.
     Other(SharedString),
 }
@@ -35,6 +38,7 @@ impl CreateFolderError {
     pub fn message(&self, name: &str) -> SharedString {
         match self {
             Self::Unsupported => "This location cannot make folders".into(),
+            Self::NotReady => "Wait for the folder to load".into(),
             Self::Exists => format!("A folder named {name} already exists").into(),
             Self::PermissionDenied => "You cannot make folders here".into(),
             Self::InvalidName(reason) | Self::Other(reason) => reason.clone(),
@@ -54,6 +58,19 @@ impl From<std::io::Error> for CreateFolderError {
             _ => Self::Other(error.to_string().into()),
         }
     }
+}
+
+/// Whether a listed name is one plain name: not empty, not `.` or `..`,
+/// with no separator of the style and no control character. A listing that
+/// names anything else is dropped, so a source cannot make a row that
+/// climbs out of the folder or reaches into a deeper one.
+pub(crate) fn is_plain_name(name: &str, style: &PathStyle) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| style.is_separator(c) || c.is_control())
 }
 
 /// The name a folder would get, or why it cannot: surrounding spaces go,
@@ -84,12 +101,53 @@ pub(crate) fn validate_folder_name(
     if style.is_windows() && name.contains(['<', '>', ':', '"', '|', '?', '*']) {
         return invalid("A folder name cannot contain < > : \" | ? *");
     }
+    if style.is_windows() {
+        if name.ends_with('.') {
+            return invalid("A folder name cannot end with a dot");
+        }
+        if is_reserved_windows_name(name) {
+            return invalid("That name is reserved by Windows");
+        }
+    }
     Ok(name.to_string())
+}
+
+/// Whether Windows reserves `name`: a device name, with or without an
+/// extension, in any case.
+fn is_reserved_windows_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|digit| {
+                digit.len() == 1 && digit != "0" && digit.as_bytes()[0].is_ascii_digit()
+            })
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_listed_name_is_one_plain_name() {
+        let posix = PathStyle::posix();
+        let windows = PathStyle::windows();
+        for name in ["", ".", "..", "a/b", "../x", "a\0b", "tab\t"] {
+            assert!(!is_plain_name(name, &posix), "{name:?}");
+        }
+        assert!(
+            is_plain_name("a\\b", &posix),
+            "a backslash is a POSIX name character"
+        );
+        assert!(!is_plain_name("a\\b", &windows));
+        assert!(is_plain_name("...", &posix));
+        assert!(is_plain_name(".config", &posix));
+    }
 
     #[test]
     fn a_good_name_is_trimmed() {
@@ -133,6 +191,16 @@ mod tests {
             assert!(validate_folder_name(name, &windows).is_err(), "{name}");
         }
         assert!(validate_folder_name("My Files", &windows).is_ok());
+        for name in [
+            "CON", "con", "Nul.txt", "COM1", "lpt9.log", "AUX.", "name.", "a..", "PRN.x.y",
+        ] {
+            assert!(validate_folder_name(name, &windows).is_err(), "{name}");
+        }
+        for name in ["COM0", "COM10", "CONSOLE", "com", "LPT", "a.con"] {
+            assert!(validate_folder_name(name, &windows).is_ok(), "{name}");
+        }
+        assert!(validate_folder_name("CON", &PathStyle::posix()).is_ok());
+        assert!(validate_folder_name("name.", &PathStyle::posix()).is_ok());
     }
 
     #[test]

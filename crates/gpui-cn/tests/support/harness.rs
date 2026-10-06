@@ -211,10 +211,8 @@ pub fn part(name: &str) -> ElementId {
 /// The row of an entry: the folder picker names it directly, the file
 /// picker under `entry`.
 pub fn row(which: Which, name: &str) -> ElementId {
-    match which {
-        Which::Folder => part(name),
-        Which::File => ElementId::NamedChild(part("entry").into(), name.to_string().into()),
-    }
+    let _ = which;
+    ElementId::NamedChild(part("entry").into(), name.to_string().into())
 }
 
 pub fn present(setup: &Setup, id: ElementId, cx: &mut TestAppContext) -> bool {

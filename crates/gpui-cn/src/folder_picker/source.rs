@@ -120,7 +120,9 @@ impl FolderPage {
 /// ```
 pub trait FolderSource: 'static {
     /// Lists the folders of `dir`, from the start when `page` is `None`,
-    /// or else from the page `token` a previous page named.
+    /// or else from the page `token` a previous page named. A folder whose
+    /// name is empty, `.` or `..`, or has a separator of the source's style
+    /// or a control character is dropped by the picker.
     fn list(
         &self,
         dir: &SourcePath,

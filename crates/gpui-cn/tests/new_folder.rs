@@ -417,12 +417,12 @@ fn the_programmatic_call_goes_through_the_same_row(cx: &mut TestAppContext) {
         let remote = FakeRemote::posix();
         let setup = start(cx, which, remote.clone(), allow());
         cx.update_window(setup.handle.into(), |_, window, cx| match &setup.picker {
-            Picker::Folder(state) => {
-                state.update(cx, |state, cx| state.create_folder("made", window, cx))
-            }
-            Picker::File(state) => {
-                state.update(cx, |state, cx| state.create_folder("made", window, cx))
-            }
+            Picker::Folder(state) => state.update(cx, |state, cx| {
+                state.create_folder("made", window, cx).unwrap()
+            }),
+            Picker::File(state) => state.update(cx, |state, cx| {
+                state.create_folder("made", window, cx).unwrap()
+            }),
         })
         .unwrap();
         settle(&setup, cx);

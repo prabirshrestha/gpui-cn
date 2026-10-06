@@ -128,9 +128,9 @@ pub(crate) fn new_folder_row<E: Entry, O: Host<E>>(
                 state.browser_mut().dismiss_new_folder(window, cx);
             });
         })
-        .on_action(move |_: &CommitNewFolder, window, cx| {
+        .on_action(move |_: &CommitNewFolder, _, cx| {
             commit.update(cx, |state, cx| {
-                state.browser_mut().commit_new_folder(window, cx);
+                state.browser_mut().commit_new_folder(cx).ok();
             });
         })
         .child(
@@ -229,18 +229,31 @@ pub(crate) fn row_frame(
         .when(pointer_cursors, |this| this.cursor_pointer())
 }
 
+/// How the request for the next page stands, and why it failed.
+pub(crate) struct MoreRow {
+    pub(crate) state: MoreState,
+    pub(crate) error: Option<ListError>,
+    pub(crate) can_sign_in: bool,
+}
+
 /// The last row while more entries follow: it loads them on a click, and
 /// asks again after a failure.
 pub(crate) fn more_row<E: Entry, O: Host<E>>(
     id: &ElementId,
     look: &MenuLook,
     state: &Entity<O>,
-    more: MoreState,
+    more: MoreRow,
     highlighted: bool,
     row: usize,
     pointer_cursors: bool,
 ) -> AnyElement {
     let click = state.clone();
+    let MoreRow {
+        state: more,
+        error,
+        can_sign_in,
+    } = more;
+    let needs_sign_in = error.as_ref().is_some_and(ListError::needs_sign_in) && can_sign_in;
     let hover = state.clone();
     row_frame(
         ElementId::NamedChild(id.clone().into(), "more".into()),
@@ -258,14 +271,23 @@ pub(crate) fn more_row<E: Entry, O: Host<E>>(
         )))
     })
     .child(match more {
-        MoreState::Idle => LOAD_MORE,
-        MoreState::Loading => LOADING_MORE,
-        MoreState::Failed => MORE_FAILED,
+        MoreState::Idle => LOAD_MORE.into(),
+        MoreState::Loading => LOADING_MORE.into(),
+        MoreState::Failed => error
+            .as_ref()
+            .map_or_else(|| MORE_FAILED.into(), ListError::message),
+    })
+    .when(more == MoreState::Failed && needs_sign_in, |this| {
+        this.child(div().text_color(look.foreground).child("Sign in"))
     })
     .when(!look.touch, |this| {
         this.on_mouse_move(move |_, _, cx| highlight_on_hover::<E, O>(&hover, row, cx))
     })
-    .on_click(move |_, _, cx| {
+    .on_click(move |_, window, cx| {
+        if needs_sign_in && let Some(handler) = click.read(cx).browser().auth_handler() {
+            handler(window, cx);
+            return;
+        }
         click.update(cx, |owner, cx| owner.browser_mut().load_more(cx));
     })
     .into_any_element()
