@@ -453,3 +453,37 @@ fn the_panel_keeps_one_height_in_every_state(cx: &mut TestAppContext) {
     .unwrap();
     same(&setup, cx, "the effort card open");
 }
+
+#[gpui_kit::test]
+fn the_effort_card_has_one_padding_and_its_rows_line_up_with_the_rail(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(model("acme-deep"), cx);
+    })
+    .unwrap();
+    open(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(named(id(), "effort"), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let card = window.find(named(id(), "effort-card")).bounds();
+        let slider = window.find(named(id(), "effort-slider")).bounds();
+        let rail = window
+            .find(named(named(id(), "effort-slider"), "track"))
+            .bounds();
+        let row = window.find(model("acme-deep")).bounds();
+        assert_eq!(card.left(), row.left(), "the same inset as the rows");
+        assert_eq!(card.right(), row.right());
+        // One border pixel plus the padding, on the left and on the right.
+        assert_eq!(slider.left() - card.left(), px(13.));
+        assert_eq!(card.right() - slider.right(), px(13.));
+        assert_eq!(
+            rail.left() - slider.left(),
+            px(8.),
+            "the rail is inset by half the thumb"
+        );
+        assert_eq!(card.size.height, px(90.), "88 and the hairline");
+    })
+    .unwrap();
+}

@@ -3,7 +3,7 @@
 use gpui_cn_story::agents::{catalog, permission_modes};
 
 #[test]
-fn the_catalog_has_three_providers_with_the_named_models() {
+fn the_catalog_has_two_providers_with_the_named_models() {
     let catalog = catalog();
     let names = |ix: usize| -> Vec<String> {
         catalog[ix]
@@ -12,7 +12,7 @@ fn the_catalog_has_three_providers_with_the_named_models() {
             .map(|m| m.name().to_string())
             .collect()
     };
-    assert_eq!(catalog.len(), 3);
+    assert_eq!(catalog.len(), 2);
     assert_eq!(
         names(0),
         [
@@ -28,7 +28,6 @@ fn the_catalog_has_three_providers_with_the_named_models() {
         names(1),
         ["Fable 5.1", "Opus 5.5", "Sonnet 5.5", "Haiku 4.5"]
     );
-    assert_eq!(names(2), ["Pi Auto", "Pi Fast", "Pi Deep"]);
     let haiku = &catalog[1].models_of()[3];
     assert!(!haiku.supports_effort(), "Haiku has no effort");
     assert!(

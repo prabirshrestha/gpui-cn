@@ -1,16 +1,24 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use gpui_cn::{
     ActiveTheme as _, Attachment, AttachmentStrip, Button, ButtonSize, Composer, ComposerEvent,
     ComposerState, ComposerStatusTab, ModelEntry, ModelPicker, ModelPickerState, ModelProvider,
-    PermissionMenu, PermissionMode, PermissionState, gpui_kit::assets::IconName,
+    PermissionMenu, PermissionMode, PermissionState, StatusSelect, gpui_kit::assets::IconName,
 };
+use gpui_kit::base::Disableable as _;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, Image, ImageFormat, ImageSource, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Window, div, px,
+    ParentElement as _, Render, SharedString, Styled as _, Task, Window, div, px,
 };
 
 use crate::{Story, agents, note, page, section};
+
+/// How often the simulated upload moves, and by how much: 5% every 100ms
+/// is two seconds from nothing to done.
+const UPLOAD_TICK: Duration = Duration::from_millis(100);
+const UPLOAD_STEP: f32 = 5.;
+/// The pause between one file landing and the next starting.
+const UPLOAD_GAP: Duration = Duration::from_millis(300);
 
 /// A checkerboard drawn as SVG, so the story needs no picture file.
 const CHECKER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#5b8def"/><rect width="1" height="1" fill="#8fb1f7"/><rect x="2" width="1" height="1" fill="#8fb1f7"/><rect y="1" x="1" width="1" height="1" fill="#8fb1f7"/><rect y="1" x="3" width="1" height="1" fill="#8fb1f7"/><rect y="2" width="1" height="1" fill="#8fb1f7"/><rect y="2" x="2" width="1" height="1" fill="#8fb1f7"/><rect y="3" x="1" width="1" height="1" fill="#8fb1f7"/><rect y="3" x="3" width="1" height="1" fill="#8fb1f7"/></svg>"##;
@@ -26,6 +34,8 @@ fn checker() -> ImageSource {
 /// composer that holds them.
 pub struct ComposerStory {
     attachments: Vec<Attachment>,
+    /// The running simulated upload. Dropping it stops the ticks.
+    upload: Option<Task<()>>,
     permission: Entity<PermissionState>,
     custom_permission: Entity<PermissionState>,
     models: Entity<ModelPickerState>,
@@ -35,54 +45,70 @@ pub struct ComposerStory {
     custom: Entity<ComposerState>,
     log: SharedString,
     agent: Entity<ComposerState>,
+    agent_status: agents::SampleStatus,
+    rich_status: agents::SampleStatus,
+    tab_status: agents::SampleStatus,
+    joined_status: agents::SampleStatus,
+    branch_only: agents::SampleStatus,
 }
 
 impl ComposerStory {
-    /// A made-up catalog: the picker ships no vendor marks, so each
-    /// provider brings any icon.
-    fn catalog() -> Vec<ModelProvider> {
+    /// A tiny catalog for the examples that show a custom one: the picker
+    /// ships no vendor marks, so a provider brings any icon.
+    fn custom_catalog() -> Vec<ModelProvider> {
         vec![
-            ModelProvider::new("orbit", "Orbit")
-                .icon(IconName::Bot)
+            ModelProvider::new("local", "On this machine")
+                .icon(IconName::HardDrive)
                 .models([
-                    ModelEntry::new("orbit-mini", "Orbit Mini"),
-                    ModelEntry::new("orbit-pro", "Orbit Pro").effort(true),
-                    ModelEntry::new("orbit-max", "Orbit Max").effort(true),
-                    ModelEntry::new("orbit-lite", "Orbit Lite"),
-                    ModelEntry::new("orbit-edge", "Orbit Edge"),
-                    ModelEntry::new("orbit-old", "Orbit 1"),
-                    ModelEntry::new("orbit-older", "Orbit 0"),
+                    ModelEntry::new("tiny", "Tiny 1B"),
+                    ModelEntry::new("small", "Small 8B").effort(true),
                 ]),
-            ModelProvider::new("lumen", "Lumen")
-                .icon(IconName::Sun)
-                .models([
-                    ModelEntry::new("lumen-1", "Lumen One"),
-                    ModelEntry::new("lumen-2", "Lumen Two").effort(true),
-                ]),
-            ModelProvider::new("nova", "Nova")
-                .icon(IconName::Star)
-                .models([
-                    ModelEntry::new("nova-lite", "Nova Lite"),
-                    ModelEntry::new("nova-edge", "Nova Edge"),
-                ]),
-            ModelProvider::new("tide", "Tide")
-                .icon(IconName::Globe)
-                .models([ModelEntry::new("tide-s", "Tide S")]),
-            ModelProvider::new("ember", "Ember")
-                .icon(IconName::Heart)
-                .models([ModelEntry::new("ember-1", "Ember One")]),
-            ModelProvider::new("dusk", "Dusk")
-                .icon(IconName::Moon)
-                .models([ModelEntry::new("dusk-1", "Dusk One")]),
-            ModelProvider::new("grid", "Grid")
-                .icon(IconName::Network)
-                .models([ModelEntry::new("grid-1", "Grid One")]),
-            ModelProvider::new("chip", "Chip")
-                .icon(IconName::Cpu)
-                .models([ModelEntry::new("chip-1", "Chip One")]),
-            ModelProvider::new("paint", "Paint")
-                .icon(IconName::Palette)
-                .models([ModelEntry::new("paint-1", "Paint One")]),
+        ]
+    }
+
+    fn custom_models<T: 'static>(
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Entity<ModelPickerState> {
+        cx.new(|cx| {
+            ModelPickerState::new(Self::custom_catalog(), window, cx).with_selected("small")
+        })
+    }
+
+    fn custom_modes() -> Vec<PermissionMode> {
+        vec![
+            PermissionMode::new("read", "Read only")
+                .description("Look at files, never change them")
+                .icon(IconName::Eye),
+            PermissionMode::new("edit", "Edit files")
+                .description("Change files in this folder")
+                .icon(IconName::File),
+            PermissionMode::new("shell", "Run commands")
+                .description("Run commands in the terminal")
+                .icon(IconName::SquareTerminal),
+        ]
+    }
+
+    /// Every composer example with the picker it owns, and whether its
+    /// catalog is the labelled custom one.
+    pub fn composers(&self, cx: &App) -> Vec<(&'static str, Entity<ModelPickerState>, bool)> {
+        [
+            ("agent", &self.agent, false),
+            ("basic", &self.basic, false),
+            ("rich", &self.rich, false),
+            ("custom", &self.custom, true),
+        ]
+        .into_iter()
+        .map(|(name, composer, custom)| (name, composer.read(cx).models().clone(), custom))
+        .collect()
+    }
+
+    /// Every standalone picker example, and whether its catalog is the
+    /// labelled custom one.
+    pub fn pickers(&self) -> Vec<(&'static str, Entity<ModelPickerState>, bool)> {
+        vec![
+            ("models", self.models.clone(), false),
+            ("custom-models", self.custom_models.clone(), true),
         ]
     }
 
@@ -97,6 +123,7 @@ impl ComposerStory {
             ComposerEvent::AttachmentsChanged => "Attachments changed".to_string(),
             ComposerEvent::PermissionChanged(id) => format!("Permission mode: {id}"),
             ComposerEvent::PermissionLearnMore => "Permission: learn more".to_string(),
+            ComposerEvent::StatusChanged { item, value } => format!("{item}: {value}"),
             ComposerEvent::ModelChanged(id) => format!("Model: {id}"),
             ComposerEvent::EffortChanged(level) => format!("Effort level: {level}"),
             ComposerEvent::AddClicked => "Add pressed".to_string(),
@@ -107,15 +134,82 @@ impl ComposerStory {
         .into()
     }
 
-    fn sample() -> Vec<Attachment> {
+    /// The list the upload demo starts from: a landed image, one file
+    /// uploading, two queued at zero, and two more that are ready.
+    pub fn sample() -> Vec<Attachment> {
         vec![
             Attachment::new("photo", "photo.png").image(checker()),
             Attachment::new("notes", "meeting-notes.md"),
             Attachment::new("sheet", "forecast-q3.xlsx").progress(55.),
             Attachment::new("deck", "launch.pptx").progress(0.),
+            Attachment::new("report", "report.pdf").progress(0.),
             Attachment::new("code", "main.rs"),
-            Attachment::new("clip", "demo.mov"),
         ]
+    }
+
+    /// The attachments of the upload demo.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
+    /// Whether the simulated upload is running.
+    pub fn is_uploading(&self) -> bool {
+        self.upload.is_some()
+    }
+
+    /// Runs the upload queue: one file at a time, from where it is to
+    /// 100 over about two seconds, with a short gap between files. Each
+    /// file's progress is cleared when it lands. The task ticks only while
+    /// a file uploads and ends with the queue.
+    pub fn start_upload(&mut self, cx: &mut Context<Self>) {
+        self.upload = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let next = this
+                    .update(cx, |this, _| {
+                        this.attachments
+                            .iter()
+                            .find_map(|a| a.progress_percent().map(|p| (a.id().clone(), p)))
+                    })
+                    .ok()
+                    .flatten();
+                let Some((id, mut progress)) = next else {
+                    break;
+                };
+                while progress < 100. {
+                    cx.background_executor().timer(UPLOAD_TICK).await;
+                    progress = (progress + UPLOAD_STEP).min(100.);
+                    let alive = this.update(cx, |this, cx| {
+                        if let Some(a) = this.attachments.iter_mut().find(|a| a.id() == &id) {
+                            a.set_progress(Some(progress));
+                        }
+                        cx.notify();
+                    });
+                    if alive.is_err() {
+                        return;
+                    }
+                }
+                this.update(cx, |this, cx| {
+                    if let Some(a) = this.attachments.iter_mut().find(|a| a.id() == &id) {
+                        a.set_progress(None);
+                    }
+                    cx.notify();
+                })
+                .ok();
+                cx.background_executor().timer(UPLOAD_GAP).await;
+            }
+            this.update(cx, |this, cx| {
+                this.upload = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Stops the upload and restores the list it started from.
+    pub fn reset_upload(&mut self, cx: &mut Context<Self>) {
+        self.upload = None;
+        self.attachments = Self::sample();
+        cx.notify();
     }
 }
 
@@ -135,40 +229,18 @@ impl Story for ComposerStory {
     fn view(window: &mut Window, cx: &mut App) -> AnyView {
         cx.new(|cx| {
             let permission = cx.new(PermissionState::new);
-            let custom_permission = cx.new(|cx| {
-                PermissionState::new(cx).with_modes([
-                    PermissionMode::new("read", "Read only")
-                        .description("Look at files, never change them")
-                        .icon(IconName::Eye),
-                    PermissionMode::new("edit", "Edit files")
-                        .description("Change files in this folder")
-                        .icon(IconName::File),
-                    PermissionMode::new("shell", "Run commands")
-                        .description("Run commands in the terminal")
-                        .icon(IconName::SquareTerminal),
-                ])
+            let custom_permission =
+                cx.new(|cx| PermissionState::new(cx).with_modes(Self::custom_modes()));
+            let models = agents::model_picker(window, cx);
+            let custom_models = Self::custom_models(window, cx);
+            let basic = cx.new(|cx| {
+                let models = agents::model_picker(window, cx);
+                ComposerState::new(window, cx).with_models(models, window, cx)
             });
-            let models = cx.new(|cx| {
-                ModelPickerState::new(Self::catalog(), window, cx).with_selected("orbit-pro")
+            let rich = cx.new(|cx| {
+                let models = agents::model_picker(window, cx);
+                ComposerState::new(window, cx).with_models(models, window, cx)
             });
-            let custom_models = cx.new(|cx| {
-                ModelPickerState::new(
-                    [ModelProvider::new("local", "On this machine")
-                        .icon(IconName::HardDrive)
-                        .models([
-                            ModelEntry::new("tiny", "Tiny 1B"),
-                            ModelEntry::new("small", "Small 8B").effort(true),
-                        ])],
-                    window,
-                    cx,
-                )
-            });
-            let basic = cx.new(|cx| ComposerState::new(window, cx));
-            let rich_models = cx.new(|cx| {
-                ModelPickerState::new(Self::catalog(), window, cx).with_selected("orbit-pro")
-            });
-            let rich =
-                cx.new(|cx| ComposerState::new(window, cx).with_models(rich_models, window, cx));
             rich.update(cx, |state, cx| {
                 for attachment in [
                     Attachment::new("photo", "photo.png").image(checker()),
@@ -179,9 +251,12 @@ impl Story for ComposerStory {
                 }
             });
             let custom = cx.new(|cx| {
+                let models = Self::custom_models(window, cx);
+                let permission =
+                    cx.new(|cx| PermissionState::new(cx).with_modes(Self::custom_modes()));
                 ComposerState::new(window, cx)
-                    .with_permission(custom_permission.clone(), window, cx)
-                    .with_models(custom_models.clone(), window, cx)
+                    .with_permission(permission, window, cx)
+                    .with_models(models, window, cx)
             });
             for composer in [&basic, &rich, &custom] {
                 cx.subscribe(composer, |this: &mut Self, _, event: &ComposerEvent, cx| {
@@ -193,6 +268,25 @@ impl Story for ComposerStory {
                     .detach();
             }
             let agent = agents::composer(window, cx);
+            let agent_status = agents::SampleStatus::new(cx);
+            let rich_status = agents::SampleStatus::new(cx);
+            let tab_status = agents::SampleStatus::new(cx);
+            let joined_status = agents::SampleStatus::new(cx);
+            let branch_only = agents::SampleStatus::new(cx);
+            agent_status.watch(&agent, cx);
+            rich_status.watch(&rich, cx);
+            for status in [
+                &agent_status,
+                &rich_status,
+                &tab_status,
+                &joined_status,
+                &branch_only,
+            ] {
+                for state in [&status.project, &status.device, &status.branch] {
+                    cx.observe(state, |_: &mut Self, _, cx| cx.notify())
+                        .detach();
+                }
+            }
             cx.observe(&agent, |_: &mut Self, _, cx| cx.notify())
                 .detach();
             cx.observe(&models, |_, _, cx| cx.notify()).detach();
@@ -200,8 +294,9 @@ impl Story for ComposerStory {
             cx.observe(&permission, |_, _, cx| cx.notify()).detach();
             cx.observe(&custom_permission, |_, _, cx| cx.notify())
                 .detach();
-            Self {
+            let mut story = Self {
                 attachments: Self::sample(),
+                upload: None,
                 permission,
                 custom_permission,
                 models,
@@ -211,7 +306,14 @@ impl Story for ComposerStory {
                 custom,
                 log: "Nothing yet. Type a prompt and press Enter.".into(),
                 agent,
-            }
+                agent_status,
+                rich_status,
+                tab_status,
+                joined_status,
+                branch_only,
+            };
+            story.start_upload(cx);
+            story
         })
         .into()
     }
@@ -246,19 +348,16 @@ impl Render for ComposerStory {
                     .gap_3()
                     .w(px(560.))
                     .child(note(
-                        "The model picker's rail switches between the three providers of \
+                        "The model picker's rail switches between the two providers of \
                          the example catalog, and the permission menu holds a Claude Code \
                          style set. Both are plain data in the story, and the application's \
                          to change.",
                         cx,
                     ))
                     .child(
-                        Composer::new("composer-agent", &self.agent).status(
-                            ComposerStatusTab::new("composer-agent-status")
-                                .branch("feature/composer")
-                                .folder("gpui-cn")
-                                .context(57.),
-                        ),
+                        Composer::new("composer-agent", &self.agent)
+                            .placeholder("Do anything")
+                            .status(self.agent_status.tab("composer-agent-status")),
                     ),
             )
             .into_any_element(),
@@ -291,12 +390,8 @@ impl Render for ComposerStory {
                         cx,
                     ))
                     .child(
-                        Composer::new("composer-rich", &self.rich).status(
-                            ComposerStatusTab::new("composer-rich-status")
-                                .branch("Main")
-                                .folder("project-sea")
-                                .context(57.),
-                        ),
+                        Composer::new("composer-rich", &self.rich)
+                            .status(self.rich_status.tab("composer-rich-status").context(57.)),
                     )
                     .child(
                         div().flex().gap_2().child(
@@ -372,26 +467,19 @@ impl Render for ComposerStory {
                             .flex()
                             .gap_2()
                             .child(
-                                Button::new("finish")
+                                Button::new("start-upload")
                                     .outline()
                                     .size(ButtonSize::Sm)
-                                    .label("Finish uploads")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        for a in &mut this.attachments {
-                                            a.set_progress(None);
-                                        }
-                                        cx.notify();
-                                    })),
+                                    .label("Start upload")
+                                    .disabled(self.upload.is_some())
+                                    .on_click(cx.listener(|this, _, _, cx| this.start_upload(cx))),
                             )
                             .child(
                                 Button::new("reset")
                                     .outline()
                                     .size(ButtonSize::Sm)
                                     .label("Reset")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.attachments = Self::sample();
-                                        cx.notify();
-                                    })),
+                                    .on_click(cx.listener(|this, _, _, cx| this.reset_upload(cx))),
                             ),
                     ),
             )
@@ -404,20 +492,19 @@ impl Render for ComposerStory {
                     .gap_3()
                     .w(px(520.))
                     .child(note(
-                        "The strip that sits behind the top of a composer card: a branch and a \
-                         folder on the left, the context meter at the right. The meter's percent \
-                         is a plain value the application sets.",
+                        "The strip that sits behind the top of a composer card: dropdowns for a \
+                         project, a device, and a branch on the left, and optionally the context \
+                         meter at the right. The meter's percent is a plain value the \
+                         application sets.",
                         cx,
                     ))
-                    .child(
-                        ComposerStatusTab::new("status-default")
-                            .branch("Main")
-                            .folder("project-sea")
-                            .context(57.),
-                    )
+                    .child(self.tab_status.tab("status-default").context(57.))
                     .child(
                         ComposerStatusTab::new("status-custom")
-                            .branch("feature/composer")
+                            .select(
+                                StatusSelect::new("status-custom-branch", &self.branch_only.branch)
+                                    .icon(IconName::GitBranch),
+                            )
                             .context(92.),
                     )
                     .child(note(
@@ -429,12 +516,7 @@ impl Render for ComposerStory {
                         div()
                             .flex()
                             .flex_col()
-                            .child(
-                                ComposerStatusTab::new("status-joined")
-                                    .branch("Main")
-                                    .folder("project-sea")
-                                    .context(57.),
-                            )
+                            .child(self.joined_status.tab("status-joined").context(57.))
                             .child(
                                 div()
                                     .h(px(64.))

@@ -174,12 +174,46 @@ pub struct ThemeTokens {
     /// the link color most of the way over the fill. One pixel, no spread.
     /// The ring itself on light, as shadcn's `border-ring`.
     pub field_focus_border: Hsla,
-    /// The strip behind the top of a composer card: the `selected` step,
-    /// which reads against both the window and the card (BoardUI composer
-    /// spec: a grey strip; not measured from the reference app).
+    /// The empty rail of a slider: the ink at 18%, so it reads on any
+    /// surface, a card or a popover. The filled range is `control_accent`.
+    pub slider_rail: Hsla,
+    /// The hairline around a slider's thumb: the ink at 20%, so the white
+    /// thumb reads on a light surface.
+    pub slider_thumb_border: Hsla,
+    /// A tick on the empty rail: the ink at 45%.
+    pub slider_tick_off: Hsla,
+    /// A tick on the filled range: the solid foreground (white) at 80%.
+    pub slider_tick_on: Hsla,
+    /// The strip behind the top of a composer card: #282828 on the #181818
+    /// window, sampled from the composer reference screenshots at 2x, which is
+    /// the surface 8.75% toward the ink. On light, 5% toward the ink.
     pub status_tab: Hsla,
+    /// The fill of a composer card: #363636 on dark, sampled from the same
+    /// screenshots, the surface 15.75% toward the ink, a step lighter than
+    /// the status tab. The surface itself on light, where the hairline does
+    /// the parting.
+    pub composer_card: Hsla,
+    /// The hairline around a composer card: #424242 on dark, sampled from
+    /// the same screenshots, the surface 21.6% toward the ink. On light,
+    /// 10% toward the ink. The card keeps it at rest and takes the focus
+    /// border while the caret is inside.
+    pub composer_border: Hsla,
+    /// The hint in an empty prompt: #686868 on dark, sampled from the same
+    /// screenshots, the card 54% of the way to the muted text. Dimmer than a
+    /// label, since it is not read as one.
+    pub composer_placeholder: Hsla,
+    /// Muted labels and icons on a composer card (the permission and model
+    /// triggers, the effort word): the muted text stepped toward the ink
+    /// until it reaches 4.5:1 on the card, WCAG AA for text. The reference
+    /// screenshots paint the effort word #9a9a9a, a little below that.
+    pub composer_muted: Hsla,
+    /// A risky choice, such as a permission mode that runs without asking:
+    /// the warning and destructive colors halfway, a tenth toward the ink.
+    /// The reference screenshots paint "Full access" #ef8b57 (this gives
+    /// #fb894a on dark).
+    pub warning_text: Hsla,
     /// The fill of the model picker's provider rail: the popover surface a
-    /// step toward the ink on light (#f6f6f7 over white, as the BoardUI
+    /// step toward the ink on light (#f6f6f7 over white, as the picker design
     /// screenshot) and a step toward the window on dark, so the rail reads
     /// darker than the panel. Not measured from the reference app.
     pub model_rail: Hsla,
@@ -193,25 +227,20 @@ pub struct ThemeTokens {
     /// reads on a popover surface where the `input` hairline vanishes.
     pub radio_border: Hsla,
     /// The icon of a document attachment: the muted text, a neutral gray
-    /// (BoardUI composer spec; not measured from the reference app).
+    /// (composer design spec; not measured from the reference app).
     pub kind_document: Hsla,
     /// The icon of a spreadsheet attachment: the accent, which is blue
-    /// (BoardUI composer spec).
+    /// (composer design spec).
     pub kind_spreadsheet: Hsla,
     /// The icon of a presentation attachment: the accent turned to purple,
-    /// at 280 degrees of hue (BoardUI composer spec).
+    /// at 280 degrees of hue (composer design spec).
     pub kind_presentation: Hsla,
     /// The icon of a code attachment: the accent turned to teal, at 176
-    /// degrees of hue (BoardUI composer spec).
+    /// degrees of hue (composer design spec).
     pub kind_code: Hsla,
     /// The icon of a video attachment: the accent turned to violet, at 252
-    /// degrees of hue (BoardUI composer spec).
+    /// degrees of hue (composer design spec).
     pub kind_video: Hsla,
-    /// The text of the composer family (the permission and model triggers,
-    /// the status tab, the model picker): 15px normal weight, read from the
-    /// BoardUI screenshots at 2x, where the toolbar labels measure about
-    /// 15px. The `text_heading` size, without its weight.
-    pub text_composer: TextStyleToken,
     /// The text of a multi-line field: 13px on an 18.5px line, the pitch
     /// measured from the reference app's settings textarea at 2x (37px),
     /// looser than `text_control` so lines of prose read apart.
@@ -316,7 +345,7 @@ pub struct MetricTokens {
     /// The gap between the thumb and the track's edge: 2px on both. On
     /// touch it is fixed with the track, so the thumb always fits.
     pub switch_thumb_inset: Pixels,
-    /// The height of a slider's track: 6px, shadcn's `h-1.5`.
+    /// The height of a slider's track: 4px, the thin rail of a macOS slider.
     pub slider_track: Pixels,
     /// The diameter of a slider's thumb: 16px, shadcn's `size-4`.
     pub slider_thumb: Pixels,
@@ -328,27 +357,24 @@ pub struct MetricTokens {
     /// The diameter of a radio's dot: 8px, shadcn's `size-2`.
     pub radio_dot: Pixels,
     /// The diameter of a progress ring: 16px, the context meter of the
-    /// BoardUI composer's status tab. Not measured from the reference app.
+    /// composer's status tab. Not measured from the reference app.
     pub ring_size: Pixels,
     /// The stroke of a progress ring: 2px, the same source.
     pub ring_stroke: Pixels,
-    /// The side of an attachment tile: 56px (BoardUI composer spec; not
+    /// The side of an attachment tile: 56px (composer design spec; not
     /// measured from the reference app).
     pub attachment_tile: Pixels,
     /// The icon of a file attachment tile: 18px, the same source.
     pub attachment_icon: Pixels,
-    /// The file name and the percent on an attachment tile: 9px, the same
-    /// source.
-    pub attachment_text: Pixels,
     /// The stroke of the arc that draws around an uploading tile: 2px.
     pub attachment_arc: Pixels,
-    /// The width of the model picker's panel: 341px (BoardUI composer spec;
+    /// The width of the model picker's panel: 341px (composer design spec;
     /// not measured from the reference app).
     pub model_picker_width: Pixels,
     /// The width of the provider rail at the picker's left: 44px, the same
     /// source.
     pub model_picker_rail: Pixels,
-    /// The height of a model row: 40px, measured from the BoardUI picker
+    /// The height of a model row: 40px, measured from the picker design
     /// screenshot at 2x.
     pub model_row: Pixels,
     /// The height of the model picker's list: six rows, in every state. The
@@ -365,25 +391,33 @@ pub struct MetricTokens {
     /// The corner radius of the picker's panel: 20px, the same screenshot.
     pub model_picker_radius: Pixels,
     /// The height of the effort card that opens under the chosen model: 88px,
-    /// the same source.
+    /// which is two paddings, three 16px rows, and two gaps of 8px.
     pub effort_card_height: Pixels,
-    /// The height of a composer's status tab: 34px (BoardUI composer spec;
-    /// not measured from the reference app).
+    /// The padding on every side of the effort card: 12px.
+    pub effort_card_padding: Pixels,
+    /// The height of a composer's status tab: 38px, measured from the reference
+    /// composer screenshots at 2x (76px from the top of the tab to the top
+    /// of the card).
     pub status_tab_height: Pixels,
-    /// The gap between the items of a status tab: 14px, measured from the
-    /// BoardUI reference screenshot at 2x (28px between "Main" and the
-    /// folder icon).
+    /// The gap between the items of a status tab: 28px, the same
+    /// screenshots (56px between two items).
     pub status_tab_gap: Pixels,
-    /// The icon of a status label: 13px, the same screenshot.
+    /// The icon of a status item: 14px, the same screenshots (28px).
     pub status_icon: Pixels,
-    /// The gap between a status label's icon and its text: 6px, the same
-    /// screenshot.
+    /// The gap between a status item's icon and its text: 8px, the same
+    /// screenshots (15px, rounded up to the step).
     pub status_label_gap: Pixels,
-    /// How far the status tab is inset from each side of the card: 28px,
-    /// the same source.
+    /// How far the status tab is inset from each side of the card: 14px,
+    /// the same screenshots (27px).
     pub status_tab_inset: Pixels,
-    /// The radius of a composer's card: 24px, the same source.
+    /// The radius of the status tab's top corners: 16px, the same
+    /// screenshots (about 33px).
+    pub status_tab_radius: Pixels,
+    /// The radius of a composer's card: 19px, the same screenshots (about
+    /// 38px on a card 196px tall).
     pub composer_radius: Pixels,
+    /// The padding between a composer card's edge and its content: 4px.
+    pub composer_padding: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
     /// the reference app at 2x.
     pub menu_gap: Pixels,
@@ -536,7 +570,7 @@ impl MetricTokens {
             switch_track_height: if touch { px(31.) } else { scaled(20.) },
             switch_thumb_size: if touch { px(27.) } else { scaled(16.) },
             switch_thumb_inset: if touch { px(2.) } else { scaled(2.) },
-            slider_track: scaled(6.),
+            slider_track: scaled(4.),
             slider_thumb: scaled(16.),
             slider_tick: scaled(4.),
             radio_size: scaled(16.),
@@ -545,7 +579,6 @@ impl MetricTokens {
             ring_stroke: scaled(2.),
             attachment_tile: scaled(56.),
             attachment_icon: scaled(18.),
-            attachment_text: scaled(9.),
             attachment_arc: scaled(2.),
             model_picker_width: scaled(341.),
             model_picker_rail: scaled(44.),
@@ -555,12 +588,15 @@ impl MetricTokens {
             model_picker_radius: scaled(20.),
             model_list_height: scaled(240.),
             effort_card_height: scaled(88.),
-            status_tab_height: scaled(34.),
-            status_tab_inset: scaled(28.),
-            status_tab_gap: scaled(14.),
-            status_icon: scaled(13.),
-            status_label_gap: scaled(6.),
-            composer_radius: scaled(24.),
+            effort_card_padding: scaled(12.),
+            status_tab_height: scaled(38.),
+            status_tab_inset: scaled(14.),
+            status_tab_gap: scaled(28.),
+            status_icon: scaled(14.),
+            status_label_gap: scaled(8.),
+            status_tab_radius: scaled(16.),
+            composer_radius: scaled(19.),
+            composer_padding: scaled(4.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
             menu_search_min_width: scaled(240.),
@@ -708,6 +744,23 @@ impl ThemeTokens {
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
         let tab_separator = muted_foreground.opacity(0.6);
+        let status_tab = mix(surface, ink, if dark { 0.0875 } else { 0.05 });
+        let composer_card = if dark {
+            mix(surface, ink, 0.1575)
+        } else {
+            surface
+        };
+        let composer_border = mix(surface, ink, if dark { 0.2160 } else { 0.10 });
+        let composer_placeholder = mix(composer_card, muted_foreground, 0.54);
+        let composer_muted = (0..=20)
+            .map(|step| mix(muted_foreground, ink, step as f32 * 0.05))
+            .find(|color| super::color::contrast_ratio(*color, composer_card) >= 4.5)
+            .unwrap_or(ink);
+        let warning_text = mix(
+            mix(config.semantic.warning, config.semantic.destructive, 0.45),
+            ink,
+            0.1,
+        );
         let model_rail = if dark {
             mix(popover, surface, 0.4)
         } else {
@@ -835,7 +888,16 @@ impl ThemeTokens {
             field,
             field_border,
             field_focus_border,
-            status_tab: selected,
+            slider_rail: ink.opacity(0.18),
+            slider_thumb_border: ink.opacity(0.2),
+            slider_tick_off: ink.opacity(0.45),
+            slider_tick_on: solid_foreground.opacity(0.8),
+            status_tab,
+            composer_card,
+            composer_border,
+            composer_placeholder,
+            composer_muted,
+            warning_text,
             model_rail,
             model_rail_selected: mix(model_rail, ink, if dark { 0.08 } else { 0.05 }),
             model_chip: mix(popover, ink, if dark { 0.16 } else { 0.08 }),
@@ -845,10 +907,6 @@ impl ThemeTokens {
             kind_presentation: turned(280.),
             kind_code: turned(176.),
             kind_video: turned(252.),
-            text_composer: TextStyleToken {
-                weight: FontWeight::NORMAL,
-                ..text_heading
-            },
             text_textarea,
         }
     }
@@ -1508,7 +1566,7 @@ mod tests {
     #[test]
     fn slider_metrics_are_the_shadcn_values_and_scale_with_the_font_size() {
         let default = light();
-        assert_eq!(default.metrics.slider_track, px(6.), "shadcn h-1.5");
+        assert_eq!(default.metrics.slider_track, px(4.), "a thin rail");
         assert_eq!(default.metrics.slider_thumb, px(16.), "shadcn size-4");
         assert_eq!(default.metrics.slider_tick, px(4.));
         let large = ThemeTokens::derive(
@@ -1528,6 +1586,19 @@ mod tests {
             assert_eq!(to_hex(tokens.control_accent), hex);
             assert_eq!(tokens.control_accent, tokens.ring());
         }
+    }
+
+    #[test]
+    fn slider_colors_are_translucent_ink_and_the_shared_accent() {
+        for tokens in [dark(), light()] {
+            assert_eq!(tokens.slider_rail.a, 0.18);
+            assert_eq!(tokens.slider_thumb_border.a, 0.2);
+            assert_eq!(tokens.slider_tick_off.a, 0.45);
+            assert_eq!(tokens.slider_tick_on.a, 0.8);
+            assert_eq!(tokens.slider_tick_on.alpha(1.), tokens.solid_foreground);
+        }
+        assert_eq!(to_hex(dark().slider_rail.alpha(1.)), "#ffffff");
+        assert_eq!(to_hex(light().slider_rail.alpha(1.)), "#1a1c1f");
     }
 
     #[test]
@@ -1571,7 +1642,6 @@ mod tests {
         );
         assert_eq!(dark.metrics.attachment_tile, px(56.));
         assert_eq!(dark.metrics.attachment_icon, px(18.));
-        assert_eq!(dark.metrics.attachment_text, px(9.));
     }
 
     #[test]
@@ -1606,18 +1676,69 @@ mod tests {
     }
 
     #[test]
-    fn status_tab_metrics_and_fill_are_derived() {
+    fn composer_colors_and_metrics_are_the_codex_samples() {
         let (dark, light) = (dark(), light());
-        assert_eq!(dark.metrics.status_tab_height, px(34.));
-        assert_eq!(dark.metrics.status_tab_inset, px(28.));
-        assert_eq!(dark.text_composer.size, px(15.));
-        assert_eq!(dark.text_composer.weight, FontWeight::NORMAL);
-        assert_eq!(dark.metrics.status_tab_gap, px(14.));
-        assert_eq!(dark.metrics.status_icon, px(13.));
-        assert_eq!(dark.metrics.status_label_gap, px(6.));
-        assert_eq!(dark.metrics.composer_radius, px(24.));
-        assert_eq!(dark.status_tab, dark.selected);
-        assert_eq!(to_hex(dark.status_tab), "#2c2c2c");
-        assert_eq!(to_hex(light.status_tab), "#e8e8e8");
+        let m = &dark.metrics;
+        assert_eq!(m.status_tab_height, px(38.));
+        assert_eq!(m.status_tab_inset, px(14.));
+        assert_eq!(m.status_tab_gap, px(28.));
+        assert_eq!(m.status_icon, px(14.));
+        assert_eq!(m.status_label_gap, px(8.));
+        assert_eq!(m.status_tab_radius, px(16.));
+        assert_eq!(m.composer_radius, px(19.));
+        assert_eq!(m.composer_padding, px(4.));
+        let hexes = |t: &ThemeTokens| {
+            [
+                t.status_tab,
+                t.composer_card,
+                t.composer_border,
+                t.composer_placeholder,
+                t.composer_muted,
+                t.warning_text,
+            ]
+            .map(to_hex)
+        };
+        assert_eq!(
+            hexes(&dark),
+            [
+                "#282828", "#363636", "#424242", "#686868", "#a0a0a0", "#fb894a"
+            ]
+        );
+        assert_eq!(
+            hexes(&light),
+            [
+                "#f2f2f2", "#ffffff", "#e5e5e6", "#aaabac", "#67696b", "#a63f1d"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_card_and_its_hairline_part_from_a_sidebar_colored_background() {
+        use crate::theme::color::contrast_ratio;
+        for tokens in [dark(), light()] {
+            let hairline = contrast_ratio(tokens.composer_border, tokens.sidebar);
+            assert!(
+                hairline > 1.1,
+                "the hairline reads on the sidebar: {hairline}"
+            );
+            let card = contrast_ratio(tokens.composer_card, tokens.sidebar);
+            let border_to_card = contrast_ratio(tokens.composer_border, tokens.composer_card);
+            assert!(card > 1. || border_to_card > 1.1);
+        }
+    }
+
+    #[test]
+    fn muted_composer_text_reads_at_least_4_5_to_1_on_the_card() {
+        for tokens in [dark(), light()] {
+            let ratio =
+                crate::theme::color::contrast_ratio(tokens.composer_muted, tokens.composer_card);
+            assert!(ratio >= 4.5, "{ratio}");
+            let tab = crate::theme::color::contrast_ratio(tokens.foreground(), tokens.status_tab);
+            assert!(tab >= 4.5, "tab text {tab}");
+            assert!(
+                lightness(tokens.composer_card) != lightness(tokens.status_tab),
+                "the card and the tab differ"
+            );
+        }
     }
 }

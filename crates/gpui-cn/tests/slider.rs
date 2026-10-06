@@ -182,3 +182,78 @@ fn a_disabled_slider_ignores_pointer_and_keys(cx: &mut TestAppContext) {
     assert_eq!(value(&setup, cx), 2.);
     assert!(setup.events.borrow().is_empty());
 }
+
+fn track() -> gpui_kit::ElementId {
+    gpui_kit::ElementId::NamedChild(gpui_kit::ElementId::from("effort").into(), "track".into())
+}
+
+fn thumb() -> gpui_kit::ElementId {
+    gpui_kit::ElementId::NamedChild(gpui_kit::ElementId::from("effort").into(), "thumb".into())
+}
+
+fn tick(index: usize) -> gpui_kit::ElementId {
+    gpui_kit::ElementId::NamedChild(
+        gpui_kit::ElementId::from("effort").into(),
+        format!("tick-{index}").into(),
+    )
+}
+
+#[gpui_kit::test]
+fn the_rail_is_four_pixels_inset_by_half_the_thumb(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, Some(6));
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        let control = window.find("effort").bounds();
+        let rail = window.find(track()).bounds();
+        assert_eq!(rail.size.height, px(4.));
+        assert_eq!(rail.left() - control.left(), px(8.), "half the 16px thumb");
+        assert_eq!(control.right() - rail.right(), px(8.));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_thumb_at_either_end_stays_inside_the_control(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, Some(6));
+    for (key, at_start) in [("home", true), ("end", false)] {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.press("tab", cx);
+            window.press(key, cx);
+            window.render_frame(cx);
+            let control = window.find("effort").bounds();
+            let rail = window.find(track()).bounds();
+            let thumb = window.find(thumb()).bounds();
+            assert!(thumb.left() >= control.left() && thumb.right() <= control.right());
+            let edge = if at_start { rail.left() } else { rail.right() };
+            assert!(
+                (thumb.center().x - edge).abs() <= px(0.5),
+                "centered on the rail's end"
+            );
+            assert!((thumb.center().y - rail.center().y).abs() <= px(0.5));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn each_tick_is_centered_on_the_thumb_when_the_value_is_at_its_stop(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, Some(6));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("tab", cx);
+        window.press("home", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    for index in 0..6 {
+        cx.update_window(setup.handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let thumb = window.find(thumb()).bounds().center();
+            let tick = window.find(tick(index)).bounds().center();
+            assert!(
+                (thumb.x - tick.x).abs() <= px(0.5) && (thumb.y - tick.y).abs() <= px(0.5),
+                "stop {index}: thumb {thumb:?} tick {tick:?}"
+            );
+            window.press("right", cx);
+        })
+        .unwrap();
+    }
+}

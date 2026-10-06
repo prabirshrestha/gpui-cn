@@ -81,7 +81,8 @@ pub use composer::{
     Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
     ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
     ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider, PermissionEvent,
-    PermissionMenu, PermissionMode, PermissionState, StatusLabel,
+    PermissionMenu, PermissionMode, PermissionState, PermissionTone, StatusOption, StatusSelect,
+    StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
 pub use folder_picker::{

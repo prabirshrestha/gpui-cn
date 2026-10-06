@@ -39,6 +39,13 @@ use crate::{ActiveTheme as _, Theme};
 /// }
 /// ```
 ///
+/// The look follows the switch and the radio: a thin fully rounded rail in
+/// a translucent ink, the filled range in the shared control accent, and a
+/// round white thumb with a hairline and a soft shadow, centered on the rail.
+/// The rail is inset by half the thumb at each end, so the thumb at either
+/// end stays inside the control's box, and the ticks of `stops` are
+/// centered on the stop positions by the same math.
+///
 /// `Styled` refinements apply to the control's box, which is as wide as its
 /// parent by default.
 #[derive(IntoElement)]
@@ -141,16 +148,17 @@ impl RenderOnce for Slider {
         let pointer_cursors = Theme::global(cx).pointer_cursors;
         let disabled = self.disabled;
         let percentage = self.state.read(cx).percentage().end.clamp(0., 1.);
-        let (track, range, thumb, border, tick, tick_on, ring) = {
+        let (rail, range, thumb, border, tick, tick_on, ring, lift) = {
             let theme = cx.theme();
             (
-                theme.progress_track,
-                theme.primary(),
+                theme.slider_rail,
+                theme.control_accent,
                 theme.switch_thumb,
-                theme.primary(),
-                theme.muted_foreground().opacity(0.6),
-                theme.primary_foreground().opacity(0.6),
+                theme.slider_thumb_border,
+                theme.slider_tick_off,
+                theme.slider_tick_on,
                 theme.focus_ring(),
+                theme.base.shadow.sm.clone(),
             )
         };
         let (track_height, thumb_size, tick_size, ring_spread, hit_height, radius, strength) = {
@@ -180,11 +188,20 @@ impl RenderOnce for Slider {
             .clone();
         let focus_visible = focus_handle.is_focused(window) && window.last_input_was_keyboard();
         let state = self.state.clone();
+        let track_id = ElementId::NamedChild(self.id.clone().into(), "track".into());
+        let thumb_id = ElementId::NamedChild(self.id.clone().into(), "thumb".into());
         let stops = self.stops.filter(|count| *count >= 2);
-        let ticks = stops.into_iter().flat_map(|count| {
+        let tick_id = self.id.clone();
+        let ticks = stops.into_iter().flat_map(move |count| {
+            let tick_id = tick_id.clone();
             (0..count).map(move |index| {
                 let at = index as f32 / (count - 1) as f32;
                 div()
+                    .id(ElementId::NamedChild(
+                        tick_id.clone().into(),
+                        format!("tick-{index}").into(),
+                    ))
+                    .test_support()
                     .absolute()
                     .top(relative(0.5))
                     .left(relative(at))
@@ -268,52 +285,66 @@ impl RenderOnce for Slider {
                             .w_full()
                             .h(hit_height)
                             .child(
-                                base::SliderIndicator::new(&self.state)
-                                    .relative()
-                                    .w_full()
-                                    .h(track_height)
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .size_full()
-                                            .overflow_hidden()
-                                            .rounded(radius)
-                                            .bg(track)
-                                            .child(
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .bottom_0()
-                                                    .left_0()
-                                                    .w(relative(percentage))
-                                                    .bg(range),
-                                            )
-                                            .children(ticks),
-                                    )
-                                    .child(
-                                        base::SliderThumb::new(&self.state)
-                                            .axis(Axis::Horizontal)
-                                            .disabled(disabled)
-                                            .absolute()
-                                            .top(relative(0.5))
-                                            .left(relative(percentage))
-                                            .mt(-thumb_size / 2.)
-                                            .ml(-thumb_size / 2.)
-                                            .size(thumb_size)
-                                            .rounded(radius)
-                                            .bg(thumb)
-                                            .border_1()
-                                            .border_color(border)
-                                            .when(focus_visible, |this| {
-                                                this.shadow(vec![gpui_kit::BoxShadow {
-                                                    color: ring,
-                                                    offset: point(px(0.), px(0.)),
-                                                    blur_radius: px(0.),
-                                                    spread_radius: ring_spread,
-                                                    inset: false,
-                                                }])
-                                            }),
-                                    ),
+                                div().w_full().mx(thumb_size / 2.).child(
+                                    base::SliderIndicator::new(&self.state)
+                                        .relative()
+                                        .w_full()
+                                        .h(track_height)
+                                        .child(
+                                            div()
+                                                .id(track_id)
+                                                .test_support()
+                                                .absolute()
+                                                .size_full()
+                                                .rounded(radius)
+                                                .bg(rail)
+                                                .child(
+                                                    div()
+                                                        .absolute()
+                                                        .top_0()
+                                                        .bottom_0()
+                                                        .left_0()
+                                                        .w(relative(percentage))
+                                                        .rounded(radius)
+                                                        .bg(range),
+                                                ),
+                                        )
+                                        .children(ticks)
+                                        .child(
+                                            base::SliderThumb::new(&self.state)
+                                                .axis(Axis::Horizontal)
+                                                .disabled(disabled)
+                                                .absolute()
+                                                .top(relative(0.5))
+                                                .left(relative(percentage))
+                                                .mt(-thumb_size / 2.)
+                                                .ml(-thumb_size / 2.)
+                                                .size(thumb_size)
+                                                .child(
+                                                    div()
+                                                        .id(thumb_id)
+                                                        .test_support()
+                                                        .size_full()
+                                                        .rounded(radius)
+                                                        .bg(thumb)
+                                                        .border_1()
+                                                        .border_color(border)
+                                                        .shadow(if focus_visible {
+                                                            let mut shadows = lift.clone();
+                                                            shadows.push(gpui_kit::BoxShadow {
+                                                                color: ring,
+                                                                offset: point(px(0.), px(0.)),
+                                                                blur_radius: px(0.),
+                                                                spread_radius: ring_spread,
+                                                                inset: false,
+                                                            });
+                                                            shadows
+                                                        } else {
+                                                            lift
+                                                        }),
+                                                ),
+                                        ),
+                                ),
                             ),
                     ),
             )

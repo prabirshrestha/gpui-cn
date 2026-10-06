@@ -12,8 +12,10 @@ gpui_kit::assets::icon_assets!(
         GitBranch,
         Hand,
         Image,
+        Laptop,
         Mic,
         Presentation,
+        ShieldAlert,
         ShieldCheck,
         Video,
     ]

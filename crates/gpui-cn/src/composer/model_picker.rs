@@ -39,7 +39,7 @@ const DEFAULT_EFFORT: u8 = 1;
 /// ```
 /// use gpui_cn::ModelEntry;
 ///
-/// let model = ModelEntry::new("mini", "GPT Mini").effort(true);
+/// let model = ModelEntry::new("gpt-5.6-mini", "GPT-5.6 Mini").effort(true);
 /// assert!(model.supports_effort());
 /// ```
 #[derive(Clone, Debug)]
@@ -93,9 +93,9 @@ impl ModelEntry {
 /// use gpui_cn::{ModelEntry, ModelProvider};
 /// use gpui_kit::assets::IconName;
 ///
-/// let provider = ModelProvider::new("acme", "Acme")
-///     .icon(IconName::Bot)
-///     .models([ModelEntry::new("acme-1", "Acme One")]);
+/// let provider = ModelProvider::new("claude", "Claude")
+///     .icon(IconName::Star)
+///     .models([ModelEntry::new("sonnet-5.5", "Sonnet 5.5")]);
 /// assert_eq!(provider.models_of().len(), 1);
 /// ```
 #[derive(Clone)]
@@ -485,13 +485,13 @@ type TriggerBuilder = Box<dyn FnOnce(bool, &ModelPickerState) -> gpui_kit::AnyEl
 /// fn picker(window: &mut Window, cx: &mut Context<()>) -> ModelPicker {
 ///     let state = cx.new(|cx| {
 ///         ModelPickerState::new(
-///             [ModelProvider::new("acme", "Acme").models([
-///                 ModelEntry::new("acme-1", "Acme One").effort(true),
+///             [ModelProvider::new("codex", "Codex").models([
+///                 ModelEntry::new("gpt-5.6-mini", "GPT-5.6 Mini").effort(true),
 ///             ])],
 ///             window,
 ///             cx,
 ///         )
-///         .with_selected("acme-1")
+///         .with_selected("gpt-5.6-mini")
 ///     });
 ///     ModelPicker::new("model", &state)
 /// }
@@ -553,13 +553,12 @@ impl RenderOnce for ModelPicker {
             let read = state.read(cx);
             (read.open, read.focus.clone())
         };
-        let (width, radius, muted, text) = {
+        let (width, radius, text) = {
             let theme = cx.theme();
             (
                 theme.metrics.model_picker_width,
                 theme.metrics.model_picker_radius,
-                theme.muted_foreground(),
-                theme.text_composer,
+                theme.text_control,
             )
         };
 
@@ -570,15 +569,26 @@ impl RenderOnce for ModelPicker {
                 let label = read
                     .selected_model()
                     .map_or("Select model".into(), |(_, model)| model.name.clone());
+                let effort = read.effort_label();
+                let (ink, muted) = {
+                    let theme = cx.theme();
+                    (theme.foreground(), theme.composer_muted)
+                };
                 let chevron =
                     Icon::from(IconName::ChevronDown).when(open, |icon| icon.rotate(radians(PI)));
                 Button::new(child(&id, "trigger"))
                     .ghost()
                     .size(ButtonSize::Sm)
-                    .label(label)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .child(div().text_color(ink).child(label))
+                            .children(effort.map(|word| div().text_color(muted).child(word))),
+                    )
                     .trailing_icon(chevron)
                     .text_color(muted)
-                    .text_size(text.size)
                     .selected(open)
                     .into_any_element()
             }
@@ -814,8 +824,16 @@ fn panel(
             )
             .children(chip)
             .child(RadioMark::new(checked));
-        let card = (checked && model.effort && effort_card)
-            .then(|| effort_card_view(id, &slider, effort.unwrap_or_default(), card_height, &look));
+        let card = (checked && model.effort && effort_card).then(|| {
+            effort_card_view(
+                id,
+                &slider,
+                effort.unwrap_or_default(),
+                card_height,
+                &look,
+                cx,
+            )
+        });
         [Some(row.into_any_element()), card]
             .into_iter()
             .flatten()
@@ -912,33 +930,50 @@ fn panel(
 
 /// The effort card, which opens under the chosen model's row: the level's
 /// name, a slider from the first level to the last, and what its ends mean.
+/// The card has one padding on every side and one gap between its rows. The
+/// rows are inset by half the thumb, so the heading and the captions line up
+/// with the ends of the slider's rail.
 fn effort_card_view(
     id: &ElementId,
     slider: &Entity<SliderState>,
     level: u8,
     height: gpui_kit::Pixels,
     look: &MenuLook,
+    cx: &App,
 ) -> gpui_kit::AnyElement {
+    let theme = cx.theme();
+    let (padding, gap, inset, radius) = (
+        theme.metrics.effort_card_padding,
+        theme.base.spacing.sm,
+        theme.metrics.slider_thumb / 2.,
+        theme.radius_md(),
+    );
+    let row = || div().flex().justify_between().px(inset);
     div()
         .id(child(id, "effort-card"))
         .test_support()
         .flex_shrink_0()
-        .h(height)
-        .mx_1()
-        .mb_1()
-        .px_3()
+        .w_full()
+        .h(height + gpui_kit::px(2.))
+        .my_1()
+        .p(padding)
         .flex()
         .flex_col()
         .justify_center()
-        .gap_1()
-        .rounded(look.row_radius)
+        .gap(gap)
+        .rounded(radius)
         .bg(look.accent)
+        .border_1()
+        .border_color(look.border)
         .child(
-            div()
-                .flex()
-                .justify_between()
+            row()
                 .child(div().text_color(look.muted_foreground).child("Effort"))
-                .child(div().child(EFFORT_LABELS[usize::from(level)])),
+                .child(
+                    div()
+                        .font_medium()
+                        .text_color(look.foreground)
+                        .child(EFFORT_LABELS[usize::from(level)]),
+                ),
         )
         .child(
             Slider::new(slider)
@@ -947,9 +982,7 @@ fn effort_card_view(
                 .stops(EFFORT_LABELS.len()),
         )
         .child(
-            div()
-                .flex()
-                .justify_between()
+            row()
                 .text_color(look.muted_foreground)
                 .child("Faster")
                 .child("Smarter"),

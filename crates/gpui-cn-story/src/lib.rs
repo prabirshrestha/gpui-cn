@@ -68,8 +68,8 @@ pub trait Story: 'static {
 pub enum StorySection {
     /// Buttons, commands, and menus.
     Actions,
-    /// The composer family.
-    Composer,
+    /// The composer and the pickers for AI chat surfaces.
+    Ai,
     /// Avatars, badges, progress, and the like.
     FeedbackAndDisplay,
     /// Spacing, typography, theme, and scrolling.
@@ -89,7 +89,7 @@ impl StorySection {
     pub const ALL: [StorySection; 7] = [
         Self::Foundations,
         Self::Actions,
-        Self::Composer,
+        Self::Ai,
         Self::FeedbackAndDisplay,
         Self::Inputs,
         Self::Navigation,
@@ -108,7 +108,7 @@ impl StorySection {
     pub fn title(self) -> &'static str {
         match self {
             Self::Actions => "Actions",
-            Self::Composer => "Composer",
+            Self::Ai => "AI",
             Self::FeedbackAndDisplay => "Feedback and display",
             Self::Foundations => "Foundations",
             Self::Inputs => "Inputs",
@@ -178,7 +178,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::PopoverStory>(StorySection::Overlays),
         StoryEntry::of::<stories::DialogStory>(StorySection::Overlays),
         StoryEntry::of::<stories::FolderPickerStory>(StorySection::Overlays),
-        StoryEntry::of::<stories::ComposerStory>(StorySection::Composer),
+        StoryEntry::of::<stories::ComposerStory>(StorySection::Ai),
         StoryEntry::of::<stories::AvatarStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::BadgeStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::TagStory>(StorySection::FeedbackAndDisplay),
@@ -864,7 +864,7 @@ mod tests {
             [
                 "Foundations",
                 "Actions",
-                "Composer",
+                "AI",
                 "Feedback and display",
                 "Inputs",
                 "Navigation",

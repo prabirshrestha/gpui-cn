@@ -1,10 +1,10 @@
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ParentElement, RenderOnce,
-    SharedString, StyleRefinement, Styled, TestSupportExt as _, Window, assets::IconName,
-    base::StyledExt as _, div, prelude::FluentBuilder as _,
+    StyleRefinement, Styled, TestSupportExt as _, Window, base::StyledExt as _, div,
+    prelude::FluentBuilder as _,
 };
 
-use crate::{ActiveTheme as _, Icon, ProgressRing};
+use crate::{ActiveTheme as _, ProgressRing, StatusSelect};
 
 /// The context a conversation has used, as a ring and a percent: a
 /// [`ProgressRing`] beside the number, in the muted text color.
@@ -75,62 +75,10 @@ impl RenderOnce for ContextMeter {
     }
 }
 
-/// An icon and a label in the muted text color, one item of a
-/// [`ComposerStatusTab`]: a branch, a folder.
-///
-/// ```
-/// use gpui_cn::StatusLabel;
-/// use gpui_kit::assets::IconName;
-///
-/// let _ = StatusLabel::new(IconName::Folder, "project-sea");
-/// ```
-#[derive(IntoElement)]
-#[non_exhaustive]
-pub struct StatusLabel {
-    icon: Icon,
-    label: SharedString,
-    style: StyleRefinement,
-}
-
-impl StatusLabel {
-    /// A label with the icon before it.
-    pub fn new(icon: impl Into<Icon>, label: impl Into<SharedString>) -> Self {
-        Self {
-            icon: icon.into(),
-            label: label.into(),
-            style: StyleRefinement::default(),
-        }
-    }
-}
-
-impl Styled for StatusLabel {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
-
-impl RenderOnce for StatusLabel {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, gap, icon) = (
-            theme.muted_foreground(),
-            theme.metrics.status_label_gap,
-            theme.metrics.status_icon,
-        );
-        div()
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap(gap)
-            .text_color(muted)
-            .refine_style(&self.style)
-            .child(self.icon.size(icon))
-            .child(self.label)
-    }
-}
-
-/// The grey strip behind the top of a composer's card: items on the left,
-/// such as a branch and a folder, and a [`ContextMeter`] at the far right.
+/// The strip behind the top of a composer's card: any number of items
+/// from the left, such as a folder, a device, and a branch, in the full
+/// text color (each a [`StatusSelect`] that opens a menu), and optionally a [`ContextMeter`] or any element at the far
+/// right. With no trailing element there is nothing at the right.
 ///
 /// The tab is inset from each side of the card and rounded on top only.
 /// The tab is exactly [`status_tab_height`](crate::theme::MetricTokens::status_tab_height)
@@ -138,18 +86,14 @@ impl RenderOnce for StatusLabel {
 /// carries no hidden height. A [`Composer`](crate::Composer) sets its card
 /// directly under the tab, tucked over the tab's bottom edge by the card's
 /// hairline.
-/// [`branch`](Self::branch), [`folder`](Self::folder), and
-/// [`context`](Self::context) fill the default items; any other element
-/// joins the left side as a child, and [`trailing`](Self::trailing)
-/// replaces the meter.
+/// [`select`](Self::select) adds a dropdown item, any other element joins
+/// the left side as a child, [`context`](Self::context) adds the meter,
+/// and [`trailing`](Self::trailing) replaces what is at the right.
 ///
 /// ```
 /// use gpui_cn::ComposerStatusTab;
 ///
-/// let _ = ComposerStatusTab::new("status")
-///     .branch("Main")
-///     .folder("project-sea")
-///     .context(57.);
+/// let _ = ComposerStatusTab::new("status").context(57.);
 /// ```
 #[derive(IntoElement)]
 #[non_exhaustive]
@@ -171,14 +115,9 @@ impl ComposerStatusTab {
         }
     }
 
-    /// A git branch item.
-    pub fn branch(self, name: impl Into<SharedString>) -> Self {
-        self.child(StatusLabel::new(IconName::GitBranch, name))
-    }
-
-    /// A folder item.
-    pub fn folder(self, name: impl Into<SharedString>) -> Self {
-        self.child(StatusLabel::new(IconName::Folder, name))
+    /// An item that opens a menu of options. See [`StatusSelect`].
+    pub fn select(self, select: StatusSelect) -> Self {
+        self.child(select)
     }
 
     /// The context meter at the far right, at `percent` used.
@@ -216,8 +155,12 @@ impl RenderOnce for ComposerStatusTab {
             metrics.status_tab_inset,
             metrics.status_tab_gap,
         );
-        let (pad_left, pad_right) = (metrics.control_padding_md, theme.base.spacing.lg);
-        let (fill, radius, text) = (theme.status_tab, theme.radius_xl(), theme.text_composer);
+        let (pad_left, pad_right) = (metrics.status_tab_inset, theme.base.spacing.lg);
+        let (fill, radius, text) = (
+            theme.status_tab,
+            metrics.status_tab_radius,
+            theme.text_control,
+        );
         div()
             .id(self.id)
             .test_support()

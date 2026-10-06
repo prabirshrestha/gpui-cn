@@ -16,7 +16,7 @@ use gpui_kit::{
 use crate::{
     ActiveTheme as _, Attachment, AttachmentStatus, AttachmentStrip, Button, ButtonSize,
     ModelPicker, ModelPickerEvent, ModelPickerState, PermissionEvent, PermissionMenu,
-    PermissionState, Textarea,
+    PermissionState, StatusSelectEvent, StatusSelectState, Textarea,
 };
 
 /// The most lines the prompt grows to before it scrolls.
@@ -39,6 +39,14 @@ pub enum ComposerEvent {
     PermissionChanged(SharedString),
     /// The "Learn more" row of the permission menu was chosen.
     PermissionLearnMore,
+    /// A status item was changed. `item` is the id the application gave
+    /// the state to [`ComposerState::watch_status`], and `value` the option.
+    StatusChanged {
+        /// The status item.
+        item: SharedString,
+        /// The id of the chosen option.
+        value: SharedString,
+    },
     /// A model was chosen. The payload is its id.
     ModelChanged(SharedString),
     /// The effort level changed, from `0` to `5`.
@@ -76,6 +84,7 @@ pub struct ComposerState {
     clear_on_submit: bool,
     placeholder: SharedString,
     _subscriptions: Vec<Subscription>,
+    _status: Vec<Subscription>,
 }
 
 impl EventEmitter<ComposerEvent> for ComposerState {}
@@ -110,6 +119,7 @@ impl ComposerState {
             clear_on_submit: true,
             placeholder,
             _subscriptions: Vec::new(),
+            _status: Vec::new(),
         };
         state.watch(window, cx);
         state
@@ -178,6 +188,28 @@ impl ComposerState {
                 cx.notify();
             }),
         ];
+    }
+
+    /// Forwards the changes of a status item as
+    /// [`ComposerEvent::StatusChanged`] under `item`, and renders the
+    /// composer when it changes.
+    pub fn watch_status(
+        &mut self,
+        item: impl Into<SharedString>,
+        state: &Entity<StatusSelectState>,
+        cx: &mut Context<Self>,
+    ) {
+        let item = item.into();
+        self._status.push(
+            cx.subscribe(state, move |_, _, event: &StatusSelectEvent, cx| {
+                let StatusSelectEvent::Changed(value) = event;
+                cx.emit(ComposerEvent::StatusChanged {
+                    item: item.clone(),
+                    value: value.clone(),
+                });
+                cx.notify();
+            }),
+        );
     }
 
     /// The prompt's text state.
@@ -398,7 +430,7 @@ impl Slot {
 /// fn prompt(window: &mut Window, cx: &mut Context<()>) -> Composer {
 ///     let state = cx.new(|cx| ComposerState::new(window, cx));
 ///     Composer::new("composer", &state)
-///         .status(ComposerStatusTab::new("status").branch("Main").context(57.))
+///         .status(ComposerStatusTab::new("status").context(57.))
 /// }
 /// ```
 ///
@@ -437,7 +469,7 @@ impl Composer {
             models: Slot::Default,
             mic: Slot::Default,
             send: Slot::Default,
-            show_mic: true,
+            show_mic: false,
             placeholder: None,
             max_lines: None,
             disabled: None,
@@ -511,7 +543,7 @@ impl Composer {
         self
     }
 
-    /// Whether the microphone button shows. On by default.
+    /// Whether the microphone button shows. Off by default.
     pub fn show_mic(mut self, show: bool) -> Self {
         self.show_mic = show;
         self
@@ -578,16 +610,21 @@ impl RenderOnce for Composer {
         };
         let focused = input.read(cx).focus_handle(cx).contains_focused(window, cx);
         let theme = cx.theme();
-        let (fill, border, focus_border, radius, accent, accent_foreground, gap) = (
-            theme.base.colors.surface,
-            theme.border(),
+        let (fill, border, focus_border, radius, accent, pad, gap) = (
+            theme.composer_card,
+            theme.composer_border,
             theme.field_focus_border,
             theme.metrics.composer_radius,
             theme.ring(),
-            theme.solid_foreground,
+            theme.metrics.composer_padding,
             theme.base.spacing.sm,
         );
-        let (muted, disabled_opacity) = (theme.selected, theme.disabled_opacity);
+        let (ink, muted, placeholder) = (
+            theme.foreground(),
+            theme.composer_muted,
+            theme.composer_placeholder,
+        );
+        let disabled_opacity = theme.disabled_opacity;
         let has_status = self.status.is_some();
 
         let events = |state: &Entity<ComposerState>, event: ComposerEvent| {
@@ -602,10 +639,9 @@ impl RenderOnce for Composer {
             Slot::Default => Some(
                 Button::new(child(&id, "add"))
                     .ghost()
-                    .size(ButtonSize::Lg)
+                    .size(ButtonSize::Default)
                     .icon(IconName::Plus)
-                    .rounded_full()
-                    .bg(muted)
+                    .text_color(ink)
                     .accessibility_label("Add")
                     .tooltip("Add")
                     .disabled(disabled)
@@ -635,8 +671,9 @@ impl RenderOnce for Composer {
             Slot::Default if self.show_mic => Some(
                 Button::new(child(&id, "mic"))
                     .outline()
-                    .size(ButtonSize::Lg)
+                    .size(ButtonSize::Default)
                     .icon(IconName::Mic)
+                    .text_color(muted)
                     .rounded_full()
                     .accessibility_label("Dictate")
                     .tooltip("Dictate")
@@ -650,11 +687,10 @@ impl RenderOnce for Composer {
         let send = match self.send {
             Slot::Default => Some(
                 Button::new(child(&id, "send"))
-                    .size(ButtonSize::Lg)
+                    .primary()
+                    .size(ButtonSize::Default)
                     .icon(IconName::ArrowUp)
                     .rounded_full()
-                    .bg(accent)
-                    .text_color(accent_foreground)
                     .accessibility_label("Send")
                     .tooltip("Send")
                     .disabled(!can_submit)
@@ -692,7 +728,7 @@ impl RenderOnce for Composer {
             .flex_col()
             .w_full()
             .gap(gap)
-            .p(gap)
+            .p(pad)
             .rounded(radius)
             .bg(fill)
             .border_1()
@@ -710,6 +746,7 @@ impl RenderOnce for Composer {
                 Textarea::new(&input)
                     .id(child(&id, "text"))
                     .accessibility_label("Prompt")
+                    .placeholder_color(placeholder)
                     .bg(gpui_kit::transparent_black())
                     .border_0()
                     .rounded_none(),

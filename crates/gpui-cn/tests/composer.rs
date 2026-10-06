@@ -5,13 +5,15 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gpui_cn::{
     Attachment, Composer, ComposerEvent, ComposerState, ComposerStatusTab, ModelEntry,
-    ModelPickerState, ModelProvider, ReduceMotion, Theme,
+    ModelPickerState, ModelProvider, ReduceMotion, StatusOption, StatusSelect, StatusSelectState,
+    Theme,
 };
 use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, ExternalPaths, FileDropEvent, InputEvent as _,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     TestAppContext, Window,
+    assets::IconName,
     base::{Disableable as _, TestSupportExt as _},
     div, px, size,
     test::TestWindowExt as _,
@@ -27,6 +29,7 @@ struct Options {
 
 struct Harness {
     state: Entity<ComposerState>,
+    branch: Entity<StatusSelectState>,
     options: Options,
 }
 
@@ -39,8 +42,9 @@ impl Render for Harness {
         let composer = if options.status {
             composer.status(
                 ComposerStatusTab::new("status")
-                    .branch("Main")
-                    .folder("project-sea")
+                    .select(
+                        StatusSelect::new("status-branch", &self.branch).icon(IconName::GitBranch),
+                    )
                     .context(57.),
             )
         } else {
@@ -95,7 +99,20 @@ fn setup(cx: &mut TestAppContext, options: Options) -> Setup {
         slot = Some(state.clone());
         let harness = cx.new(|cx| {
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
-            Harness { state, options }
+            let branch = cx.new(|cx| {
+                StatusSelectState::new(
+                    [
+                        StatusOption::new("main", "main"),
+                        StatusOption::new("dev", "dev"),
+                    ],
+                    cx,
+                )
+            });
+            Harness {
+                state,
+                branch,
+                options,
+            }
         });
         Root::new(harness, window, cx)
     });
@@ -455,17 +472,17 @@ fn the_status_tab_sits_behind_the_top_of_the_card(cx: &mut TestAppContext) {
     cx.update_window(with.handle.into(), |_, window, _| {
         let tab = window.find("status").bounds();
         let card = window.find(part("card")).bounds();
-        assert_eq!(tab.size.height, px(34.), "the tab has no hidden height");
+        assert_eq!(tab.size.height, px(38.), "the tab has no hidden height");
         assert_eq!(
             card_top_gap(tab, card),
-            px(33.),
+            px(37.),
             "the card tucks over the tab by its hairline"
         );
         assert!(card.top() < tab.bottom(), "the card covers the tab's foot");
         assert_eq!(tab.bottom() - card.top(), px(1.), "by the hairline");
         assert!(card.top() > tab.top());
         assert_eq!(card.size.width, px(560.));
-        assert_eq!(tab.left() - card.left(), px(28.), "inset from the card");
+        assert_eq!(tab.left() - card.left(), px(14.), "inset from the card");
     })
     .unwrap();
     let bare = setup(cx, Options::default());

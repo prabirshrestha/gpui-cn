@@ -394,7 +394,7 @@ impl RenderOnce for AttachmentTile {
             Look {
                 side: metrics.attachment_tile,
                 icon: metrics.attachment_icon,
-                text: metrics.attachment_text,
+                text: metrics.badge_count_text,
                 arc: metrics.attachment_arc,
                 radius: theme.radius_lg(),
                 fill: theme.field,

@@ -222,6 +222,24 @@ mod macos {
                             child.into(),
                         )
                     };
+                    let status_branch = gpui_kit::ElementId::NamedChild(
+                        named("composer-agent-status", "branch").into(),
+                        "trigger".into(),
+                    );
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal(status_branch.clone(), window, cx);
+                        window.click(status_branch.clone(), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open a status dropdown");
+                    capture(&mut cx, &format!("story-{slug}-status-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the status dropdown");
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
                         window.click(named("composer-basic", "text"), cx);

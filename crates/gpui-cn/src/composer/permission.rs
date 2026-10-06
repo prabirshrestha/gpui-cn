@@ -16,6 +16,18 @@ use crate::{
 /// The key of the menu row that reports [`PermissionEvent::LearnMore`].
 const LEARN_MORE: &str = "learn-more";
 
+/// How a permission mode reads: an ordinary choice, or a risky one that
+/// shows in the warning color.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PermissionTone {
+    /// Muted, like the other labels. The default.
+    #[default]
+    Normal,
+    /// The warning color, for a mode that runs without asking.
+    Warning,
+}
+
 /// How much an agent may do without asking, as one entry of a
 /// [`PermissionMenu`]: an id, a label, a line of description, and an icon.
 ///
@@ -39,6 +51,7 @@ pub struct PermissionMode {
     label: SharedString,
     description: Option<SharedString>,
     icon: Option<Icon>,
+    tone: PermissionTone,
 }
 
 impl PermissionMode {
@@ -58,6 +71,7 @@ impl PermissionMode {
             label: label.into(),
             description: None,
             icon: None,
+            tone: PermissionTone::Normal,
         }
     }
 
@@ -71,6 +85,18 @@ impl PermissionMode {
     pub fn icon(mut self, icon: impl Into<Icon>) -> Self {
         self.icon = Some(icon.into());
         self
+    }
+
+    /// Marks the mode risky or ordinary. A risky one shows in the warning
+    /// color on the trigger and in the menu.
+    pub fn tone(mut self, tone: PermissionTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// The tone.
+    pub fn tone_of(&self) -> PermissionTone {
+        self.tone
     }
 
     /// The id.
@@ -107,7 +133,8 @@ impl PermissionMode {
                 .icon(IconName::ClipboardList),
             Self::new(Self::BYPASS, "Bypass all")
                 .description("Run everything without asking")
-                .icon(IconName::ShieldCheck),
+                .icon(IconName::ShieldAlert)
+                .tone(PermissionTone::Warning),
         ]
     }
 }
@@ -324,20 +351,35 @@ fn entries(state: &Entity<PermissionState>, learn_more: bool, cx: &App) -> Vec<M
     }
     entries.extend(state.modes.iter().map(|mode| {
         let selected = mode.id == state.selected;
-        let (label, description, icon) = (
+        let (label, description, icon, tone) = (
             mode.label.clone(),
             mode.description.clone(),
             mode.icon.clone(),
+            mode.tone,
         );
         MenuItem::new(mode.id.clone(), mode.label.clone())
             .render(move |_, window, cx| {
                 let look = MenuLook::of(cx.theme(), window.rem_size());
-                let icon = icon.clone().map(|icon| {
-                    line_slot(&look).child(icon.size_4().text_color(look.muted_foreground))
-                });
+                let warning = cx.theme().warning_text;
+                let icon_color = match tone {
+                    PermissionTone::Warning => warning,
+                    PermissionTone::Normal => look.muted_foreground,
+                };
+                let icon = icon
+                    .clone()
+                    .map(|icon| line_slot(&look).child(icon.size_4().text_color(icon_color)));
+                let mut block = label_block(label.clone(), description.clone(), &look);
+                if tone == PermissionTone::Warning {
+                    block = div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(warning)
+                        .child(block)
+                        .into_any_element();
+                }
                 row_line()
                     .children(icon)
-                    .child(label_block(label.clone(), description.clone(), &look))
+                    .child(block)
                     .when(selected, |this| {
                         this.child(
                             line_slot(&look).child(
@@ -370,13 +412,18 @@ impl RenderOnce for PermissionMenu {
                 let button = Button::new(ElementId::NamedChild(self.id.into(), "trigger".into()))
                     .ghost()
                     .size(ButtonSize::Sm)
-                    .text_size(cx.theme().text_composer.size)
                     .accessibility_label("Permission mode");
+                let theme = cx.theme();
+                let (warning, muted) = (theme.warning_text, theme.composer_muted);
                 let button = match self.state.read(cx).selected_mode().cloned() {
                     Some(mode) => button
                         .label(mode.label.clone())
+                        .text_color(match mode.tone {
+                            PermissionTone::Warning => warning,
+                            PermissionTone::Normal => muted,
+                        })
                         .when_some(mode.icon.clone(), |button, icon| button.icon(icon)),
-                    None => button.label("Permission"),
+                    None => button.label("Permission").text_color(muted),
                 };
                 menu.trigger(button).into_any_element()
             }
@@ -413,5 +460,30 @@ impl Selectable for TriggerSlot {
 impl RenderOnce for TriggerSlot {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         (self.build)(self.open)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_mode_that_runs_without_asking_is_a_warning_by_default() {
+        let tones: Vec<_> = PermissionMode::defaults()
+            .iter()
+            .map(|mode| (mode.id().to_string(), mode.tone_of()))
+            .collect();
+        for (id, tone) in tones {
+            let want = if id == PermissionMode::BYPASS {
+                PermissionTone::Warning
+            } else {
+                PermissionTone::Normal
+            };
+            assert_eq!(tone, want, "{id}");
+        }
+        assert_eq!(
+            PermissionMode::new("x", "X").tone_of(),
+            PermissionTone::Normal
+        );
     }
 }
