@@ -287,7 +287,8 @@ pub struct MetricTokens {
     pub slider_tick: Pixels,
     /// The diameter of a radio's ring: 16px, shadcn's `size-4`.
     pub radio_size: Pixels,
-    /// The diameter of a radio's dot: 8px, shadcn's `size-2`.
+    /// The diameter of a radio's dot: 6px, three quarters of shadcn's
+    /// `size-2`, which sits better in the filled disc this radio paints.
     pub radio_dot: Pixels,
     /// The diameter of a progress ring: 16px, the context meter of the
     /// composer's status tab. Not measured from the reference app.
@@ -493,7 +494,7 @@ impl MetricTokens {
             slider_thumb: scaled(16.),
             slider_tick: scaled(4.),
             radio_size: scaled(16.),
-            radio_dot: scaled(8.),
+            radio_dot: scaled(6.),
             ring_size: scaled(16.),
             ring_stroke: scaled(2.),
             attachment_tile: scaled(56.),
@@ -1461,7 +1462,11 @@ mod tests {
     fn radio_metrics_are_the_shadcn_values() {
         let default = light();
         assert_eq!(default.metrics.radio_size, px(16.), "shadcn size-4");
-        assert_eq!(default.metrics.radio_dot, px(8.), "shadcn size-2");
+        assert_eq!(
+            default.metrics.radio_dot,
+            px(6.),
+            "three quarters of size-2"
+        );
     }
 
     #[test]

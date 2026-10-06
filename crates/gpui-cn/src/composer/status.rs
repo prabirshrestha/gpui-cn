@@ -152,6 +152,9 @@ impl Styled for ComposerStatusTab {
     }
 }
 
+/// Children that are not a [`StatusSelect`](crate::StatusSelect) keep the width
+/// they have: they take no part in the plan that shrinks labels and turns
+/// selects into icons when the tab is narrow.
 impl ParentElement for ComposerStatusTab {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.items.extend(elements.into_iter().map(Entry::Other));

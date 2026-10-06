@@ -317,7 +317,7 @@ impl<V: SelectValue> Rows<V> {
                     .test_support()
                     // A fixed height is what a scroll to a far row counts
                     // on before the row is laid out.
-                    .when_some(row_height, |this, height| this.h(height))
+                    .when_some(row_height, |this, height| this.h(height).min_h(height))
                     .text_color(if disabled {
                         look.muted_foreground
                     } else {

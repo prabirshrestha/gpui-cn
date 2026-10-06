@@ -141,8 +141,20 @@ pub enum AttachmentStatus {
     Ready,
     /// Waiting for its upload to start: progress is zero.
     Queued,
-    /// Uploading, with the percentage done, above zero and below 100.
+    /// Uploading, with the percentage done, above zero and up to 100. A
+    /// file at 100 is still uploading until the application sets its
+    /// progress to `None`, which is what lets Send wait for the last byte.
     Uploading(f32),
+}
+
+/// A progress percentage held to `0..=100`, with a value that is not a
+/// number counting as zero, which is queued.
+fn clamp_percent(value: f32) -> f32 {
+    if value.is_nan() {
+        0.
+    } else {
+        value.clamp(0., 100.)
+    }
 }
 
 /// A file in a composer: what the strip shows for it.
@@ -150,7 +162,9 @@ pub enum AttachmentStatus {
 /// The id comes from the domain and is unique in the composer. The
 /// progress is a percentage: `None` for a file that is ready, zero for one
 /// that is queued, and above zero while it uploads. Setting it back to
-/// `None` finishes the upload.
+/// `None` finishes the upload. A queued tile shows its ring at zero and
+/// can be removed, an uploading tile shows the counter and cannot, and a
+/// ready tile can be removed. Send waits for every attachment to be ready.
 ///
 /// ```
 /// use gpui_cn::{Attachment, AttachmentKind};
@@ -189,7 +203,7 @@ impl Attachment {
 
     /// The upload progress as a percentage, clamped to `0..=100`.
     pub fn progress(mut self, progress: impl Into<Option<f32>>) -> Self {
-        self.progress = progress.into().map(|value| value.clamp(0., 100.));
+        self.progress = progress.into().map(clamp_percent);
         self
     }
 
@@ -223,7 +237,7 @@ impl Attachment {
 
     /// Replaces the upload progress, as [`progress`](Self::progress).
     pub fn set_progress(&mut self, progress: Option<f32>) {
-        self.progress = progress.map(|value| value.clamp(0., 100.));
+        self.progress = progress.map(clamp_percent);
     }
 
     /// Where the attachment is in its life.
@@ -339,11 +353,19 @@ impl RenderOnce for AttachmentTile {
             window,
             cx,
         );
+        let ring = transition(
+            child_id("ring-shown"),
+            if busy { 1. } else { 0. },
+            slide.clone(),
+            window,
+            cx,
+        );
         let image = attachment.image.clone();
         let has_image = image.is_some();
         let percent = match status {
             AttachmentStatus::Uploading(value) => value,
-            _ => 100.,
+            AttachmentStatus::Queued => 0.,
+            AttachmentStatus::Ready => 100.,
         };
         let dismiss = self.on_dismiss.filter(|_| !uploading).map(|on_dismiss| {
             let id = attachment.id.clone();
@@ -420,7 +442,7 @@ impl RenderOnce for AttachmentTile {
                         }
                     }),
             )
-            .when(shown > 0.001, |this| {
+            .when(ring > 0.001, |this| {
                 this.child(
                     div()
                         .id(child_id("arc"))
@@ -428,7 +450,7 @@ impl RenderOnce for AttachmentTile {
                         .absolute()
                         .top_1()
                         .left_1()
-                        .opacity(shown)
+                        .opacity(ring)
                         .text_color(look.percent)
                         .child(
                             Progress::new(child_id("ring"))
@@ -437,17 +459,19 @@ impl RenderOnce for AttachmentTile {
                                 .accessibility_label("Upload progress"),
                         ),
                 )
-                .child(
-                    div()
-                        .id(child_id("percent"))
-                        .test_support()
-                        .absolute()
-                        .top_1()
-                        .right_1()
-                        .opacity(shown)
-                        .text_color(look.percent)
-                        .child(format!("{percent:.0}%")),
-                )
+                .when(shown > 0.001, |this| {
+                    this.child(
+                        div()
+                            .id(child_id("percent"))
+                            .test_support()
+                            .absolute()
+                            .top_1()
+                            .right_1()
+                            .opacity(shown)
+                            .text_color(look.percent)
+                            .child(format!("{percent:.0}%")),
+                    )
+                })
             })
             .children(dismiss)
     }
@@ -608,6 +632,30 @@ mod tests {
         let mut file = file.progress(40.);
         file.set_progress(None);
         assert_eq!(file.status(), AttachmentStatus::Ready);
+    }
+
+    #[test]
+    fn a_progress_that_is_not_a_number_is_queued_and_100_is_still_uploading() {
+        let file = Attachment::new("a", "a.txt");
+        for bad in [f32::NAN, f32::NEG_INFINITY, -5.] {
+            assert_eq!(
+                file.clone().progress(bad).status(),
+                AttachmentStatus::Queued
+            );
+        }
+        assert_eq!(
+            file.clone().progress(f32::INFINITY).status(),
+            AttachmentStatus::Uploading(100.)
+        );
+        let mut file = file;
+        file.set_progress(Some(f32::NAN));
+        assert_eq!(file.status(), AttachmentStatus::Queued);
+        file.set_progress(Some(100.));
+        assert_eq!(
+            file.status(),
+            AttachmentStatus::Uploading(100.),
+            "ready only when None"
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Axis, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement, Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, TestSupportExt as _, Window,
+    AnyElement, App, Axis, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, ParentElement, Pixels, PlatformInput,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
+    TestSupportExt as _, Window,
     accesskit::Orientation,
     base::{self, Disableable, StyledExt as _},
     div, point,
@@ -79,12 +80,7 @@ impl RenderOnce for RadioMark {
             .border_color(ring)
             .when_some(fill, |this, fill| this.bg(fill))
             .when(self.checked, |this| {
-                this.child(
-                    div()
-                        .size(dot * 0.75)
-                        .rounded(radius)
-                        .bg(theme.switch_thumb),
-                )
+                this.child(div().size(dot).rounded(radius).bg(theme.switch_thumb))
             })
             .refine_style(&self.style)
     }
@@ -274,6 +270,12 @@ impl RenderOnce for Radio {
 /// tests can find needs the id on the element itself), laid out as a column, or as a row for
 /// [`horizontal`](Self::horizontal).
 ///
+/// The arrow keys move through the group, wrapping at the ends: the focus
+/// goes to the next radio that can take it and that radio is chosen, as
+/// Space would choose it. A radio that is disabled is skipped. For one tab
+/// stop in the group, give the radios that are not checked
+/// `.tab_stop(false)`.
+///
 /// ```
 /// use gpui_cn::{Radio, RadioGroup};
 /// use gpui_kit::ParentElement as _;
@@ -326,11 +328,70 @@ impl ParentElement for RadioGroup {
     }
 }
 
+/// Moves the choice to the next (or previous) radio of the group that can
+/// take focus, wrapping at the ends, the way a native radio group does: the
+/// focus moves, and the radio that gets it is activated as Space would.
+fn step(group: &FocusHandle, forward: bool, window: &mut Window, cx: &mut App) {
+    if !group.contains_focused(window, cx) {
+        return;
+    }
+    // Past either end the tab order goes on around the window, and comes
+    // back into the group at its other end.
+    for _ in 0..64 {
+        if forward {
+            window.focus_next(cx);
+        } else {
+            window.focus_prev(cx);
+        }
+        if group.contains_focused(window, cx) {
+            break;
+        }
+    }
+    if !group.contains_focused(window, cx) {
+        return;
+    }
+    for event in [
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: Keystroke::parse("space").expect("a valid keystroke"),
+            is_held: false,
+            prefer_character_input: false,
+        }),
+        PlatformInput::KeyUp(KeyUpEvent {
+            keystroke: Keystroke::parse("space").expect("a valid keystroke"),
+        }),
+    ] {
+        window.dispatch_event(event, cx);
+    }
+}
+
 impl RenderOnce for RadioGroup {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let gap = cx.theme().base.spacing.md;
+        let group = window
+            .use_keyed_state(
+                ElementId::NamedChild(self.id.clone().into(), "focus".into()),
+                cx,
+                |_, cx| cx.focus_handle(),
+            )
+            .read(cx)
+            .clone();
+        let keys = group.clone();
         div()
             .id(self.id)
+            .track_focus(&group)
+            .on_key_down(move |event, window, cx| {
+                let forward = match event.keystroke.key.as_str() {
+                    "down" | "right" => true,
+                    "up" | "left" => false,
+                    _ => return,
+                };
+                if event.keystroke.modifiers.modified() {
+                    return;
+                }
+                cx.stop_propagation();
+                let keys = keys.clone();
+                window.defer(cx, move |window, cx| step(&keys, forward, window, cx));
+            })
             .role(Role::RadioGroup)
             .aria_orientation(match self.axis {
                 Axis::Horizontal => Orientation::Horizontal,

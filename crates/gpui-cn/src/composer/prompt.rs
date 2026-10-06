@@ -527,7 +527,10 @@ impl Composer {
         self
     }
 
-    /// Adds a control after the permission menu. Each call adds one.
+    /// Adds a control after the permission menu. Each call adds one. The
+    /// control keeps the width it has: it takes no part in the plan that
+    /// shrinks the model and permission labels and turns controls into
+    /// icons when the row is narrow.
     pub fn toolbar(mut self, element: impl IntoElement) -> Self {
         self.toolbar.push(element.into_any_element());
         self

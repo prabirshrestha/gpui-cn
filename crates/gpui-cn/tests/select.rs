@@ -1473,3 +1473,46 @@ fn a_query_highlights_the_best_match_not_the_first_listed(cx: &mut TestAppContex
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_row_height_below_the_default_row_applies(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    struct Fixed {
+        state: Entity<State>,
+    }
+    impl Render for Fixed {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                Select::new("pick", &self.state)
+                    .render_item(|item, _, _, _| div().child(item.label().clone())),
+            )
+        }
+    }
+    let handle = cx.open_window(size(px(500.), px(600.)), |window, cx| {
+        let select = cx.new(|cx| {
+            SelectState::new(
+                (1..=50).map(|n| SelectItem::new(number(n), format!("Person {n}"))),
+                cx,
+            )
+            .with_row_height(px(20.))
+        });
+        let fixed = cx.new(|cx| {
+            cx.observe(&select, |_, _, cx| cx.notify()).detach();
+            Fixed { state: select }
+        });
+        Root::new(fixed, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(child("3")).bounds().size.height, px(20.));
+    })
+    .unwrap();
+}

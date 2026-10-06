@@ -67,13 +67,13 @@ const DEFAULT_LABEL: &str = "Loading";
 
 impl RenderOnce for Spinner {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let label = self
+            .accessibility_label
+            .unwrap_or_else(|| DEFAULT_LABEL.into());
         div()
             .id(self.id.clone())
             .role(Role::Status)
-            .aria_label(
-                self.accessibility_label
-                    .unwrap_or_else(|| DEFAULT_LABEL.into()),
-            )
+            .aria_label(label.clone())
             .test_support()
             .flex_shrink_0()
             .size_4()
@@ -81,6 +81,7 @@ impl RenderOnce for Spinner {
             .child(
                 Progress::new(ElementId::NamedChild(self.id.into(), "arc".into()))
                     .circular()
+                    .accessibility_label(label)
                     .size_full(),
             )
     }

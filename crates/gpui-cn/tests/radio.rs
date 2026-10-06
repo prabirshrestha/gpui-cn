@@ -115,3 +115,59 @@ fn a_disabled_radio_ignores_input(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(*chosen.borrow(), "small");
 }
+
+fn focused(
+    handle: gpui_kit::WindowHandle<Root>,
+    cx: &mut TestAppContext,
+    id: &'static str,
+) -> bool {
+    cx.update_window(handle.into(), |_, window, _| {
+        window.find(id).focused() == Some(true)
+    })
+    .unwrap()
+}
+
+fn press(handle: gpui_kit::WindowHandle<Root>, cx: &mut TestAppContext, key: &str) {
+    cx.update_window(handle.into(), |_, window, cx| window.press(key, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn arrow_keys_move_the_choice_and_the_focus_and_wrap(cx: &mut TestAppContext) {
+    let (handle, chosen) = setup(cx, "");
+    cx.update_window(handle.into(), |_, window, _| window.activate_window())
+        .unwrap();
+    press(handle, cx, "tab");
+    assert!(
+        focused(handle, cx, "small"),
+        "Tab lands on the chosen radio"
+    );
+    for (key, expected) in [
+        ("down", "medium"),
+        ("right", "large"),
+        ("down", "small"),
+        ("up", "large"),
+        ("left", "medium"),
+    ] {
+        press(handle, cx, key);
+        assert_eq!(*chosen.borrow(), expected, "{key}");
+        assert!(focused(handle, cx, expected), "{key}: focus follows");
+    }
+}
+
+#[gpui_kit::test]
+fn the_arrows_skip_a_disabled_radio(cx: &mut TestAppContext) {
+    let (handle, chosen) = setup(cx, "medium");
+    cx.update_window(handle.into(), |_, window, _| window.activate_window())
+        .unwrap();
+    press(handle, cx, "tab");
+    press(handle, cx, "down");
+    assert_eq!(*chosen.borrow(), "large");
+}

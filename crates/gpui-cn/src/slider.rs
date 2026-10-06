@@ -129,6 +129,9 @@ impl Styled for Slider {
 /// The value a key moves a slider to, or `None` when the key does nothing
 /// or the value does not change.
 fn nudged(key: &str, value: f32, min: f32, max: f32, step: f32) -> Option<f32> {
+    if ![value, min, max, step].iter().all(|n| n.is_finite()) || min > max {
+        return None;
+    }
     let page = ((max - min) / 10.).max(step);
     let next = match key {
         "right" | "up" => value + step,
@@ -354,6 +357,17 @@ impl RenderOnce for Slider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_never_panics_on_a_reversed_or_broken_range() {
+        assert_eq!(nudged("right", 1., 5., 0., 1.), None, "min above max");
+        assert_eq!(nudged("right", 1., 0., f32::NAN, 1.), None);
+        assert_eq!(nudged("end", 1., 0., 5., f32::INFINITY), None);
+        assert_eq!(nudged("left", f32::NAN, 0., 5., 1.), None);
+        assert_eq!(nudged("right", 2., 0., 5., 1.), Some(3.));
+        assert_eq!(nudged("end", 2., 0., 5., 1.), Some(5.));
+        assert_eq!(nudged("right", 5., 0., 5., 1.), None);
+    }
 
     #[test]
     fn keys_move_the_value_one_step_and_clamp_at_the_ends() {

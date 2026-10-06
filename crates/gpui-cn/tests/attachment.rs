@@ -197,3 +197,27 @@ fn a_changing_percent_moves_the_arc_over_frames(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_queued_tile_shows_its_ring_so_the_wait_is_visible(cx: &mut TestAppContext) {
+    let setup = setup(cx, ReduceMotion::On);
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        assert!(
+            window.try_find(part("deck", "arc")).is_some(),
+            "queued: the ring shows"
+        );
+        assert!(
+            window.try_find(part("deck", "percent")).is_none(),
+            "but no counter"
+        );
+        assert!(
+            window.try_find(part("deck", "dismiss")).is_some(),
+            "and it can be removed"
+        );
+        assert!(
+            window.try_find(part("notes", "arc")).is_none(),
+            "a ready tile has no ring"
+        );
+    })
+    .unwrap();
+}
