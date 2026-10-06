@@ -2,6 +2,7 @@
 //! dropdown menu, and a context menu draw from the same look, so their
 //! panels and rows cannot drift apart.
 
+use std::ops::Range;
 use std::time::Duration;
 
 use gpui_kit::{
@@ -177,9 +178,12 @@ impl MenuMotion {
 
 /// A row's label over its description, as the reference app draws a
 /// select row: the label on one line, cut off with an ellipsis, and the
-/// description under it in the menu's description color.
+/// description under it in the menu's description color. The byte
+/// `matched` ranges of the label, the characters a search matched, are
+/// drawn in the text color at medium weight.
 pub(crate) fn label_block(
     label: SharedString,
+    matched: &[Range<usize>],
     description: Option<SharedString>,
     look: &MenuLook,
 ) -> AnyElement {
@@ -187,11 +191,30 @@ pub(crate) fn label_block(
         .flex_1()
         .min_w_0()
         .gap_1p5()
-        .child(div().overflow_hidden().text_ellipsis().child(label))
+        .child(
+            div()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(matched_text(label, matched, look)),
+        )
         .when_some(description, |this, text| {
             this.child(div().text_color(look.description).child(text))
         })
         .into_any_element()
+}
+
+/// A row's text with the byte `matched` ranges marked: the text color at
+/// medium weight. No range gives the text as it is.
+pub(crate) fn matched_text(
+    text: SharedString,
+    matched: &[Range<usize>],
+    look: &MenuLook,
+) -> AnyElement {
+    if matched.is_empty() {
+        text.into_any_element()
+    } else {
+        crate::fuzzy::highlighted(text, matched, look.foreground).into_any_element()
+    }
 }
 
 /// The frame of one row, the same in a select, a menu, a palette, and the

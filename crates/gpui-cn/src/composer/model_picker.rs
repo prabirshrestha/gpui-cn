@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{collections::HashSet, f32::consts::PI, ops::Range};
 
 use gpui_kit::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
@@ -21,7 +21,8 @@ use gpui_kit::{
 use crate::{
     ActiveTheme as _, Button, ButtonSize, Icon, MenuEvent, MenuState, Popover, ScrollArea, Theme,
     collapse::{self, Need},
-    menu::{MenuLook, row_frame, search_row, search_style, separator},
+    fuzzy,
+    menu::{MenuLook, matched_text, row_frame, search_row, search_style, separator},
 };
 
 /// The names of the six effort levels, from the lowest to the highest.
@@ -134,16 +135,26 @@ impl ModelEntry {
 /// A maker of models, one mark in the picker's rail and the models it owns.
 ///
 /// The icon is any [`Icon`]: the picker ships no vendor logos, so an
-/// application brings the marks it has the right to show.
+/// application brings the marks it has the right to show. A mark that the
+/// application embeds comes in through [`Icon::from_bytes`], and one that
+/// its asset source holds comes in through [`Icon::new`]. A bundled
+/// Lucide [`IconName`] works too, and a provider with no icon shows a
+/// generic bot.
 ///
 /// ```
-/// use gpui_cn::{ModelEntry, ModelProvider};
+/// use gpui_cn::{Icon, ModelEntry, ModelProvider};
 /// use gpui_kit::assets::IconName;
 ///
-/// let provider = ModelProvider::new("claude", "Claude")
-///     .icon(IconName::Star)
-///     .models([ModelEntry::new("sonnet-5.5", "Sonnet 5.5")]);
+/// // The application's own SVG, embedded in its binary.
+/// const MARK: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>"#;
+///
+/// let provider = ModelProvider::new("acme", "Acme")
+///     .icon(Icon::from_bytes(MARK))
+///     .models([ModelEntry::new("acme-1", "Acme One")]);
 /// assert_eq!(provider.models_of().len(), 1);
+///
+/// let generic = ModelProvider::new("other", "Other").icon(IconName::Star);
+/// assert!(generic.models_of().is_empty());
 /// ```
 #[derive(Clone)]
 #[non_exhaustive]
@@ -215,6 +226,8 @@ pub enum ModelPickerEvent {
     ViewChanged(ModelView),
     /// The panel opened or closed.
     OpenChanged(bool),
+    /// The legacy group opened or closed.
+    LegacyToggled(bool),
     /// A model was starred or unstarred. The application keeps the
     /// favorites, so it saves them on this event.
     FavoriteChanged {
@@ -236,11 +249,15 @@ enum Row {
         provider: usize,
         model: usize,
         number: Option<usize>,
+        /// Whether the row belongs to the legacy group, so its height
+        /// follows the fold.
+        folded: bool,
     },
 }
 
-/// The rows the list shows. A query shows every model of every provider
-/// whose name or whose provider's name contains it, ignoring case. With no
+/// The rows the list shows. A query shows every model whose name it
+/// matches, best match first, then every model of a provider whose name it
+/// matches (see [`fuzzy::rank`]). With no
 /// query the favorites view shows the starred models in the order they
 /// were starred, and a provider's view shows its models, its legacy ones
 /// folded under a header at the top and listed only while the fold is
@@ -250,21 +267,38 @@ fn build_rows(
     view: &ModelView,
     query: &str,
     favorites: &[SharedString],
-    legacy_open: bool,
+    legacy_shown: bool,
 ) -> Vec<Row> {
-    let query = query.trim().to_lowercase();
+    let query = query.trim();
     let model = |provider, model| Row::Model {
         provider,
         model,
         number: None,
+        folded: false,
     };
     let mut rows = Vec::new();
     if !query.is_empty() {
-        for (p, provider) in providers.iter().enumerate() {
-            let provider_matches = provider.name.to_lowercase().contains(&query);
-            for (m, entry) in provider.models.iter().enumerate() {
-                if provider_matches || entry.name.to_lowercase().contains(&query) {
-                    rows.push(model(p, m));
+        let all: Vec<(usize, usize, &str)> = providers
+            .iter()
+            .enumerate()
+            .flat_map(|(p, provider)| {
+                provider
+                    .models
+                    .iter()
+                    .enumerate()
+                    .map(move |(m, entry)| (p, m, &*entry.name))
+            })
+            .collect();
+        let mut shown = HashSet::new();
+        for found in fuzzy::rank(query, &all, |item| item.2) {
+            let (p, m, _) = all[found.index];
+            shown.insert((p, m));
+            rows.push(model(p, m));
+        }
+        for found in fuzzy::rank(query, providers, |provider| &provider.name) {
+            for m in 0..providers[found.index].models.len() {
+                if shown.insert((found.index, m)) {
+                    rows.push(model(found.index, m));
                 }
             }
         }
@@ -286,14 +320,19 @@ fn build_rows(
                     let legacy = provider.models.iter().filter(|m| m.legacy).count();
                     if legacy > 0 {
                         rows.push(Row::Legacy(legacy));
-                        if legacy_open {
+                        if legacy_shown {
                             rows.extend(
                                 provider
                                     .models
                                     .iter()
                                     .enumerate()
                                     .filter(|(_, m)| m.legacy)
-                                    .map(|(m, _)| model(p, m)),
+                                    .map(|(m, _)| Row::Model {
+                                        provider: p,
+                                        model: m,
+                                        number: None,
+                                        folded: true,
+                                    }),
                             );
                         }
                     }
@@ -349,6 +388,8 @@ pub struct ModelPickerState {
     effort_menu: Entity<MenuState>,
     open: bool,
     legacy_open: bool,
+    legacy_shown: bool,
+    legacy_progress: f32,
     rows: Vec<Row>,
     highlighted: Option<usize>,
     list: ListState,
@@ -410,6 +451,8 @@ impl ModelPickerState {
             effort_menu,
             open: false,
             legacy_open: false,
+            legacy_shown: false,
+            legacy_progress: 0.,
             rows: Vec::new(),
             highlighted: None,
             list: ListState::new(0, ListAlignment::Top, overdraw),
@@ -622,7 +665,7 @@ impl ModelPickerState {
         self.set_query("", window, cx);
         if self.view != view {
             self.view = view.clone();
-            self.legacy_open = false;
+            self.fold_legacy_at_once();
             cx.emit(ModelPickerEvent::ViewChanged(view));
         }
         self.rebuild(cx);
@@ -648,12 +691,15 @@ impl ModelPickerState {
             .iter()
             .filter_map(|row| match row {
                 Row::Model {
-                    provider, model, ..
-                } => Some((
+                    provider,
+                    model,
+                    folded,
+                    ..
+                } if !folded || self.legacy_open => Some((
                     &self.providers[*provider],
                     &self.providers[*provider].models[*model],
                 )),
-                Row::Legacy(_) => None,
+                _ => None,
             })
             .collect()
     }
@@ -671,10 +717,71 @@ impl ModelPickerState {
     /// Opens or closes the legacy group. It is closed until it is opened,
     /// and closes again when the view changes.
     pub fn set_legacy_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.legacy_open != open {
-            self.legacy_open = open;
-            self.rebuild(cx);
+        if self.legacy_open == open {
+            return;
         }
+        let on_header = self.header_highlighted();
+        self.legacy_open = open;
+        if open {
+            self.legacy_shown = true;
+            self.rebuild(cx);
+        } else {
+            cx.notify();
+        }
+        if on_header {
+            self.highlight_header();
+        }
+        cx.emit(ModelPickerEvent::LegacyToggled(open));
+    }
+
+    fn header_highlighted(&self) -> bool {
+        self.highlighted
+            .is_some_and(|row| matches!(self.rows.get(row), Some(Row::Legacy(_))))
+    }
+
+    fn highlight_header(&mut self) {
+        self.highlighted = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Legacy(_)));
+    }
+
+    /// Closes the legacy group with no animation, for a change of view or
+    /// a panel that opens or closes.
+    fn fold_legacy_at_once(&mut self) {
+        self.legacy_open = false;
+        self.legacy_shown = false;
+        self.legacy_progress = 0.;
+    }
+
+    /// Drops the legacy rows once the fold has finished closing.
+    fn finish_legacy_fold(&mut self, cx: &mut Context<Self>) {
+        if !self.legacy_open && self.legacy_shown {
+            let on_header = self.header_highlighted();
+            self.legacy_shown = false;
+            self.legacy_progress = 0.;
+            self.rebuild(cx);
+            if on_header {
+                self.highlight_header();
+            }
+        }
+    }
+
+    /// The rows of the legacy group, which the list measures again while
+    /// the fold moves.
+    fn legacy_rows(&self) -> std::ops::Range<usize> {
+        let start = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Legacy(_)))
+            .map_or(0, |header| header + 1);
+        let len = self
+            .rows
+            .iter()
+            .skip(start)
+            .take_while(|row| matches!(row, Row::Model { folded: true, .. }))
+            .count();
+        start..start + len
     }
 
     /// The id of the model the keyboard or the pointer is on.
@@ -699,6 +806,7 @@ impl ModelPickerState {
             return;
         }
         self.open = open;
+        self.fold_legacy_at_once();
         if !open {
             self.set_query("", window, cx);
         } else {
@@ -716,6 +824,7 @@ impl ModelPickerState {
                 provider,
                 model,
                 number: Some(n),
+                ..
             } if *n == number => Some(self.providers[*provider].models[*model].id.clone()),
             _ => None,
         });
@@ -738,7 +847,7 @@ impl ModelPickerState {
             &self.view,
             query,
             &self.favorites,
-            self.legacy_open,
+            self.legacy_shown,
         );
         self.list.reset(self.rows.len());
         let chosen = self.selected.as_ref().and_then(|id| {
@@ -836,8 +945,7 @@ type TriggerBuilder = Box<dyn FnOnce(bool, &ModelPickerState) -> gpui_kit::AnyEl
 /// panel with a rail, a search field, and the list of models.
 ///
 /// The rail holds the favorites, a hairline, and one mark per provider; the
-/// active entry is brightened and has an accent bar on the rail's edge. The
-/// list shows each model on two lines, its name over its provider, with a
+/// active entry is brightened. The list shows each model on two lines, its name over its provider, with a
 /// Cmd+1 to Cmd+9 shortcut on the first nine rows and a star that pins the
 /// model to the favorites. A provider's legacy models fold into a group at
 /// the top. A search matches model names and provider names across every
@@ -1095,6 +1203,33 @@ fn panel(
     window: &mut Window,
     cx: &mut App,
 ) -> gpui_kit::AnyElement {
+    let (has_group, legacy_open, legacy_shown) = {
+        let read = state.read(cx);
+        (read.has_legacy_group(), read.legacy_open, read.legacy_shown)
+    };
+    if has_group {
+        let progress = transition(
+            child(id, "legacy-fold"),
+            if legacy_open { 1. } else { 0. },
+            Theme::global(cx).motion.fold_transition(),
+            window,
+            cx,
+        );
+        let (moved, range, list) = state.update(cx, |state, _| {
+            let moved = state.legacy_progress != progress;
+            state.legacy_progress = progress;
+            (moved, state.legacy_rows(), state.list.clone())
+        });
+        if moved {
+            list.splice(range.clone(), range.len());
+        }
+        if !legacy_open && legacy_shown && progress <= 0. {
+            let state = state.clone();
+            window.defer(cx, move |_, cx| {
+                state.update(cx, |state, cx| state.finish_legacy_fold(cx));
+            });
+        }
+    }
     let theme = cx.theme();
     let look = MenuLook::of(theme, window.rem_size());
     let disabled_opacity = theme.disabled_opacity;
@@ -1217,12 +1352,9 @@ fn panel(
             look: look.clone(),
             pointer_cursors,
         };
-        ScrollArea::list(
-            child(id, "models"),
-            &list,
-            row_height,
-            move |row, window, cx| rows.render(row, window, cx),
-        )
+        ScrollArea::list(child(id, "models"), &list, row_height, move |row, _, cx| {
+            rows.render(row, cx)
+        })
         .size_full()
         .into_any_element()
     };
@@ -1316,6 +1448,16 @@ fn panel(
                 return;
             }
             let in_search = focus_target.contains_focused(window, cx);
+            if matches!(keystroke.key.as_str(), "left" | "right") && !keystroke.modifiers.modified()
+            {
+                let open = keystroke.key == "right";
+                key_state.update(cx, |state, cx| {
+                    if state.header_highlighted() && state.takes_edge_keys(cx) {
+                        state.set_legacy_open(open, cx);
+                    }
+                });
+                return;
+            }
             if keystroke.key == "space" && !keystroke.modifiers.modified() {
                 let take = key_state.read(cx).takes_edge_keys(cx);
                 if take {
@@ -1358,17 +1500,27 @@ struct Rows {
 impl Rows {
     /// A row in its slot: the slot is the row's height and the row is a
     /// step shorter on both sides, so the fills of two rows never touch.
-    fn render(&self, index: usize, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
+    fn render(&self, index: usize, cx: &mut App) -> gpui_kit::AnyElement {
         let row_height = cx.theme().metrics.model_row;
+        let state = self.state.read(cx);
+        let folded = matches!(state.rows.get(index), Some(Row::Model { folded: true, .. }));
+        let progress = if folded { state.legacy_progress } else { 1. };
         div()
             .w_full()
-            .h(row_height)
-            .py_0p5()
-            .child(self.row(index, window, cx))
+            .h(row_height * progress)
+            .when(folded, |this| this.overflow_hidden())
+            .child(
+                div()
+                    .w_full()
+                    .h(row_height)
+                    .py_0p5()
+                    .opacity(progress)
+                    .child(self.row(index, cx)),
+            )
             .into_any_element()
     }
 
-    fn row(&self, index: usize, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
+    fn row(&self, index: usize, cx: &mut App) -> gpui_kit::AnyElement {
         let look = &self.look;
         let (row, highlighted, legacy_open) = {
             let state = self.state.read(cx);
@@ -1396,14 +1548,9 @@ impl Rows {
         let caption_text = cx.theme().base.typography.xs;
         match row {
             Row::Legacy(count) => {
-                let progress = transition(
-                    ElementId::NamedChild(child(&self.id, "legacy-fade").into(), "x".into()),
-                    if legacy_open { 1. } else { 0. },
-                    Theme::global(cx).motion.fast_transition(),
-                    window,
-                    cx,
-                );
+                let progress = self.state.read(cx).legacy_progress;
                 frame(child(&self.id, "legacy"))
+                    .aria_expanded(legacy_open)
                     .child(
                         v_flex()
                             .flex_1()
@@ -1439,8 +1586,9 @@ impl Rows {
                 provider,
                 model,
                 number,
+                ..
             } => {
-                let (provider, model, chosen, favorite) = {
+                let (provider, model, chosen, favorite, query) = {
                     let state = self.state.read(cx);
                     let model = state.providers[provider].models[model].clone();
                     (
@@ -1448,27 +1596,19 @@ impl Rows {
                         model.clone(),
                         state.selected.as_ref() == Some(&model.id),
                         state.is_favorite(&model.id),
+                        state.query(cx),
                     )
+                };
+                let marks = |text: &SharedString| -> Vec<Range<usize>> {
+                    fuzzy::matched(&query, text).unwrap_or_default()
                 };
                 let star_state = self.state.clone();
                 let model_id = model.id.clone();
                 let star_id = model.id.clone();
-                let fade = if model.legacy {
-                    transition(
-                        ElementId::NamedChild(child(&self.id, "legacy-fade").into(), "x".into()),
-                        1.,
-                        Theme::global(cx).motion.fast_transition(),
-                        window,
-                        cx,
-                    )
-                } else {
-                    1.
-                };
                 frame(ElementId::NamedChild(
                     self.id.clone().into(),
                     model.id.clone(),
                 ))
-                .opacity(fade)
                 .child(
                     v_flex()
                         .flex_1()
@@ -1481,7 +1621,7 @@ impl Rows {
                                 .text_size(name_text.size)
                                 .line_height(name_text.line_height)
                                 .text_color(look.foreground)
-                                .child(model.name.clone()),
+                                .child(matched_text(model.name.clone(), &marks(&model.name), look)),
                         )
                         .child(
                             h_flex()
@@ -1491,7 +1631,11 @@ impl Rows {
                                 .line_height(caption_text.line_height)
                                 .text_color(look.muted_foreground)
                                 .child(provider.icon.clone().size_3().flex_shrink_0())
-                                .child(provider.name.clone()),
+                                .child(matched_text(
+                                    provider.name.clone(),
+                                    &marks(&provider.name),
+                                    look,
+                                )),
                         ),
                 )
                 .when(chosen, |this| {
@@ -1629,8 +1773,10 @@ mod tests {
         let acme = || ModelView::Provider("acme".into());
         assert_eq!(
             rows(acme(), "ALPHA", &[], false),
-            ["acme-1", "acme-old", "acme-2", "zed-2"]
+            ["zed-2", "acme-1", "acme-old", "acme-2"],
+            "best match first, then the models of a matching provider"
         );
+        assert_eq!(rows(acme(), "bta", &[], false), ["zed-1"], "a subsequence");
         assert_eq!(rows(acme(), "beta", &[], false), ["zed-1"]);
         assert_eq!(
             rows(acme(), "zed", &[], false),

@@ -100,6 +100,7 @@ impl ModelPickerStory {
                 format!("ViewChanged {id}")
             }
             ModelPickerEvent::OpenChanged(open) => format!("OpenChanged {open}"),
+            ModelPickerEvent::LegacyToggled(open) => format!("LegacyToggled {open}"),
             ModelPickerEvent::FavoriteChanged { model, favorite } => {
                 format!("FavoriteChanged {model} {favorite}")
             }

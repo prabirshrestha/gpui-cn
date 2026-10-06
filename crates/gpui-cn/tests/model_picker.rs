@@ -83,10 +83,19 @@ fn start(
     providers: Vec<ModelProvider>,
     configure: impl FnOnce(ModelPickerState) -> ModelPickerState,
 ) -> Setup {
+    start_with_motion(cx, providers, configure, ReduceMotion::On)
+}
+
+fn start_with_motion(
+    cx: &mut TestAppContext,
+    providers: Vec<ModelProvider>,
+    configure: impl FnOnce(ModelPickerState) -> ModelPickerState,
+    motion: ReduceMotion,
+) -> Setup {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
-        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+        Theme::update(cx, |theme| theme.reduce_motion = motion);
     });
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut slot = None;
@@ -269,12 +278,13 @@ fn search_filters_across_every_provider_and_dims_the_rail(cx: &mut TestAppContex
     assert_eq!(
         rows(&setup, cx),
         [
+            "zed-alpha",
+            "acme-old",
             "acme-fast",
             "acme-deep",
-            "acme-old",
-            "acme-older",
-            "zed-alpha"
-        ]
+            "acme-older"
+        ],
+        "best match first"
     );
     assert!(
         !setup
@@ -793,4 +803,152 @@ fn the_panel_hangs_from_its_trigger_and_flips_when_it_has_no_room(cx: &mut TestA
         panel.top() >= trigger_box.bottom() || panel.bottom() <= trigger_box.top(),
         "the panel never covers its own trigger: {trigger_box:?} {panel:?}"
     );
+}
+
+fn legacy_span(setup: &Setup, cx: &mut TestAppContext) -> f32 {
+    let header = bounds(setup, named(id(), "legacy"), cx);
+    let next = bounds(setup, model("acme-fast"), cx);
+    f32::from(next.origin.y - header.origin.y)
+}
+
+fn tick(setup: &Setup, ms: u64, cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(ms));
+    frames(setup, cx);
+}
+
+#[gpui_kit::test]
+fn the_legacy_group_folds_open_and_shut_with_the_fold_transition(cx: &mut TestAppContext) {
+    let setup = start_with_motion(cx, catalog(), |state| state, ReduceMotion::Off);
+    open(&setup, cx);
+    let height = panel_height(&setup, cx);
+    let header = named(id(), "legacy");
+    let expanded =
+        |cx: &mut TestAppContext| setup.state.read_with(cx, |state, _| state.is_legacy_open());
+    click(&setup, header.clone(), cx);
+    assert!(expanded(cx));
+    let rest = legacy_span(&setup, cx);
+    let mut last = rest;
+    let mut seen_partial = false;
+    for _ in 0..40 {
+        tick(&setup, 20, cx);
+        let now = legacy_span(&setup, cx);
+        assert!(now >= last - 0.5, "monotonic open: {last} then {now}");
+        seen_partial |= now > rest + 1. && now < rest + 90.;
+        last = now;
+        assert_eq!(panel_height(&setup, cx), height, "panel height holds");
+    }
+    assert!(seen_partial, "the body passed through partial heights");
+    assert!(last > rest + 80., "open at rest, got {last}");
+    let open_span = last;
+    click(&setup, header, cx);
+    assert!(!expanded(cx));
+    assert!(
+        setup
+            .state
+            .read_with(cx, |state, _| state.has_legacy_group())
+    );
+    let mut last = open_span;
+    for _ in 0..40 {
+        tick(&setup, 20, cx);
+        let now = legacy_span(&setup, cx);
+        assert!(now <= last + 0.5, "monotonic close: {last} then {now}");
+        last = now;
+    }
+    assert!((last - rest).abs() < 1., "closed at rest, got {last}");
+    assert!(!present(&setup, model("acme-old"), cx), "rows left");
+}
+
+#[gpui_kit::test]
+fn reduced_motion_jumps_the_legacy_group(cx: &mut TestAppContext) {
+    let setup = start(cx, catalog(), |state| state);
+    open(&setup, cx);
+    let rest = legacy_span(&setup, cx);
+    click(&setup, named(id(), "legacy"), cx);
+    assert!(legacy_span(&setup, cx) > rest + 80.);
+    click(&setup, named(id(), "legacy"), cx);
+    frames(&setup, cx);
+    assert!(!present(&setup, model("acme-old"), cx));
+}
+
+#[gpui_kit::test]
+fn the_legacy_header_reports_expanded_and_the_group_closes_on_reopen(cx: &mut TestAppContext) {
+    let setup = start(cx, catalog(), |state| state);
+    open(&setup, cx);
+    click(&setup, named(id(), "legacy"), cx);
+    assert_eq!(
+        setup.events.borrow().last(),
+        Some(&ModelPickerEvent::LegacyToggled(true))
+    );
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("left", cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert!(!setup.state.read_with(cx, |state, _| state.is_legacy_open()));
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("right", cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert!(setup.state.read_with(cx, |state, _| state.is_legacy_open()));
+    cx.update(|cx| {
+        setup
+            .state
+            .update(cx, |state, cx| state.set_legacy_open(false, cx))
+    });
+    click(&setup, named(id(), "legacy"), cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        setup
+            .state
+            .update(cx, |state, cx| state.set_open(false, window, cx));
+    })
+    .unwrap();
+    open(&setup, cx);
+    assert!(!setup.state.read_with(cx, |state, _| state.is_legacy_open()));
+    assert_eq!(rows(&setup, cx), ["acme-fast", "acme-deep"]);
+}
+
+fn tooltip_visible(setup: &Setup, cx: &mut TestAppContext) -> bool {
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(700));
+    cx.run_until_parked();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find("gpui-cn-tooltip")
+            .is_some_and(|tooltip| tooltip.visible())
+    })
+    .unwrap()
+}
+
+fn hover(setup: &Setup, target: ElementId, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.hover(target, cx)
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn each_rail_entry_is_named_and_shows_its_name_as_a_tooltip(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    let entries = [
+        (named(id(), "favorites"), "Favorites"),
+        (provider("acme"), "Acme"),
+        (provider("zed"), "Zed Labs"),
+    ];
+    for (entry, name) in entries {
+        let label = cx
+            .update_window(setup.handle.into(), |_, window, _| {
+                window.find(entry.clone()).label().map(str::to_string)
+            })
+            .unwrap();
+        assert_eq!(label.as_deref(), Some(name), "the accessible name");
+        hover(&setup, entry, cx);
+        assert!(tooltip_visible(&setup, cx), "{name} shows a tooltip");
+        hover(&setup, model("acme-fast"), cx);
+        assert!(!tooltip_visible(&setup, cx), "leaving {name} hides it");
+    }
 }

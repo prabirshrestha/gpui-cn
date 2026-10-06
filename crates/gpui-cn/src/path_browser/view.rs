@@ -2,9 +2,8 @@
 //! box, its messages, a row's frame, and the "Load more" row.
 
 use gpui_kit::{
-    AnyElement, ElementId, Entity, FontWeight, HighlightStyle, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement, Pixels, Role, SharedString, StatefulInteractiveElement, Styled,
-    StyledText, TestSupportExt as _,
+    AnyElement, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement, Pixels,
+    Role, StatefulInteractiveElement, Styled, TestSupportExt as _,
     base::{h_flex, v_flex},
     div,
     prelude::FluentBuilder as _,
@@ -78,24 +77,6 @@ pub(crate) fn slot(look: &MenuLook, content: Option<AnyElement>) -> AnyElement {
         .flex_shrink_0()
         .children(content)
         .into_any_element()
-}
-
-/// A name with the characters the query matched in the link color.
-pub(crate) fn name_label(
-    name: SharedString,
-    ranges: Vec<std::ops::Range<usize>>,
-    link: Hsla,
-) -> StyledText {
-    StyledText::new(name).with_highlights(ranges.into_iter().map(|range| {
-        (
-            range,
-            HighlightStyle {
-                color: Some(link),
-                font_weight: Some(FontWeight::SEMIBOLD),
-                ..Default::default()
-            },
-        )
-    }))
 }
 
 /// The frame of a row: its height and padding, the highlight, the cursor.

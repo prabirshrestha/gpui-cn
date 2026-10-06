@@ -331,7 +331,6 @@ impl RenderOnce for FolderPicker {
         let theme = cx.theme();
         let look = MenuLook::of(theme, window.rem_size());
         let list_height = theme.metrics.folder_list_height;
-        let link = theme.link;
         let pointer_cursors = Theme::global(cx).pointer_cursors;
         let state = self.state;
         let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
@@ -373,7 +372,6 @@ impl RenderOnce for FolderPicker {
                     id: self.id.clone(),
                     state: state.clone(),
                     look: look.clone(),
-                    link,
                     pointer_cursors,
                 };
                 ScrollArea::list(
@@ -472,7 +470,6 @@ struct Rows {
     id: ElementId,
     state: Entity<FolderPickerState>,
     look: MenuLook,
-    link: gpui_kit::Hsla,
     pointer_cursors: bool,
 }
 
@@ -502,7 +499,7 @@ impl Rows {
                 browser.highlighted == Some(row),
             )
         };
-        let label = view::name_label(name.clone(), ranges, self.link);
+        let label = crate::menu::matched_text(name.clone(), &ranges, look);
         let state = self.state.clone();
         let hover = self.state.clone();
         view::row_frame(

@@ -512,7 +512,7 @@ impl Rows {
                         .test_support()
                         .flex_1()
                         .min_w_0()
-                        .child(label_block(label.clone(), description, look))
+                        .child(label_block(label.clone(), &[], description, look))
                         .into_any_element(),
                 );
                 if let Some(shortcut) = shortcut.clone() {

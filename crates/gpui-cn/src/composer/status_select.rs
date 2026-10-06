@@ -462,11 +462,11 @@ fn option_row(
                 .map(|icon| line_slot(&look).child(icon.size_4())),
         )
         .child(match description {
-            Some(description) => label_block(label, Some(description), &look),
+            Some(description) => label_block(label, row.matched(), Some(description), &look),
             None => div()
                 .flex_1()
                 .min_w_0()
-                .child(MiddleText::new(label))
+                .child(MiddleText::new(label).marked(row.matched(), look.foreground))
                 .into_any_element(),
         })
         .children(

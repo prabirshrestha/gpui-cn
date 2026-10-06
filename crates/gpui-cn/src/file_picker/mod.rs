@@ -791,7 +791,6 @@ impl RenderOnce for FilePicker {
                     id: self.id.clone(),
                     state: state.clone(),
                     look: look.clone(),
-                    link,
                     pointer_cursors,
                 };
                 ScrollArea::list(
@@ -1090,7 +1089,6 @@ struct Rows {
     id: ElementId,
     state: Entity<FilePickerState>,
     look: MenuLook,
-    link: gpui_kit::Hsla,
     pointer_cursors: bool,
 }
 
@@ -1124,7 +1122,7 @@ impl Rows {
                 icon_of(entry),
             )
         };
-        let label = view::name_label(name.clone(), ranges, self.link);
+        let label = crate::menu::matched_text(name.clone(), &ranges, look);
         let state = self.state.clone();
         let hover = self.state.clone();
         let touch = look.touch;

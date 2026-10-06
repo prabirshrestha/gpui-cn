@@ -1,6 +1,7 @@
 //! The open menu of a select: the panel, the search field, the rows in a
 //! virtual list, and what stands in for them while empty or loading.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::{
@@ -31,12 +32,13 @@ pub(super) type PartRenderer = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// The state of a row a custom item renderer draws; see
 /// [`Select::render_item`](super::Select::render_item).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SelectRow {
     highlighted: bool,
     selected: bool,
     disabled: bool,
+    matched: Vec<Range<usize>>,
 }
 
 impl SelectRow {
@@ -53,6 +55,12 @@ impl SelectRow {
     /// Whether the row's item is disabled.
     pub fn is_disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// The byte ranges of the label that the search matched, to draw in
+    /// the text color at medium weight. Empty without a query.
+    pub fn matched(&self) -> &[Range<usize>] {
+        &self.matched
     }
 }
 
@@ -243,7 +251,7 @@ impl<V: SelectValue> Rows<V> {
             pointer_cursors,
         } = self;
         let pointer_cursors = *pointer_cursors;
-        let (entry, highlighted, selected, row_height) = {
+        let (entry, highlighted, selected, row_height, query) = {
             let state = state.read(cx);
             let Some(entry) = state.entry_at(row) else {
                 return div().into_any_element();
@@ -256,6 +264,7 @@ impl<V: SelectValue> Rows<V> {
                 state.is_highlighted(row),
                 selected,
                 state.row_height(),
+                state.query(cx),
             )
         };
         match entry {
@@ -280,6 +289,7 @@ impl<V: SelectValue> Rows<V> {
                 let value = item.value().clone();
                 let choose_state = state.clone();
                 let hover_state = state.clone();
+                let matched = crate::fuzzy::matched(&query, item.label()).unwrap_or_default();
                 let content: Vec<AnyElement> = match render_item {
                     Some(render) => vec![render(
                         &item,
@@ -287,6 +297,7 @@ impl<V: SelectValue> Rows<V> {
                             highlighted,
                             selected,
                             disabled,
+                            matched,
                         },
                         window,
                         cx,
@@ -295,6 +306,7 @@ impl<V: SelectValue> Rows<V> {
                         &item,
                         &ElementId::NamedChild(id.clone().into(), item.key()),
                         selected,
+                        &matched,
                         look,
                         window,
                         cx,
@@ -343,6 +355,7 @@ fn default_row_content<V: SelectValue>(
     item: &SelectItem<V>,
     row_id: &ElementId,
     selected: bool,
+    matched: &[Range<usize>],
     look: &MenuLook,
     window: &mut Window,
     cx: &mut App,
@@ -367,6 +380,7 @@ fn default_row_content<V: SelectValue>(
                     .min_w_0()
                     .child(label_block(
                         item.label().clone(),
+                        matched,
                         item.description_text().cloned(),
                         look,
                     )),

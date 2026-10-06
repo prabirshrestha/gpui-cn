@@ -1375,3 +1375,65 @@ fn on_touch_a_pointer_over_a_row_leaves_the_highlight(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(highlighted(cx), Some("cloud"), "a mouse highlights the row");
 }
+
+#[gpui_kit::test]
+fn a_fuzzy_search_keeps_the_rows_it_matches_and_marks_the_characters(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    type Seen = std::rc::Rc<std::cell::RefCell<Vec<(String, Vec<std::ops::Range<usize>>)>>>;
+    struct Marked {
+        state: Entity<State>,
+        seen: Seen,
+    }
+    impl Render for Marked {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.seen.clone();
+            div()
+                .size_full()
+                .p_4()
+                .child(
+                    Select::new("pick", &self.state).render_item(move |item, row, _, _| {
+                        seen.borrow_mut()
+                            .push((item.label().to_string(), row.matched().to_vec()));
+                        div().h(px(30.)).child(item.label().clone())
+                    }),
+                )
+        }
+    }
+    let seen: Seen = Default::default();
+    let record = seen.clone();
+    let handle = cx.open_window(size(px(500.), px(600.)), |window, cx| {
+        let select = cx.new(|cx| SelectState::new(entries(), cx).with_search("Search", window, cx));
+        let marked = cx.new(|cx| {
+            cx.observe(&select, |_, _, cx| cx.notify()).detach();
+            Marked {
+                state: select,
+                seen: record,
+            }
+        });
+        Root::new(marked, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.input("dtsh", cx);
+    })
+    .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(child("de")).is_some(), "a subsequence");
+        assert!(window.try_find(child("all")).is_none());
+        seen.borrow_mut().clear();
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&("Deutsch".to_string(), vec![0..1, 3..5, 6..7])),
+        "d, t, s, h are marked in Deutsch"
+    );
+}

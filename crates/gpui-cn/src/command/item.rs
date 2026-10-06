@@ -40,7 +40,7 @@ pub struct CommandItem {
     icon: Option<Box<Icon>>,
     /// The label and the keywords in lower case, one per line: what the
     /// query is looked for in.
-    search_text: String,
+    keywords: Vec<SharedString>,
     action: Option<Box<dyn Action>>,
     action_context: Option<FocusHandle>,
     disabled: bool,
@@ -53,7 +53,7 @@ impl Clone for CommandItem {
             key: self.key.clone(),
             label: self.label.clone(),
             icon: self.icon.clone(),
-            search_text: self.search_text.clone(),
+            keywords: self.keywords.clone(),
             action: self.action.as_ref().map(|action| action.boxed_clone()),
             action_context: self.action_context.clone(),
             disabled: self.disabled,
@@ -68,7 +68,7 @@ impl CommandItem {
         let label = label.into();
         Self {
             key: key.into(),
-            search_text: label.to_lowercase(),
+            keywords: Vec::new(),
             label,
             icon: None,
             action: None,
@@ -88,8 +88,7 @@ impl CommandItem {
     /// terminal.
     pub fn keywords(mut self, keywords: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         for keyword in keywords {
-            self.search_text.push('\n');
-            self.search_text.push_str(&keyword.into().to_lowercase());
+            self.keywords.push(keyword.into());
         }
         self
     }
@@ -146,10 +145,14 @@ impl CommandItem {
         self.disabled
     }
 
-    /// Whether the label or a keyword contains `query`, which must be in
-    /// lower case. An empty query matches everything.
+    /// Whether the query matches the label or a keyword, as a fuzzy
+    /// subsequence ignoring case. An empty query matches everything.
     pub(crate) fn matches(&self, query: &str) -> bool {
-        query.is_empty() || self.search_text.contains(query)
+        crate::fuzzy::is_match(query, &self.label)
+            || self
+                .keywords
+                .iter()
+                .any(|keyword| crate::fuzzy::is_match(query, keyword))
     }
 
     pub(crate) fn leading_icon(&self) -> Option<&Icon> {
@@ -239,7 +242,7 @@ pub(crate) enum Row {
     Item(CommandItem),
 }
 
-/// The rows of `entries` that match `query`, in lower case: groups with
+/// The rows of `entries` that match `query`: groups with
 /// no match drop with their heading, and separators keep only between
 /// two runs of rows.
 pub(crate) fn rows(entries: &[CommandEntry], query: &str) -> Vec<Row> {

@@ -1,5 +1,6 @@
 //! The fuzzy matcher every search in gpui-cn uses: the folder and file
-//! pickers, the model picker, the searchable status lists, and the palettes.
+//! pickers, the model picker, the selects, the searchable status lists, and
+//! the palettes.
 //!
 //! A query matches an item when its characters are a subsequence of the
 //! item's text, ignoring case and accents. Matches that run together or start words score
@@ -9,7 +10,7 @@
 //! The module is public as a small utility, so an application's own search
 //! box can rank like the library's.
 
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range};
 
 use gpui_kit::{FontWeight, HighlightStyle, Hsla, SharedString, StyledText};
 use nucleo_matcher::{
@@ -53,14 +54,7 @@ pub fn rank<T>(query: &str, items: &[T], key: impl Fn(&T) -> &str) -> Vec<Match>
             })
             .collect();
     }
-    let atom = Atom::new(
-        query,
-        CaseMatching::Ignore,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-        false,
-    );
-    let mut matcher = Matcher::new(Config::DEFAULT);
+    let atom = atom(query);
     let mut buffer = Vec::new();
     let mut indices = Vec::new();
     let mut matches: Vec<Match> = items
@@ -68,15 +62,11 @@ pub fn rank<T>(query: &str, items: &[T], key: impl Fn(&T) -> &str) -> Vec<Match>
         .enumerate()
         .filter_map(|(index, item)| {
             let text = key(item);
-            indices.clear();
-            let haystack = Utf32Str::new(text, &mut buffer);
-            let score = atom.indices(haystack, &mut matcher, &mut indices)?;
-            indices.sort_unstable();
-            indices.dedup();
+            let (score, ranges) = score(&atom, text, &mut buffer, &mut indices)?;
             Some(Match {
                 index,
-                score: u32::from(score),
-                ranges: byte_ranges(text, &indices),
+                score,
+                ranges,
             })
         })
         .collect();
@@ -88,6 +78,66 @@ pub fn rank<T>(query: &str, items: &[T], key: impl Fn(&T) -> &str) -> Vec<Match>
             .then_with(|| a.index.cmp(&b.index))
     });
     matches
+}
+
+fn atom(query: &str) -> Atom {
+    Atom::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false,
+    )
+}
+
+thread_local! {
+    static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(Config::DEFAULT));
+}
+
+fn score(
+    atom: &Atom,
+    text: &str,
+    buffer: &mut Vec<char>,
+    indices: &mut Vec<u32>,
+) -> Option<(u32, Vec<Range<usize>>)> {
+    indices.clear();
+    let haystack = Utf32Str::new(text, buffer);
+    let score =
+        MATCHER.with(|matcher| atom.indices(haystack, &mut matcher.borrow_mut(), indices))?;
+    indices.sort_unstable();
+    indices.dedup();
+    Some((u32::from(score), byte_ranges(text, indices)))
+}
+
+/// Whether `query` matches `text`. An empty query matches everything.
+///
+/// ```
+/// use gpui_cn::fuzzy::is_match;
+///
+/// assert!(is_match("cmpsr", "feature/composer"));
+/// assert!(!is_match("zzz", "feature/composer"));
+/// ```
+pub fn is_match(query: &str, text: &str) -> bool {
+    let query = query.trim();
+    query.is_empty() || matched(query, text).is_some()
+}
+
+/// The byte ranges of `text` that `query` matches, or `None` when it does
+/// not match. An empty query matches with no ranges.
+///
+/// ```
+/// use gpui_cn::fuzzy::matched;
+///
+/// assert_eq!(matched("cmp", "feature/composer"), Some(vec![8..9, 10..12]));
+/// assert_eq!(matched("zzz", "feature/composer"), None);
+/// ```
+pub fn matched(query: &str, text: &str) -> Option<Vec<Range<usize>>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Some(Vec::new());
+    }
+    let (_, ranges) = score(&atom(query), text, &mut Vec::new(), &mut Vec::new())?;
+    Some(ranges)
 }
 
 /// The byte ranges of the characters at `indices`, joined where they run
@@ -135,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn a_typo_tolerant_subsequence_finds_the_item() {
+    fn a_subsequence_finds_the_item() {
         assert_eq!(
             found("gpt56m", &["Opus 5.5", "GPT-5.6 Mini"]),
             ["GPT-5.6 Mini"]

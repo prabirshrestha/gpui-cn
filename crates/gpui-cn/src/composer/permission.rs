@@ -405,7 +405,7 @@ fn entries(state: &Entity<PermissionState>, learn_more: bool, cx: &App) -> Vec<M
                 let icon = icon
                     .clone()
                     .map(|icon| line_slot(&look).child(icon.size_4().text_color(icon_color)));
-                let mut block = label_block(label.clone(), description.clone(), &look);
+                let mut block = label_block(label.clone(), &[], description.clone(), &look);
                 if tone == PermissionTone::Warning {
                     block = div()
                         .flex_1()

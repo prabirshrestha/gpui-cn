@@ -109,7 +109,7 @@ pub struct SelectItem<V> {
     /// The label and the keywords, lowercased, one per line: what a
     /// query is looked for in. Built once, so a keystroke over ten
     /// thousand rows allocates nothing per row.
-    search_text: String,
+    keywords: Vec<SharedString>,
     disabled: bool,
 }
 
@@ -130,7 +130,7 @@ impl<V: SelectValue> SelectItem<V> {
         let label = label.into();
         Self {
             value,
-            search_text: label.to_lowercase(),
+            keywords: Vec::new(),
             label,
             description: None,
             leading: None,
@@ -169,8 +169,7 @@ impl<V: SelectValue> SelectItem<V> {
     /// English name beside its own.
     pub fn keywords(mut self, keywords: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         for keyword in keywords {
-            self.search_text.push('\n');
-            self.search_text.push_str(&keyword.into().to_lowercase());
+            self.keywords.push(keyword.into());
         }
         self
     }
@@ -223,20 +222,14 @@ impl<V: SelectValue> SelectItem<V> {
         }
     }
 
-    /// Whether the label or a keyword contains `query`, ignoring case.
-    /// An empty query matches everything.
+    /// Whether the query matches the label or a keyword, as a fuzzy
+    /// subsequence ignoring case. An empty query matches everything.
     pub fn matches(&self, query: &str) -> bool {
-        let query = query.trim();
-        if query.is_empty() {
-            return true;
-        }
-        self.matches_lowercase(&query.to_lowercase())
-    }
-
-    /// [`matches`](Self::matches) for a query already trimmed and
-    /// lowercased, so a filter over many rows lowercases it once.
-    fn matches_lowercase(&self, query: &str) -> bool {
-        query.is_empty() || self.search_text.contains(query)
+        crate::fuzzy::is_match(query, &self.label)
+            || self
+                .keywords
+                .iter()
+                .any(|keyword| crate::fuzzy::is_match(query, keyword))
     }
 }
 
@@ -279,14 +272,14 @@ pub(crate) fn visible_entries<V: SelectValue>(
     entries: &[SelectEntry<V>],
     query: &str,
 ) -> Vec<usize> {
-    let query = query.trim().to_lowercase();
+    let query = query.trim();
     let mut visible = Vec::with_capacity(entries.len());
     let mut pending_label: Option<usize> = None;
     let mut pending_separator: Option<usize> = None;
     for (index, entry) in entries.iter().enumerate() {
         match entry {
             SelectEntry::Item(item) => {
-                if !item.matches_lowercase(&query) {
+                if !item.matches(query) {
                     continue;
                 }
                 if let Some(separator) = pending_separator.take()
@@ -328,12 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn matching_ignores_case_and_reads_keywords() {
+    fn matching_is_fuzzy_ignores_case_and_reads_keywords() {
         let item = SelectItem::new("de", "Deutsch").keywords(["German"]);
         assert!(item.matches(""));
         assert!(item.matches("  "));
         assert!(item.matches("deu"));
         assert!(item.matches("GERM"));
+        assert!(item.matches("dtsh"));
+        assert!(item.matches("grmn"));
         assert!(!item.matches("french"));
     }
 
