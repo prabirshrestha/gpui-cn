@@ -276,6 +276,22 @@ pub struct MetricTokens {
     /// The gap between the thumb and the track's edge: 2px on both. On
     /// touch it is fixed with the track, so the thumb always fits.
     pub switch_thumb_inset: Pixels,
+    /// The height of a slider's track: 6px, shadcn's `h-1.5`.
+    pub slider_track: Pixels,
+    /// The diameter of a slider's thumb: 16px, shadcn's `size-4`.
+    pub slider_thumb: Pixels,
+    /// The diameter of a tick on a slider with stops: 4px, a step under
+    /// the track so the dot sits inside it.
+    pub slider_tick: Pixels,
+    /// The diameter of a radio's ring: 16px, shadcn's `size-4`.
+    pub radio_size: Pixels,
+    /// The diameter of a radio's dot: 8px, shadcn's `size-2`.
+    pub radio_dot: Pixels,
+    /// The diameter of a progress ring: 16px, the context meter of the
+    /// BoardUI composer's status tab. Not measured from the reference app.
+    pub ring_size: Pixels,
+    /// The stroke of a progress ring: 2px, the same source.
+    pub ring_stroke: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
     /// the reference app at 2x.
     pub menu_gap: Pixels,
@@ -428,6 +444,13 @@ impl MetricTokens {
             switch_track_height: if touch { px(31.) } else { scaled(20.) },
             switch_thumb_size: if touch { px(27.) } else { scaled(16.) },
             switch_thumb_inset: if touch { px(2.) } else { scaled(2.) },
+            slider_track: scaled(6.),
+            slider_thumb: scaled(16.),
+            slider_tick: scaled(4.),
+            radio_size: scaled(16.),
+            radio_dot: scaled(8.),
+            ring_size: scaled(16.),
+            ring_stroke: scaled(2.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
             menu_search_min_width: scaled(240.),
@@ -1347,5 +1370,36 @@ mod tests {
         assert_eq!(defaults.font_family(), &TypographyTokens::default().sans);
         assert_eq!(defaults.base.typography.md.size, px(16.));
         assert_eq!(defaults.base.typography.mono_md.size, px(13.));
+    }
+
+    #[test]
+    fn slider_metrics_are_the_shadcn_values_and_scale_with_the_font_size() {
+        let default = light();
+        assert_eq!(default.metrics.slider_track, px(6.), "shadcn h-1.5");
+        assert_eq!(default.metrics.slider_thumb, px(16.), "shadcn size-4");
+        assert_eq!(default.metrics.slider_tick, px(4.));
+        let large = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                ui_font_size: px(20.),
+                ..metrics()
+            },
+        );
+        assert_eq!(large.metrics.slider_thumb, px(20.));
+    }
+
+    #[test]
+    fn radio_metrics_are_the_shadcn_values() {
+        let default = light();
+        assert_eq!(default.metrics.radio_size, px(16.), "shadcn size-4");
+        assert_eq!(default.metrics.radio_dot, px(8.), "shadcn size-2");
+    }
+
+    #[test]
+    fn ring_metrics_scale_with_the_font_size() {
+        let default = light();
+        assert_eq!(default.metrics.ring_size, px(16.));
+        assert_eq!(default.metrics.ring_stroke, px(2.));
     }
 }

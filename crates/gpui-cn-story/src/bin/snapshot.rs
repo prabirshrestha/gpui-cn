@@ -125,6 +125,8 @@ mod macos {
                 "Typography",
                 "Spacing",
                 "Switch",
+                "Slider",
+                "Radio",
                 "Input",
                 "Textarea",
                 "Select",

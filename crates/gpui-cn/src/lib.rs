@@ -50,11 +50,14 @@ mod menu;
 mod nav;
 mod popover;
 mod progress;
+mod progress_ring;
+mod radio;
 mod root;
 mod scroll_area;
 mod select;
 mod sidebar;
 mod skeleton;
+mod slider;
 mod spinner;
 mod switch;
 mod tabs;
@@ -80,6 +83,7 @@ pub use folder_picker::{
 };
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
+pub use gpui_kit::base::slider::{SliderEvent, SliderState, SliderValue};
 pub use icon::{Icon, IconSource};
 pub use input::{Field, Input, Textarea};
 pub use label::Label;
@@ -93,6 +97,8 @@ pub use nav::{
 };
 pub use popover::Popover;
 pub use progress::Progress;
+pub use progress_ring::ProgressRing;
+pub use radio::{Radio, RadioGroup, RadioMark};
 pub use scroll_area::ScrollArea;
 pub use select::{
     SearchHandler, Select, SelectEntry, SelectEvent, SelectItem, SelectRow, SelectState,
@@ -104,6 +110,7 @@ pub use sidebar::{
     SidebarState, SidebarTrigger,
 };
 pub use skeleton::Skeleton;
+pub use slider::Slider;
 pub use spinner::Spinner;
 pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
@@ -126,9 +133,10 @@ pub mod prelude {
         DropdownMenu, Field, FolderPicker, FolderPickerState, Icon, Input, InputState, Label,
         MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu,
         NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, Popover, Progress,
-        ReduceMotion, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
-        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
-        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner, Switch, Tab, Tabs,
+        ProgressRing, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea, Select, SelectEntry,
+        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
+        SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner, Switch, Tab, Tabs,
         TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme, ThemeMode,
         ThemeModePicker, TitleBar, TooltipExt,
     };

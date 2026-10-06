@@ -1,4 +1,6 @@
-use gpui_cn::{ActiveTheme as _, Button, ButtonSize, Progress, gpui_kit::assets::IconName};
+use gpui_cn::{
+    ActiveTheme as _, Button, ButtonSize, Progress, ProgressRing, gpui_kit::assets::IconName,
+};
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _,
     Window, base::Disableable as _, div, px,
@@ -127,6 +129,33 @@ impl Render for ProgressStory {
                         cx,
                     ))
                     .child(Progress::new("indeterminate").accessibility_label("Syncing")),
+            )
+            .into_any_element(),
+            section(
+                "Ring",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(note(
+                        "A ring fills clockwise from the top, in the text color. It follows the \
+                         bar above, and its size and color come from `Styled`.",
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(ProgressRing::new("ring-driven").value(value))
+                            .child(ProgressRing::new("ring-quarter").value(25.).size_8())
+                            .child(
+                                ProgressRing::new("ring-full")
+                                    .value(100.)
+                                    .size_12()
+                                    .text_color(cx.theme().info),
+                            ),
+                    ),
             )
             .into_any_element(),
         ])
