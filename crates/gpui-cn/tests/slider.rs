@@ -257,3 +257,36 @@ fn each_tick_is_centered_on_the_thumb_when_the_value_is_at_its_stop(cx: &mut Tes
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn a_touch_drag_on_the_track_moves_the_thumb(cx: &mut TestAppContext) {
+    use gpui_kit::{PlatformInput, TouchDragEvent, TouchPhase};
+    let setup = setup(cx, false, None);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        let bounds = window.find("effort").bounds();
+        let y = bounds.center().y;
+        let start = point(bounds.left() + bounds.size.width * 0.2, y);
+        for (phase, at) in [
+            (TouchPhase::Started, 0.2),
+            (TouchPhase::Moved, 0.6),
+            (TouchPhase::Moved, 1.0),
+            (TouchPhase::Ended, 1.0),
+        ] {
+            window.dispatch_event(
+                PlatformInput::TouchDrag(TouchDragEvent {
+                    phase,
+                    start_position: start,
+                    position: point(bounds.left() + bounds.size.width * at, y),
+                }),
+                cx,
+            );
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    assert_eq!(value(&setup, cx), 5., "the finger dragged to the end");
+    assert_eq!(
+        setup.events.borrow().last().map(String::as_str),
+        Some("release 5")
+    );
+}
