@@ -3,23 +3,23 @@
 
 use gpui_cn::{
     FileEntry, FilePicker, FilePickerState, FolderEntry, FolderPage, FolderPicker,
-    FolderPickerState, FolderSource, MemoryFiles, PageToken, ReduceMotion, Theme,
+    FolderPickerState, FolderSource, ListError, MemoryFiles, PageToken, ReduceMotion, SourcePath,
+    Theme,
 };
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
     Styled as _, TestAppContext, Window, base::Root, div, px, size, test::TestWindowExt as _,
 };
-use std::{io, path::Path};
 
 struct Folders;
 
 impl FolderSource for Folders {
     fn list(
         &self,
-        _: &Path,
+        _: &SourcePath,
         _: Option<PageToken>,
         cx: &mut gpui_kit::App,
-    ) -> gpui_kit::Task<io::Result<FolderPage>> {
+    ) -> gpui_kit::Task<Result<FolderPage, ListError>> {
         cx.background_spawn(async { Ok(FolderPage::new([FolderEntry::new("a")])) })
     }
 }

@@ -135,7 +135,7 @@ impl Story for FilePickerStory {
             cx.subscribe(&one, |this: &mut Self, _, event, cx| {
                 match event {
                     FilePickerEvent::Confirmed(paths) => {
-                        let path = paths.first().map(|path| path.display().to_string());
+                        let path = paths.first().map(|path| path.to_string());
                         this.chosen = format!("Chose {}.", path.unwrap_or_default()).into();
                     }
                     FilePickerEvent::Cancelled => {}
@@ -148,7 +148,7 @@ impl Story for FilePickerStory {
             cx.subscribe(&many, |this: &mut Self, _, event, cx| {
                 match event {
                     FilePickerEvent::Confirmed(paths) => {
-                        this.chosen_many = paths.iter().map(|p| p.display().to_string()).collect();
+                        this.chosen_many = paths.iter().map(|p| p.to_string()).collect();
                     }
                     FilePickerEvent::Cancelled => {}
                     _ => return,

@@ -4,12 +4,11 @@
 //! the work and the host decides what a row means.
 
 pub(crate) mod path;
+mod style;
 pub(crate) mod view;
 
 use std::{
     collections::{HashMap, HashSet},
-    io,
-    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
@@ -29,6 +28,7 @@ use path::{
     all_visible, collapse_home, is_home_text, join_dir, parent_text, rank, resolve_descend,
     resolve_dir, split_path,
 };
+pub use style::{ListError, PathStyle, SourcePath};
 
 actions!(
     gpui_cn_path_picker,
@@ -95,9 +95,18 @@ pub(crate) struct Page<E> {
 
 /// What a browser lists from.
 pub(crate) trait Source<E>: 'static {
-    fn list(&self, dir: &Path, page: Option<PageToken>, cx: &mut App) -> Task<io::Result<Page<E>>>;
+    fn list(
+        &self,
+        dir: &SourcePath,
+        page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<Result<Page<E>, ListError>>;
 
-    fn home(&self) -> Option<PathBuf>;
+    fn home(&self) -> Option<SourcePath>;
+
+    fn style(&self) -> PathStyle;
+
+    fn env(&self, name: &str) -> Option<String>;
 }
 
 /// Where the request for the next page of a listing stands.
@@ -118,15 +127,17 @@ pub enum MoreState {
 #[non_exhaustive]
 pub struct Loaded<E> {
     pub(crate) entries: Arc<Vec<E>>,
-    pub(crate) names: HashSet<SharedString>,
+    style: PathStyle,
+    names: HashSet<String>,
     pub(crate) next: Option<PageToken>,
     pub(crate) more: MoreState,
 }
 
 impl<E: Entry> Loaded<E> {
-    fn from_page(page: Page<E>) -> Self {
+    fn from_page(page: Page<E>, style: PathStyle) -> Self {
         let mut loaded = Self {
             entries: Arc::new(Vec::new()),
+            style,
             names: HashSet::new(),
             next: None,
             more: MoreState::Idle,
@@ -141,11 +152,24 @@ impl<E: Entry> Loaded<E> {
         self.next = page.next;
         let entries = Arc::make_mut(&mut self.entries);
         for entry in page.entries {
-            if self.names.insert(entry.name().clone()) {
+            if self
+                .names
+                .insert(self.style.fold(entry.name()).into_owned())
+            {
                 entries.push(entry);
             }
         }
         self.more = MoreState::Idle;
+    }
+}
+
+impl<E: Entry> Loaded<E> {
+    /// The entry named `name`, by the source's own rule for case.
+    pub(crate) fn entry_named(&self, name: &str) -> Option<&E> {
+        let wanted = self.style.fold(name);
+        self.entries
+            .iter()
+            .find(|entry| self.style.fold(entry.name()) == wanted)
     }
 }
 
@@ -175,8 +199,8 @@ pub enum Listing<E> {
     /// The entries loaded so far.
     Ready(Loaded<E>),
     /// The source failed for the first page, such as for a path that does
-    /// not exist.
-    Failed,
+    /// not exist, with why.
+    Failed(ListError),
 }
 
 /// What the list area shows.
@@ -189,6 +213,25 @@ pub(crate) enum Body {
     List,
 }
 
+/// How many characters `new` has that `old` does not, counting what lies
+/// between their common start and common end: a keystroke inserts one, a
+/// paste more, and a deletion none.
+fn inserted_chars(old: &str, new: &str) -> usize {
+    let start = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let end = old
+        .chars()
+        .rev()
+        .zip(new.chars().rev())
+        .take(old.chars().count().min(new.chars().count()) - start)
+        .take_while(|(a, b)| a == b)
+        .count();
+    new.chars().count() - start - end
+}
+
 /// A separator typed after a query, waiting for the filter of that query
 /// to finish so it knows which folder to go into.
 struct PendingDescend {
@@ -196,6 +239,9 @@ struct PendingDescend {
 }
 
 type Visible<E> = Arc<dyn Fn(&E) -> bool + Send + Sync>;
+
+/// What the application does when the user asks to sign in to a source.
+pub(crate) type AuthHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// The owner of a browser: it gives access to it, and the browser calls
 /// back through the owner's context.
@@ -215,12 +261,15 @@ pub(crate) trait Host<E: Entry>: 'static + Sized {
 pub(crate) struct Browser<E: Entry> {
     pub(crate) input: Entity<InputState>,
     source: Rc<dyn Source<E>>,
-    pub(crate) windows: bool,
+    pub(crate) style: PathStyle,
     window: AnyWindowHandle,
     pub(crate) dir_text: String,
-    pub(crate) dir: PathBuf,
+    /// The text of the field after the last change the browser took, to
+    /// tell a paste from a keystroke.
+    last_text: String,
+    pub(crate) dir: SourcePath,
     pub(crate) query: SharedString,
-    pub(crate) listings: HashMap<PathBuf, Listing<E>>,
+    pub(crate) listings: HashMap<SourcePath, Listing<E>>,
     /// The running listing of the first page. Dropping it cancels it.
     load: Option<Task<()>>,
     /// The running request for a later page. Dropping it cancels it.
@@ -240,6 +289,7 @@ pub(crate) struct Browser<E: Entry> {
     /// Whether the caller named the start folder, which wins over the
     /// source's home.
     pub(crate) explicit_start: bool,
+    auth_handler: Option<AuthHandler>,
 }
 
 impl<E: Entry> Browser<E> {
@@ -262,13 +312,15 @@ impl<E: Entry> Browser<E> {
                 .ok();
             }
         });
+        let style = source.style();
         Self {
             input,
             source,
-            windows: cfg!(windows),
+            style,
             window: window.window_handle(),
             dir_text: String::new(),
-            dir: PathBuf::new(),
+            last_text: String::new(),
+            dir: style.path(""),
             query: SharedString::default(),
             listings: HashMap::new(),
             load: None,
@@ -283,7 +335,67 @@ impl<E: Entry> Browser<E> {
             pending: None,
             visible: Arc::new(|_| true),
             explicit_start: false,
+            auth_handler: None,
         }
+    }
+
+    /// Sets what the "Sign in" button of a source that needs a login does.
+    pub(crate) fn set_auth_handler(&mut self, handler: AuthHandler) {
+        self.auth_handler = Some(handler);
+    }
+
+    pub(crate) fn auth_handler(&self) -> Option<AuthHandler> {
+        self.auth_handler.clone()
+    }
+
+    /// Why the listed directory failed, when it did.
+    pub(crate) fn failure(&self) -> Option<&ListError> {
+        match self.listing()? {
+            Listing::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// Lists the directory again: its answer is dropped, the spinner shows,
+    /// and the source is asked for the first page.
+    pub(crate) fn retry<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        let dir = self.dir.clone();
+        self.listings.remove(&dir);
+        self.enter(dir, cx);
+        self.refilter(false, cx);
+    }
+
+    /// Cancels every request in flight: a running listing is dropped, so
+    /// its answer never arrives, and a directory that was still loading
+    /// is forgotten so it is listed again when the picker shows.
+    pub(crate) fn stop_requests<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        self.load = None;
+        self.load_more = None;
+        self.filter = None;
+        self.filter_id += 1;
+        self.pending = None;
+        self.load_id += 1;
+        match self.listings.get_mut(&self.dir) {
+            Some(Listing::Loading) => {
+                self.listings.remove(&self.dir);
+            }
+            Some(Listing::Ready(loaded)) if loaded.more == MoreState::Loading => {
+                loaded.more = MoreState::Idle;
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// Lists the directory when no listing of it is known or running, as
+    /// after [`stop_requests`](Self::stop_requests).
+    pub(crate) fn ensure_listed<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        if self.listings.contains_key(&self.dir) || self.dir_text.is_empty() {
+            return;
+        }
+        let dir = self.dir.clone();
+        self.enter(dir, cx);
+        self.refilter(false, cx);
     }
 
     /// The subscription that feeds the path field's edits to the browser.
@@ -308,9 +420,9 @@ impl<E: Entry> Browser<E> {
     /// source's home, or the root.
     pub(crate) fn default_start(&self) -> String {
         if self.source.home().is_some() {
-            format!("~{}", path::separator(self.windows))
+            format!("~{}", self.style.separator())
         } else {
-            path::separator(self.windows).to_string()
+            self.style.separator().to_string()
         }
     }
 
@@ -335,11 +447,12 @@ impl<E: Entry> Browser<E> {
         window: &mut Window,
         cx: &mut Context<O>,
     ) {
+        self.style = source.style();
         self.source = source;
         self.listings.clear();
         self.load = None;
         self.load_more = None;
-        self.dir = PathBuf::new();
+        self.dir = self.style.path("");
         let text = if self.explicit_start {
             self.input.read(cx).value().to_string()
         } else {
@@ -351,14 +464,14 @@ impl<E: Entry> Browser<E> {
     /// Starts in `path`, which is listed at once.
     pub(crate) fn start_in<O: Host<E>>(
         &mut self,
-        path: &Path,
+        path: &str,
         window: &mut Window,
         cx: &mut Context<O>,
     ) {
         self.explicit_start = true;
-        let mut text = path.to_string_lossy().into_owned();
-        if !text.ends_with(|c| path::is_separator(c, self.windows)) {
-            text.push(path::separator(self.windows));
+        let mut text = path.to_string();
+        if !text.ends_with(|c| self.style.is_separator(c)) {
+            text.push(self.style.separator());
         }
         self.set_text(&text, window, cx);
     }
@@ -401,7 +514,7 @@ impl<E: Entry> Browser<E> {
     pub(crate) fn body(&self) -> Body {
         match self.listing() {
             None | Some(Listing::Loading) => Body::Loading,
-            Some(Listing::Failed) => Body::Failed,
+            Some(Listing::Failed(_)) => Body::Failed,
             Some(Listing::Ready(_)) => {
                 if self.has_more_row() || !self.shown.is_empty() {
                     Body::List
@@ -439,6 +552,7 @@ impl<E: Entry> Browser<E> {
         self.input.update(cx, |input, cx| {
             input.set_value(text.to_string(), window, cx)
         });
+        self.last_text = text.to_string();
         self.apply_text(text.to_string(), cx);
     }
 
@@ -447,22 +561,21 @@ impl<E: Entry> Browser<E> {
     pub(crate) fn go_up<O: Host<E>>(&mut self, window: &mut Window, cx: &mut Context<O>) {
         let home = self.source.home();
         let at_home = home.is_some()
-            && is_home_text(&self.dir_text, self.windows)
+            && is_home_text(&self.dir_text, &self.style)
             && self
                 .dir_text
-                .trim_end_matches(|c| path::is_separator(c, self.windows))
+                .trim_end_matches(|c| self.style.is_separator(c))
                 == "~";
         let text = if at_home {
             let home = home
                 .clone()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            parent_text(&home, self.windows)
+                .map(|home| home.to_string())
+                .unwrap_or_default();
+            parent_text(&home, &self.style)
         } else {
-            parent_text(&self.dir_text, self.windows)
+            parent_text(&self.dir_text, &self.style)
         };
-        let text = collapse_home(&text, home.as_deref(), self.windows);
+        let text = collapse_home(&text, home.as_ref(), &self.style);
         self.set_text(&text, window, cx);
     }
 
@@ -473,8 +586,8 @@ impl<E: Entry> Browser<E> {
         window: &mut Window,
         cx: &mut Context<O>,
     ) {
-        let text = join_dir(&self.dir_text, name, self.windows);
-        let text = collapse_home(&text, self.source.home().as_deref(), self.windows);
+        let text = join_dir(&self.dir_text, name, &self.style);
+        let text = collapse_home(&text, self.source.home().as_ref(), &self.style);
         self.set_text(&text, window, cx);
     }
 
@@ -522,17 +635,21 @@ impl<E: Entry> Browser<E> {
 
     /// The user edited the path text.
     fn text_changed<O: Host<E>>(&mut self, text: String, window: &mut Window, cx: &mut Context<O>) {
+        if inserted_chars(&self.last_text, &text) > 1 {
+            let source = self.source.clone();
+            let env = move |name: &str| source.env(name);
+            let clean = self.style.normalize_pasted(&text, &env);
+            if clean != text {
+                self.set_text(&clean, window, cx);
+                return;
+            }
+        }
+        self.last_text = text.clone();
         let typed_separator = !self.query.is_empty()
-            && text
-                == format!(
-                    "{}{}{}",
-                    self.dir_text,
-                    self.query,
-                    path::separator(self.windows)
-                )
-            || (!self.query.is_empty()
-                && self.windows
-                && text == format!("{}{}/", self.dir_text, self.query));
+            && self
+                .style
+                .is_separator(text.chars().last().unwrap_or_default())
+            && text[..text.len() - 1] == format!("{}{}", self.dir_text, self.query);
         if !typed_separator {
             self.pending = None;
             self.apply_text(text, cx);
@@ -555,9 +672,9 @@ impl<E: Entry> Browser<E> {
         window: &mut Window,
         cx: &mut Context<O>,
     ) {
-        let name = self
-            .loaded()
-            .and_then(|loaded| resolve_descend(loaded.entries(), &self.shown, &self.query));
+        let name = self.loaded().and_then(|loaded| {
+            resolve_descend(loaded.entries(), &self.shown, &self.query, &self.style)
+        });
         match name {
             Some(name) => self.descend(&name, window, cx),
             None => self.apply_text(typed, cx),
@@ -568,11 +685,11 @@ impl<E: Entry> Browser<E> {
     /// directory when it changed, and filters its entries.
     fn apply_text<O: Host<E>>(&mut self, text: String, cx: &mut Context<O>) {
         let (dir_text, query) = if text == "~" && self.source.home().is_some() {
-            (format!("~{}", path::separator(self.windows)), String::new())
+            (format!("~{}", self.style.separator()), String::new())
         } else {
-            split_path(&text, self.windows)
+            split_path(&text, &self.style)
         };
-        let dir = resolve_dir(&dir_text, self.source.home().as_deref(), self.windows);
+        let dir = resolve_dir(&dir_text, self.source.home().as_ref(), &self.style);
         self.dir_text = dir_text;
         self.query = query.into();
         if dir != self.dir {
@@ -584,7 +701,7 @@ impl<E: Entry> Browser<E> {
     /// Moves to `dir`: cancels the requests for the directory left, keeps
     /// only the listings that finished, and lists `dir` unless it is
     /// cached.
-    fn enter<O: Host<E>>(&mut self, dir: PathBuf, cx: &mut Context<O>) {
+    fn enter<O: Host<E>>(&mut self, dir: SourcePath, cx: &mut Context<O>) {
         self.load = None;
         self.load_more = None;
         self.load_id += 1;
@@ -622,9 +739,9 @@ impl<E: Entry> Browser<E> {
     /// The first page arrived. It is dropped when the path has moved on.
     fn first_page<O: Host<E>>(
         &mut self,
-        dir: PathBuf,
+        dir: SourcePath,
         id: u64,
-        result: io::Result<Page<E>>,
+        result: Result<Page<E>, ListError>,
         cx: &mut Context<O>,
     ) {
         if id != self.load_id || dir != self.dir {
@@ -632,8 +749,8 @@ impl<E: Entry> Browser<E> {
         }
         self.load = None;
         let listing = match result {
-            Ok(page) => Listing::Ready(Loaded::from_page(page)),
-            Err(_) => Listing::Failed,
+            Ok(page) => Listing::Ready(Loaded::from_page(page, self.style)),
+            Err(error) => Listing::Failed(error),
         };
         self.listings.insert(dir, listing);
         self.refilter(false, cx);
@@ -642,9 +759,9 @@ impl<E: Entry> Browser<E> {
     /// A later page arrived. It is dropped when the path has moved on.
     fn paged<O: Host<E>>(
         &mut self,
-        dir: PathBuf,
+        dir: SourcePath,
         id: u64,
-        result: io::Result<Page<E>>,
+        result: Result<Page<E>, ListError>,
         cx: &mut Context<O>,
     ) {
         if id != self.load_id || dir != self.dir {

@@ -9,12 +9,11 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use super::{Entry, Host, MoreState};
-use crate::{Spinner, menu::MenuLook};
+use super::{Entry, Host, ListError, MoreState};
+use crate::{Button, ButtonSize, Spinner, menu::MenuLook};
 
 pub(crate) const EMPTY_FOLDERS: &str = "No folders found in this directory.";
 pub(crate) const EMPTY_FILES: &str = "Nothing to show in this directory.";
-pub(crate) const FAILED: &str = "Unable to load this folder";
 pub(crate) const NO_MATCH: &str = "No folders match.";
 pub(crate) const NO_FILE_MATCH: &str = "No matches.";
 const LOAD_MORE: &str = "Load more";
@@ -32,6 +31,58 @@ pub(crate) fn message(id: ElementId, look: &MenuLook, text: &'static str) -> Any
         .justify_center()
         .text_color(look.muted_foreground)
         .child(text)
+        .into_any_element()
+}
+
+/// Why a directory could not be listed, centered in the list box with the
+/// action that can fix it: Retry after a lost connection or an error, and
+/// "Sign in" when the source needs the user to log in and the application
+/// gave the picker a handler for that.
+pub(crate) fn failure<E: Entry, O: Host<E>>(
+    id: &ElementId,
+    look: &MenuLook,
+    state: &Entity<O>,
+    error: &ListError,
+    can_sign_in: bool,
+) -> AnyElement {
+    let child = |name: &'static str| ElementId::NamedChild(id.clone().into(), name.into());
+    let retry = state.clone();
+    let sign_in = state.clone();
+    v_flex()
+        .id(child("message"))
+        .test_support()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .px(look.padding * 2.)
+        .text_color(look.muted_foreground)
+        .child(div().text_center().child(error.message()))
+        .when(error.is_retryable(), |this| {
+            this.child(
+                Button::new(child("retry"))
+                    .outline()
+                    .size(ButtonSize::Sm)
+                    .label("Retry")
+                    .on_click(move |_, _, cx| {
+                        retry.update(cx, |state, cx| state.browser_mut().retry(cx));
+                    }),
+            )
+        })
+        .when(error.needs_sign_in() && can_sign_in, |this| {
+            this.child(
+                Button::new(child("sign-in"))
+                    .outline()
+                    .size(ButtonSize::Sm)
+                    .label("Sign in")
+                    .on_click(move |_, window, cx| {
+                        let handler = sign_in.read(cx).browser().auth_handler();
+                        if let Some(handler) = handler {
+                            handler(window, cx);
+                        }
+                    }),
+            )
+        })
         .into_any_element()
 }
 

@@ -3,14 +3,12 @@
 //! padding, and a row is at least the row height. One table, run against
 //! the select and every consumer of its row.
 
-use std::{io, path::Path};
-
 use gpui_cn::{
     ActiveTheme as _, Command, CommandItem, CommandState, DropdownMenu, FileEntry, FilePicker,
     FilePickerState, FolderEntry, FolderPage, FolderPicker, FolderPickerState, FolderSource,
-    MemoryFiles, MenuEntry, MenuItem, MenuState, ModelEntry, ModelPicker, ModelPickerState,
-    ModelProvider, PageToken, ReduceMotion, Select, SelectItem, SelectState, StatusOption,
-    StatusSelect, StatusSelectState, Theme,
+    ListError, MemoryFiles, MenuEntry, MenuItem, MenuState, ModelEntry, ModelPicker,
+    ModelPickerState, ModelProvider, PageToken, ReduceMotion, Select, SelectItem, SelectState,
+    SourcePath, StatusOption, StatusSelect, StatusSelectState, Theme,
 };
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
@@ -22,10 +20,10 @@ struct Folders;
 impl FolderSource for Folders {
     fn list(
         &self,
-        _: &Path,
+        _: &SourcePath,
         _: Option<PageToken>,
         cx: &mut gpui_kit::App,
-    ) -> gpui_kit::Task<io::Result<FolderPage>> {
+    ) -> gpui_kit::Task<Result<FolderPage, ListError>> {
         cx.background_spawn(async {
             Ok(FolderPage::new([
                 FolderEntry::new("alpha"),

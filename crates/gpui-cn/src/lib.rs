@@ -114,6 +114,7 @@ pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
 };
+pub use path_browser::{ListError, PathStyle, SourcePath};
 pub use popover::Popover;
 pub use progress::Progress;
 pub use radio::{Radio, RadioGroup, RadioMark};

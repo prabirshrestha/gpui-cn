@@ -4,14 +4,12 @@
 
 use std::{
     cell::{Cell, RefCell},
-    io,
-    path::{Path, PathBuf},
     rc::Rc,
 };
 
 use gpui_cn::{
     FileEntry, FileFilter, FilePage, FilePicker, FilePickerEvent, FilePickerState, FileSource,
-    LocalFiles, MemoryFiles, PageToken, ReduceMotion, Theme,
+    ListError, LocalFiles, MemoryFiles, PageToken, PathStyle, ReduceMotion, SourcePath, Theme,
 };
 use gpui_kit::{
     App, AppContext as _, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
@@ -31,8 +29,12 @@ const SUBMIT: &str = if cfg!(target_os = "macos") {
     "ctrl-enter"
 };
 
-type Reply = io::Result<FilePage>;
-type Pending = Vec<(PathBuf, smol::channel::Sender<Reply>)>;
+type Reply = Result<FilePage, ListError>;
+type Pending = Vec<(SourcePath, smol::channel::Sender<Reply>)>;
+
+fn sp(text: &str) -> SourcePath {
+    PathStyle::posix().path(text)
+}
 
 /// A source that answers when told to.
 #[derive(Clone, Default)]
@@ -41,13 +43,17 @@ struct Fake {
 }
 
 impl FileSource for Fake {
-    fn list(&self, dir: &Path, _: Option<PageToken>, cx: &mut App) -> Task<Reply> {
+    fn path_style(&self) -> PathStyle {
+        PathStyle::posix()
+    }
+
+    fn list(&self, dir: &SourcePath, _: Option<PageToken>, cx: &mut App) -> Task<Reply> {
         let (tx, rx) = smol::channel::bounded(1);
-        self.pending.borrow_mut().push((dir.to_path_buf(), tx));
+        self.pending.borrow_mut().push((dir.clone(), tx));
         cx.spawn(async move |_| {
             rx.recv()
                 .await
-                .unwrap_or_else(|_| Err(io::Error::other("cancelled")))
+                .unwrap_or_else(|_| Err(ListError::Other("cancelled".into())))
         })
     }
 }
@@ -57,7 +63,7 @@ impl Fake {
         let mut pending = self.pending.borrow_mut();
         let at = pending
             .iter()
-            .rposition(|(path, _)| path == &PathBuf::from(dir))
+            .rposition(|(path, _)| path == &sp(dir))
             .unwrap_or_else(|| panic!("no request for {dir}"));
         pending.remove(at).1.try_send(reply).ok();
     }
@@ -263,12 +269,12 @@ fn selection(setup: &Setup, cx: &mut TestAppContext) -> Vec<String> {
         state
             .selection()
             .iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .map(|path| path.file_name().unwrap().to_string())
             .collect()
     })
 }
 
-fn confirmed(setup: &Setup) -> Vec<Vec<PathBuf>> {
+fn confirmed(setup: &Setup) -> Vec<Vec<SourcePath>> {
     setup
         .events
         .borrow()
@@ -326,7 +332,7 @@ fn a_click_selects_a_file_and_enter_chooses_it(cx: &mut TestAppContext) {
     );
     assert!(confirmed(&setup).is_empty(), "a click only selects");
     press(&setup, "enter", cx);
-    assert_eq!(confirmed(&setup), [[PathBuf::from("/home/me/main.rs")]]);
+    assert_eq!(confirmed(&setup), [[sp("/home/me/main.rs")]]);
 }
 
 #[gpui_kit::test]
@@ -339,7 +345,7 @@ fn enter_opens_the_file_the_keyboard_is_on(cx: &mut TestAppContext) {
         Some("notes.txt".into())
     );
     press(&setup, "enter", cx);
-    assert_eq!(confirmed(&setup), [[PathBuf::from("/home/me/notes.txt")]]);
+    assert_eq!(confirmed(&setup), [[sp("/home/me/notes.txt")]]);
 }
 
 #[gpui_kit::test]
@@ -351,14 +357,14 @@ fn the_open_button_waits_for_a_selection(cx: &mut TestAppContext) {
     assert!(confirmed(&setup).is_empty(), "nothing is selected");
     click(&setup, entry("lib.rs"), cx);
     click(&setup, part("open"), cx);
-    assert_eq!(confirmed(&setup), [[PathBuf::from("/home/me/lib.rs")]]);
+    assert_eq!(confirmed(&setup), [[sp("/home/me/lib.rs")]]);
 }
 
 #[gpui_kit::test]
 fn a_double_click_chooses_a_file(cx: &mut TestAppContext) {
     let setup = start(cx, project(), "/home/me", keep());
     double_click(&setup, entry("readme.md"), cx);
-    assert_eq!(confirmed(&setup), [[PathBuf::from("/home/me/readme.md")]]);
+    assert_eq!(confirmed(&setup), [[sp("/home/me/readme.md")]]);
 }
 
 #[gpui_kit::test]
@@ -366,10 +372,8 @@ fn folders_open_on_a_double_click_or_enter_and_a_click_does_not(cx: &mut TestApp
     let setup = start(cx, project(), "/home/me", keep());
     click(&setup, entry("src"), cx);
     assert_eq!(
-        setup
-            .state
-            .read_with(cx, |state, _| state.dir().to_path_buf()),
-        PathBuf::from("/home/me")
+        setup.state.read_with(cx, |state, _| state.dir().clone()),
+        sp("/home/me")
     );
     assert!(
         selection(&setup, cx).is_empty(),
@@ -377,20 +381,16 @@ fn folders_open_on_a_double_click_or_enter_and_a_click_does_not(cx: &mut TestApp
     );
     double_click(&setup, entry("src"), cx);
     assert_eq!(
-        setup
-            .state
-            .read_with(cx, |state, _| state.dir().to_path_buf()),
-        PathBuf::from("/home/me/src")
+        setup.state.read_with(cx, |state, _| state.dir().clone()),
+        sp("/home/me/src")
     );
     assert_eq!(names(&setup, cx), ["inner.rs"]);
     click(&setup, part("up"), cx);
     assert_eq!(names(&setup, cx).first().map(String::as_str), Some("src"));
     press(&setup, "enter", cx);
     assert_eq!(
-        setup
-            .state
-            .read_with(cx, |state, _| state.dir().to_path_buf()),
-        PathBuf::from("/home/me/src")
+        setup.state.read_with(cx, |state, _| state.dir().clone()),
+        sp("/home/me/src")
     );
 }
 
@@ -446,10 +446,7 @@ fn modifiers_toggle_and_extend_a_selection_of_several(cx: &mut TestAppContext) {
     press(&setup, SUBMIT, cx);
     assert_eq!(
         confirmed(&setup),
-        [[
-            PathBuf::from("/home/me/Cargo.toml"),
-            PathBuf::from("/home/me/lib.rs")
-        ]]
+        [[sp("/home/me/Cargo.toml"), sp("/home/me/lib.rs")]]
     );
 }
 
@@ -591,15 +588,13 @@ fn multiple_filters() -> Configure {
 fn tilde_stands_for_the_home_and_the_path_filters_files(cx: &mut TestAppContext) {
     let setup = start(cx, project(), "~", keep());
     assert_eq!(
-        setup
-            .state
-            .read_with(cx, |state, _| state.dir().to_path_buf()),
-        PathBuf::from("/home/me")
+        setup.state.read_with(cx, |state, _| state.dir().clone()),
+        sp("/home/me")
     );
     type_text(&setup, "main", cx);
     assert_eq!(names(&setup, cx), ["main.rs"]);
     press(&setup, "enter", cx);
-    assert_eq!(confirmed(&setup), [[PathBuf::from("/home/me/main.rs")]]);
+    assert_eq!(confirmed(&setup), [[sp("/home/me/main.rs")]]);
 }
 
 #[gpui_kit::test]
@@ -651,7 +646,7 @@ fn the_dialog_and_the_list_keep_their_height_in_every_state(cx: &mut TestAppCont
 
     click(&setup, part("up"), cx);
     same(&setup, cx, "parent loading");
-    fake.resolve("/home", Err(io::Error::other("denied")));
+    fake.resolve("/home", Err(ListError::Other("denied".into())));
     settle(&setup, cx);
     same(&setup, cx, "failed");
 
@@ -671,7 +666,8 @@ fn the_local_disk_lists_folders_first_then_files(cx: &mut TestAppContext) {
     std::fs::write(dir.join("Apple.txt"), "").unwrap();
     std::fs::write(dir.join(".hidden"), "").unwrap();
     cx.executor().allow_parking();
-    let task = cx.update(|cx| LocalFiles.list(&dir, None, cx));
+    let task =
+        cx.update(|cx| LocalFiles.list(&PathStyle::host().path(dir.to_string_lossy()), None, cx));
     let page = cx.foreground_executor().block_test(task).unwrap();
     let listed: Vec<_> = page
         .entries()
@@ -693,7 +689,13 @@ fn the_local_disk_lists_folders_first_then_files(cx: &mut TestAppContext) {
             .iter()
             .all(|entry| entry.modified().is_some())
     );
-    let missing = cx.update(|cx| LocalFiles.list(&dir.join("missing"), None, cx));
+    let missing = cx.update(|cx| {
+        LocalFiles.list(
+            &PathStyle::host().path(dir.join("missing").to_string_lossy()),
+            None,
+            cx,
+        )
+    });
     assert!(cx.foreground_executor().block_test(missing).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -760,7 +762,7 @@ fn on_the_real_disk_a_file_can_be_found_selected_and_chosen(cx: &mut TestAppCont
     click(&setup, part("open"), cx);
     assert_eq!(
         confirmed(&setup),
-        [[dir.join("a.rs")]],
+        [[PathStyle::host().path(dir.join("a.rs").to_string_lossy())]],
         "Open chooses the selection"
     );
     std::fs::remove_dir_all(&dir).unwrap();

@@ -3,14 +3,13 @@
 
 use std::{
     cell::{Cell, RefCell},
-    io,
-    path::{Path, PathBuf},
     rc::Rc,
 };
 
 use gpui_cn::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
-    Listing, LocalFolders, MoreState, PageToken, ReduceMotion, Theme,
+    ListError, Listing, LocalFolders, MoreState, PageToken, PathStyle, ReduceMotion, SourcePath,
+    Theme,
 };
 use gpui_kit::{
     App, AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
@@ -18,37 +17,43 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 
-type Reply = io::Result<FolderPage>;
-type Pending = Vec<(PathBuf, Option<String>, smol::channel::Sender<Reply>)>;
+type Reply = Result<FolderPage, ListError>;
+type Pending = Vec<(SourcePath, Option<String>, smol::channel::Sender<Reply>)>;
+
+fn sp(text: &str) -> SourcePath {
+    PathStyle::posix().path(text)
+}
 
 /// A source that answers when told to.
 #[derive(Clone, Default)]
 struct Fake {
     pending: Rc<RefCell<Pending>>,
     log: Rc<RefCell<Vec<String>>>,
-    home: Option<PathBuf>,
+    home: Option<SourcePath>,
 }
 
 impl FolderSource for Fake {
-    fn home(&self) -> Option<PathBuf> {
+    fn home(&self) -> Option<SourcePath> {
         self.home.clone()
     }
 
-    fn list(&self, dir: &Path, page: Option<PageToken>, cx: &mut App) -> Task<Reply> {
+    fn path_style(&self) -> PathStyle {
+        PathStyle::posix()
+    }
+
+    fn list(&self, dir: &SourcePath, page: Option<PageToken>, cx: &mut App) -> Task<Reply> {
         let (tx, rx) = smol::channel::bounded(1);
         let token = page.map(|token| token.as_str().to_string());
         let label = match &token {
-            Some(token) => format!("{}@{token}", dir.display()),
-            None => dir.display().to_string(),
+            Some(token) => format!("{dir}@{token}"),
+            None => dir.to_string(),
         };
         self.log.borrow_mut().push(label);
-        self.pending
-            .borrow_mut()
-            .push((dir.to_path_buf(), token, tx));
+        self.pending.borrow_mut().push((dir.clone(), token, tx));
         cx.spawn(async move |_| {
             rx.recv()
                 .await
-                .unwrap_or_else(|_| Err(io::Error::other("cancelled")))
+                .unwrap_or_else(|_| Err(ListError::Other("cancelled".into())))
         })
     }
 }
@@ -60,7 +65,7 @@ impl Fake {
         let mut pending = self.pending.borrow_mut();
         let at = pending
             .iter()
-            .rposition(|(path, page, _)| path == &PathBuf::from(dir) && page.as_deref() == token)
+            .rposition(|(path, page, _)| path == &sp(dir) && page.as_deref() == token)
             .unwrap_or_else(|| panic!("no request for {dir} {token:?}"));
         let (_, _, sender) = pending.remove(at);
         sender.try_send(reply).ok();
@@ -131,7 +136,7 @@ fn start(cx: &mut TestAppContext, initial: Option<&str>, home: Option<&str>) -> 
         Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
     });
     let fake = Fake {
-        home: home.map(PathBuf::from),
+        home: home.map(sp),
         ..Fake::default()
     };
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -220,8 +225,8 @@ fn text(setup: &Setup, cx: &mut TestAppContext) -> String {
     cx.update(|cx| setup.state.read(cx).text(cx).to_string())
 }
 
-fn dir(setup: &Setup, cx: &mut TestAppContext) -> PathBuf {
-    cx.update(|cx| setup.state.read(cx).dir().to_path_buf())
+fn dir(setup: &Setup, cx: &mut TestAppContext) -> SourcePath {
+    cx.update(|cx| setup.state.read(cx).dir().clone())
 }
 
 fn highlighted(setup: &Setup, cx: &mut TestAppContext) -> Option<String> {
@@ -304,7 +309,7 @@ fn a_separator_goes_inside_the_top_match(cx: &mut TestAppContext) {
     type_text(&setup, "cx", cx);
     type_text(&setup, "/", cx);
     assert_eq!(text(&setup, cx), "/home/me/.codex/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/home/me/.codex"));
+    assert_eq!(dir(&setup, cx), sp("/home/me/.codex"));
     assert_eq!(setup.fake.requested(), ["/home/me", "/home/me/.codex"]);
     assert_eq!(cx.update(|cx| setup.state.read(cx).query().to_string()), "");
     assert!(present(&setup, part("loading"), cx));
@@ -320,7 +325,7 @@ fn a_separator_goes_inside_the_exact_folder(cx: &mut TestAppContext) {
     type_text(&setup, "code", cx);
     type_text(&setup, "/", cx);
     assert_eq!(text(&setup, cx), "/home/me/code/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/home/me/code"));
+    assert_eq!(dir(&setup, cx), sp("/home/me/code"));
 }
 
 #[gpui_kit::test]
@@ -334,12 +339,12 @@ fn a_separator_after_no_match_keeps_the_text_and_the_listing_fails(cx: &mut Test
     assert_eq!(setup.fake.requested(), ["/home/me", "/home/me/zzz"]);
     setup
         .fake
-        .resolve("/home/me/zzz", Err(io::Error::other("missing")));
+        .resolve("/home/me/zzz", Err(ListError::Other("missing".into())));
     settle(&setup, cx);
     cx.update(|cx| {
         assert!(matches!(
             setup.state.read(cx).listing(),
-            Some(Listing::Failed)
+            Some(Listing::Failed(_))
         ))
     });
     assert!(present(&setup, part("message"), cx));
@@ -383,7 +388,7 @@ fn the_up_button_goes_to_the_parent_and_the_root_stays(cx: &mut TestAppContext) 
     click(&setup, part("up"), cx);
     click(&setup, part("up"), cx);
     assert_eq!(text(&setup, cx), "/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/"));
+    assert_eq!(dir(&setup, cx), sp("/"));
     click(&setup, part("up"), cx);
     assert_eq!(text(&setup, cx), "/");
 }
@@ -401,7 +406,7 @@ fn enter_and_a_click_go_inside_a_folder(cx: &mut TestAppContext) {
     settle(&setup, cx);
     click(&setup, part("b"), cx);
     assert_eq!(text(&setup, cx), "/home/me/docs/b/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/home/me/docs/b"));
+    assert_eq!(dir(&setup, cx), sp("/home/me/docs/b"));
 }
 
 #[gpui_kit::test]
@@ -438,7 +443,7 @@ fn use_folder_needs_a_listed_directory_or_an_exact_folder(cx: &mut TestAppContex
     click(&setup, part("use"), cx);
     assert_eq!(
         events(&setup),
-        [FolderPickerEvent::Chosen(PathBuf::from("/home/me/docs"))]
+        [FolderPickerEvent::Chosen(sp("/home/me/docs"))]
     );
 }
 
@@ -453,8 +458,8 @@ fn the_current_folder_row_and_use_folder_choose_the_listed_directory(cx: &mut Te
     assert_eq!(
         events(&setup),
         [
-            FolderPickerEvent::Chosen(PathBuf::from("/home/me")),
-            FolderPickerEvent::Chosen(PathBuf::from("/home/me")),
+            FolderPickerEvent::Chosen(sp("/home/me")),
+            FolderPickerEvent::Chosen(sp("/home/me")),
         ]
     );
     type_text(&setup, "c", cx);
@@ -467,10 +472,7 @@ fn the_root_is_chosen_with_its_separator(cx: &mut TestAppContext) {
     setup.fake.resolve("/", ready(&["home"]));
     settle(&setup, cx);
     click(&setup, part("use"), cx);
-    assert_eq!(
-        events(&setup),
-        [FolderPickerEvent::Chosen(PathBuf::from("/"))]
-    );
+    assert_eq!(events(&setup), [FolderPickerEvent::Chosen(sp("/"))]);
 }
 
 #[gpui_kit::test]
@@ -478,12 +480,12 @@ fn a_failed_listing_and_an_empty_one_show_a_message(cx: &mut TestAppContext) {
     let setup = setup(cx, "/home/me");
     setup
         .fake
-        .resolve("/home/me", Err(io::Error::other("denied")));
+        .resolve("/home/me", Err(ListError::Other("denied".into())));
     settle(&setup, cx);
     cx.update(|cx| {
         assert!(matches!(
             setup.state.read(cx).listing(),
-            Some(Listing::Failed)
+            Some(Listing::Failed(_))
         ))
     });
     assert!(present(&setup, part("message"), cx));
@@ -504,7 +506,7 @@ fn a_failed_listing_and_an_empty_one_show_a_message(cx: &mut TestAppContext) {
     click(&setup, part("use"), cx);
     assert_eq!(
         events(&setup),
-        [FolderPickerEvent::Chosen(PathBuf::from("/home"))],
+        [FolderPickerEvent::Chosen(sp("/home"))],
         "an empty folder can be used"
     );
 }
@@ -560,7 +562,8 @@ fn the_local_lister_lists_folders_only_sorted_with_hidden_last(cx: &mut TestAppC
         std::os::unix::fs::symlink(root.join("file.txt"), root.join("filelink")).unwrap();
     }
     cx.executor().allow_parking();
-    let task = cx.update(|cx| LocalFolders.list(&root, None, cx));
+    let task = cx
+        .update(|cx| LocalFolders.list(&PathStyle::host().path(root.to_string_lossy()), None, cx));
     let listed = cx.foreground_executor().block_test(task).unwrap();
     let listed = listed.entries();
     let names: Vec<_> = listed
@@ -577,7 +580,13 @@ fn the_local_lister_lists_folders_only_sorted_with_hidden_last(cx: &mut TestAppC
             .any(|entry| entry.name() == ".zed" && entry.hidden())
     );
 
-    let task = cx.update(|cx| LocalFolders.list(&root.join("missing"), None, cx));
+    let task = cx.update(|cx| {
+        LocalFolders.list(
+            &PathStyle::host().path(root.join("missing").to_string_lossy()),
+            None,
+            cx,
+        )
+    });
     assert!(cx.foreground_executor().block_test(task).is_err());
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -593,7 +602,7 @@ fn a_separator_typed_before_the_filter_finishes_waits_for_it(cx: &mut TestAppCon
     }
     settle(&setup, cx);
     assert_eq!(text(&setup, cx), "/home/me/.codex/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/home/me/.codex"));
+    assert_eq!(dir(&setup, cx), sp("/home/me/.codex"));
 }
 
 const SUBMIT: &str = if cfg!(target_os = "macos") {
@@ -620,7 +629,7 @@ fn the_submit_shortcut_chooses_like_use_folder_from_the_path_field(cx: &mut Test
     press(&setup, SUBMIT, cx);
     assert_eq!(
         events(&setup),
-        [FolderPickerEvent::Chosen(PathBuf::from("/home/me/docs"))]
+        [FolderPickerEvent::Chosen(sp("/home/me/docs"))]
     );
 }
 
@@ -723,7 +732,7 @@ fn a_failed_page_keeps_the_rows_and_the_row_retries(cx: &mut TestAppContext) {
     click(&setup, part("more"), cx);
     setup
         .fake
-        .resolve_page("/home/me", "2", Err(io::Error::other("offline")));
+        .resolve_page("/home/me", "2", Err(ListError::Other("offline".into())));
     settle(&setup, cx);
     assert_eq!(more_state(&setup, cx), Some(MoreState::Failed));
     assert_eq!(rows(&setup, cx), 2, "the loaded folders stay");
@@ -816,7 +825,7 @@ fn a_failed_page_is_not_retried_by_scrolling(cx: &mut TestAppContext) {
     }
     setup
         .fake
-        .resolve_page("/home/me", "2", Err(io::Error::other("offline")));
+        .resolve_page("/home/me", "2", Err(ListError::Other("offline".into())));
     settle(&setup, cx);
     scroll_rows(&setup, -2000., cx);
     scroll_rows(&setup, 50., cx);
@@ -889,7 +898,7 @@ fn the_dialog_and_the_list_keep_their_height_in_every_state(cx: &mut TestAppCont
     same(&setup, cx, "descend loading");
     setup
         .fake
-        .resolve("/home/new", Err(io::Error::other("denied")));
+        .resolve("/home/new", Err(ListError::Other("denied".into())));
     settle(&setup, cx);
     same(&setup, cx, "failed");
 
@@ -924,7 +933,7 @@ fn a_picker_with_no_start_opens_at_the_sources_home(cx: &mut TestAppContext) {
     let setup = start(cx, None, Some("/Users/me"));
     assert_eq!(setup.fake.requested(), ["/Users/me"]);
     assert_eq!(text(&setup, cx), "~/", "the field shows the tilde form");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me"));
 }
 
 #[gpui_kit::test]
@@ -937,7 +946,7 @@ fn a_source_without_a_home_starts_at_the_root(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn an_explicit_start_wins_over_the_home(cx: &mut TestAppContext) {
     let setup = start(cx, Some("/srv/data"), Some("/Users/me"));
-    assert_eq!(dir(&setup, cx), PathBuf::from("/srv/data"));
+    assert_eq!(dir(&setup, cx), sp("/srv/data"));
     assert_eq!(text(&setup, cx), "/srv/data/");
 }
 
@@ -949,17 +958,17 @@ fn a_typed_tilde_lists_the_home_and_a_tilde_path_its_child(cx: &mut TestAppConte
     press(&setup, "cmd-a", cx);
     type_text(&setup, "~", cx);
     assert_eq!(text(&setup, cx), "~", "the user's own text stays");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me"));
     setup.fake.resolve("/Users/me", ready(&["code", "docs"]));
     settle(&setup, cx);
     assert!(present(&setup, part("code"), cx));
 
     type_text(&setup, "/", cx);
     assert_eq!(text(&setup, cx), "~/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me"));
     type_text(&setup, "code/", cx);
     assert_eq!(text(&setup, cx), "~/code/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me/code"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me/code"));
     assert_eq!(
         setup.fake.requested().last().map(String::as_str),
         Some("/Users/me/code")
@@ -970,7 +979,7 @@ fn a_typed_tilde_lists_the_home_and_a_tilde_path_its_child(cx: &mut TestAppConte
     click(&setup, part("use"), cx);
     assert_eq!(
         events(&setup),
-        [FolderPickerEvent::Chosen(PathBuf::from("/Users/me/code"))],
+        [FolderPickerEvent::Chosen(sp("/Users/me/code"))],
         "the chosen path is the real one"
     );
 }
@@ -982,15 +991,15 @@ fn a_source_without_a_home_does_not_expand_the_tilde(cx: &mut TestAppContext) {
     settle(&setup, cx);
     press(&setup, "cmd-a", cx);
     type_text(&setup, "~/", cx);
-    assert_eq!(dir(&setup, cx), PathBuf::from("~"), "a plain name");
+    assert_eq!(dir(&setup, cx), sp("~"), "a plain name");
     setup
         .fake
-        .resolve("~", Err(io::Error::other("no such folder")));
+        .resolve("~", Err(ListError::Other("no such folder".into())));
     settle(&setup, cx);
     cx.update(|cx| {
         assert!(matches!(
             setup.state.read(cx).listing(),
-            Some(Listing::Failed)
+            Some(Listing::Failed(_))
         ))
     });
     assert!(present(&setup, part("message"), cx), "the not-found state");
@@ -1008,17 +1017,17 @@ fn clicking_inside_home_shows_the_tilde_form_and_up_goes_back_out(cx: &mut TestA
     );
     click(&setup, part("code"), cx);
     assert_eq!(text(&setup, cx), "~/code/", "a click shows the tilde form");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me/code"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me/code"));
     setup.fake.resolve("/Users/me/code", ready(&["gpui-cn"]));
     settle(&setup, cx);
     click(&setup, part("up"), cx);
     assert_eq!(text(&setup, cx), "~/");
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users/me"));
+    assert_eq!(dir(&setup, cx), sp("/Users/me"));
     click(&setup, part("up"), cx);
     assert_eq!(
         text(&setup, cx),
         "/Users/",
         "up from home goes to its parent"
     );
-    assert_eq!(dir(&setup, cx), PathBuf::from("/Users"));
+    assert_eq!(dir(&setup, cx), sp("/Users"));
 }

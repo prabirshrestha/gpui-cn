@@ -10,12 +10,7 @@
 
 mod source;
 
-use std::{
-    collections::HashSet,
-    io,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{collections::HashSet, rc::Rc};
 
 use gpui_kit::{
     App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
@@ -38,7 +33,10 @@ use crate::{
     ActiveTheme as _, Button, ButtonSize, Dialog, DropdownMenu, Icon, MenuEntry, MenuEvent,
     MenuItem, MenuState, ScrollArea, Switch, Theme,
     menu::MenuLook,
-    path_browser::{self, Body, Browser, Host, Page, PageToken, Source, Submit, view},
+    path_browser::{
+        self, Body, Browser, Host, ListError, Page, PageToken, PathStyle, Source, SourcePath,
+        Submit, view,
+    },
 };
 
 /// The key context of the picker, which takes Up, Down, and Enter the
@@ -134,7 +132,7 @@ impl FileFilter {
 #[non_exhaustive]
 pub enum FilePickerEvent {
     /// The files were chosen, in the order the list shows them.
-    Confirmed(Vec<PathBuf>),
+    Confirmed(Vec<SourcePath>),
     /// The picker was cancelled.
     Cancelled,
     /// The user selected or deselected files.
@@ -248,7 +246,7 @@ impl FilePickerState {
     /// the start.
     pub fn with_initial(
         mut self,
-        path: impl AsRef<Path>,
+        path: impl AsRef<str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -302,13 +300,37 @@ impl FilePickerState {
         );
     }
 
+    /// Sets what the "Sign in" button does. A source that needs the user to
+    /// log in fails a listing with
+    /// [`ListError::AuthRequired`](crate::ListError::AuthRequired), and the
+    /// list then shows the source's message with a "Sign in" button that
+    /// calls `handler`. The picker holds no login code: the application
+    /// signs the user in, then calls [`retry`](Self::retry) to list again.
+    /// Without a handler the button is not shown.
+    pub fn on_auth_required(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.browser.set_auth_handler(Rc::new(handler));
+        self
+    }
+
+    /// Lists the directory again: the spinner shows and the source is
+    /// asked for the first page. Call it after the user signed in, or let
+    /// the "Retry" button call it.
+    pub fn retry(&mut self, cx: &mut Context<Self>) {
+        self.browser.retry(cx);
+    }
+
+    /// Why the directory could not be listed, when it could not.
+    pub fn failure(&self) -> Option<&crate::ListError> {
+        self.browser.failure()
+    }
+
     /// The path field's state.
     pub fn input(&self) -> &Entity<gpui_kit::base::input::InputState> {
         &self.browser.input
     }
 
     /// The directory that is listed.
-    pub fn dir(&self) -> &Path {
+    pub fn dir(&self) -> &SourcePath {
         &self.browser.dir
     }
 
@@ -415,7 +437,7 @@ impl FilePickerState {
     }
 
     /// The files selected and showing, in the order of the list.
-    pub fn selection(&self) -> Vec<PathBuf> {
+    pub fn selection(&self) -> Vec<SourcePath> {
         if self.selected_visit != self.browser.visit() {
             return Vec::new();
         }
@@ -488,8 +510,11 @@ impl FilePickerState {
         }
     }
 
-    /// Cancels the picker.
+    /// Cancels the picker and every request to the source that is still
+    /// running: their answers never arrive. A directory that was still
+    /// loading is listed again when the picker shows.
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.browser.stop_requests(cx);
         cx.emit(FilePickerEvent::Cancelled);
     }
 
@@ -618,10 +643,10 @@ struct Adapter(Rc<dyn FileSource>);
 impl Source<FileEntry> for Adapter {
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<Page<FileEntry>>> {
+    ) -> Task<Result<Page<FileEntry>, ListError>> {
         let task = self.0.list(dir, page, cx);
         cx.spawn(async move |_| {
             let page = task.await?;
@@ -632,8 +657,16 @@ impl Source<FileEntry> for Adapter {
         })
     }
 
-    fn home(&self) -> Option<PathBuf> {
+    fn home(&self) -> Option<SourcePath> {
         self.0.home()
+    }
+
+    fn style(&self) -> PathStyle {
+        self.0.path_style()
+    }
+
+    fn env(&self, name: &str) -> Option<String> {
+        self.0.env(name)
     }
 }
 
@@ -731,6 +764,16 @@ impl RenderOnce for FilePicker {
         let pointer_cursors = Theme::global(cx).pointer_cursors;
         let state = self.state;
         let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
+        if self.open {
+            let state = state.clone();
+            window.defer(cx, move |_, cx| {
+                state.update(cx, |state, cx| state.browser.ensure_listed(cx));
+            });
+        }
+        let (failure, can_sign_in) = {
+            let browser = &state.read(cx).browser;
+            (browser.failure().cloned(), browser.auth_handler().is_some())
+        };
         let (input, list, body_kind, selected, multiple, filters, menu, show_hidden, hint) = {
             let state = state.read(cx);
             let hint = if state.browser.loaded().is_none() {
@@ -783,7 +826,16 @@ impl RenderOnce for FilePicker {
 
         let body = match body_kind {
             Body::Loading => view::loading(child("loading"), &look),
-            Body::Failed => view::message(child("message"), &look, view::FAILED),
+            Body::Failed => match failure {
+                Some(error) => view::failure::<FileEntry, FilePickerState>(
+                    &self.id,
+                    &look,
+                    &state,
+                    &error,
+                    can_sign_in,
+                ),
+                None => div().into_any_element(),
+            },
             Body::Empty => view::message(child("message"), &look, view::EMPTY_FILES),
             Body::NoMatch => view::message(child("message"), &look, view::NO_FILE_MATCH),
             Body::List => {
@@ -996,16 +1048,13 @@ fn status_row(
     pointer_cursors: bool,
     state: &Entity<FilePickerState>,
     multiple: bool,
-    selected: &[PathBuf],
+    selected: &[SourcePath],
     hint: Hint,
 ) -> gpui_kit::AnyElement {
     let selection = match selected {
         [] if multiple => "No files selected".to_string(),
         [] => "No file selected".to_string(),
-        [one] => format!(
-            "{} selected",
-            one.file_name().unwrap_or_default().to_string_lossy()
-        ),
+        [one] => format!("{} selected", one.file_name().unwrap_or_default()),
         many => format!("{} selected", files_text(many.len())),
     };
     let action = |name: &'static str,

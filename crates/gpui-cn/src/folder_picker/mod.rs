@@ -10,10 +10,7 @@
 
 mod source;
 
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::rc::Rc;
 
 use gpui_kit::{
     App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
@@ -35,7 +32,7 @@ pub use source::{FolderEntry, FolderPage, FolderSource, LocalFolders};
 use crate::{
     ActiveTheme as _, Button, Dialog, Icon, ScrollArea, Theme,
     menu::MenuLook,
-    path_browser::{self, Body, Browser, Host, Submit, view},
+    path_browser::{self, Body, Browser, Host, SourcePath, Submit, view},
 };
 
 /// The key context of the picker, which takes Up, Down, and Enter the
@@ -59,8 +56,8 @@ pub type Listing = path_browser::Listing<FolderEntry>;
 #[non_exhaustive]
 pub enum FolderPickerEvent {
     /// A folder was chosen. The path has no trailing separator, except
-    /// for a root.
-    Chosen(PathBuf),
+    /// for a root, and is in the style of the picker's source.
+    Chosen(SourcePath),
     /// The picker was cancelled.
     Cancelled,
 }
@@ -144,12 +141,36 @@ impl FolderPickerState {
     /// the start.
     pub fn with_initial(
         mut self,
-        path: impl AsRef<Path>,
+        path: impl AsRef<str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         self.browser.start_in(path.as_ref(), window, cx);
         self
+    }
+
+    /// Sets what the "Sign in" button does. A source that needs the user to
+    /// log in fails a listing with
+    /// [`ListError::AuthRequired`](crate::ListError::AuthRequired), and the
+    /// list then shows the source's message with a "Sign in" button that
+    /// calls `handler`. The picker holds no login code: the application
+    /// signs the user in, then calls [`retry`](Self::retry) to list again.
+    /// Without a handler the button is not shown.
+    pub fn on_auth_required(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.browser.set_auth_handler(Rc::new(handler));
+        self
+    }
+
+    /// Lists the directory again: the spinner shows and the source is
+    /// asked for the first page. Call it after the user signed in, or let
+    /// the "Retry" button call it.
+    pub fn retry(&mut self, cx: &mut Context<Self>) {
+        self.browser.retry(cx);
+    }
+
+    /// Why the directory could not be listed, when it could not.
+    pub fn failure(&self) -> Option<&crate::ListError> {
+        self.browser.failure()
     }
 
     /// The path field's state.
@@ -158,7 +179,7 @@ impl FolderPickerState {
     }
 
     /// The directory that is listed.
-    pub fn dir(&self) -> &Path {
+    pub fn dir(&self) -> &SourcePath {
         &self.browser.dir
     }
 
@@ -194,15 +215,14 @@ impl FolderPickerState {
     /// the query is empty, or the folder the query names exactly. `None`
     /// while the directory is loading or failed, or the query names no
     /// folder.
-    pub fn selected(&self) -> Option<PathBuf> {
+    pub fn selected(&self) -> Option<SourcePath> {
         let loaded = self.browser.loaded()?;
         let dir = self.browser.dir.clone();
         if self.browser.query.is_empty() {
             Some(dir)
-        } else if loaded.names.contains(self.browser.query.as_ref() as &str) {
-            Some(dir.join(self.browser.query.as_ref()))
         } else {
-            None
+            let entry = loaded.entry_named(&self.browser.query)?;
+            Some(dir.join(entry.name()))
         }
     }
 
@@ -213,8 +233,11 @@ impl FolderPickerState {
         }
     }
 
-    /// Cancels the picker.
+    /// Cancels the picker and every request to the source that is still
+    /// running: their answers never arrive. A directory that was still
+    /// loading is listed again when the picker shows.
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.browser.stop_requests(cx);
         cx.emit(FolderPickerEvent::Cancelled);
     }
 
@@ -334,6 +357,16 @@ impl RenderOnce for FolderPicker {
         let pointer_cursors = Theme::global(cx).pointer_cursors;
         let state = self.state;
         let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
+        if self.open {
+            let state = state.clone();
+            window.defer(cx, move |_, cx| {
+                state.update(cx, |state, cx| state.browser.ensure_listed(cx));
+            });
+        }
+        let (failure, can_sign_in) = {
+            let browser = &state.read(cx).browser;
+            (browser.failure().cloned(), browser.auth_handler().is_some())
+        };
         let (input, list, body_kind, selected, query_empty, has_entries) = {
             let state = state.read(cx);
             let has_entries = state
@@ -364,7 +397,16 @@ impl RenderOnce for FolderPicker {
 
         let body = match body_kind {
             Body::Loading => view::loading(child("loading"), &look),
-            Body::Failed => view::message(child("message"), &look, view::FAILED),
+            Body::Failed => match failure {
+                Some(error) => view::failure::<FolderEntry, FolderPickerState>(
+                    &self.id,
+                    &look,
+                    &state,
+                    &error,
+                    can_sign_in,
+                ),
+                None => div().into_any_element(),
+            },
             Body::Empty => view::message(child("message"), &look, view::EMPTY_FOLDERS),
             Body::NoMatch => view::message(child("message"), &look, view::NO_MATCH),
             Body::List => {

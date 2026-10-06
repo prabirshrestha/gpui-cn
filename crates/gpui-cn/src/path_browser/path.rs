@@ -3,122 +3,142 @@
 //! a typed separator goes into. It works on plain strings, so it needs no
 //! window and no file system.
 
-use std::path::{Path, PathBuf};
-
-use super::Entry;
+use super::{Entry, SourcePath, style::PathStyle};
 use gpui_kit::SharedString;
 
 pub(crate) use crate::fuzzy::Match;
 
-/// Whether `c` separates the parts of a path.
-pub(crate) fn is_separator(c: char, windows: bool) -> bool {
-    c == '/' || (windows && c == '\\')
-}
-
-/// The separator the picker writes.
-pub(crate) fn separator(windows: bool) -> char {
-    if windows { '\\' } else { '/' }
-}
-
 /// Splits the path text at its last separator: the directory, with its
 /// separator, and the query after it. Text with no separator has the
-/// root as its directory.
-pub(crate) fn split_path(text: &str, windows: bool) -> (String, String) {
-    match text.rfind(|c| is_separator(c, windows)) {
+/// root as its directory, and a lone drive such as `C:` is that drive's
+/// root with no query.
+pub(crate) fn split_path(text: &str, style: &PathStyle) -> (String, String) {
+    match text.rfind(|c| style.is_separator(c)) {
         Some(at) => (text[..=at].to_string(), text[at + 1..].to_string()),
-        None => (separator(windows).to_string(), text.to_string()),
+        None if style.is_windows() && is_drive_only(text) => {
+            (format!("{text}{}", style.separator()), String::new())
+        }
+        None => (style.separator().to_string(), text.to_string()),
     }
 }
 
-/// The text of the directory above `dir`, with a trailing separator. The
-/// root is its own parent.
-pub(crate) fn parent_text(dir: &str, windows: bool) -> String {
-    let trimmed = dir.trim_end_matches(|c| is_separator(c, windows));
-    if is_root(dir, windows) {
-        return dir.to_string();
-    }
-    match trimmed.rfind(|c| is_separator(c, windows)) {
-        Some(at) => trimmed[..=at].to_string(),
-        None => separator(windows).to_string(),
-    }
+fn is_drive_only(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(a), Some(':'), None) if a.is_ascii_alphabetic()
+    )
 }
 
-/// `dir` with `name` inside it, and a trailing separator.
-pub(crate) fn join_dir(dir: &str, name: &str, windows: bool) -> String {
-    let mut text = dir.to_string();
-    if !text.ends_with(|c| is_separator(c, windows)) {
-        text.push(separator(windows));
+/// The text of the directory above `dir`, with a trailing separator. A
+/// root is its own parent, except that a drive root goes up to the root
+/// above the drives when the style has one.
+pub(crate) fn parent_text(dir: &str, style: &PathStyle) -> String {
+    let mut parsed = style.parse(dir);
+    let sep = style.separator();
+    if parsed.parts.is_empty() {
+        let is_drive = parsed.prefix.len() == 3 && parsed.prefix.as_bytes()[1] == b':';
+        if is_drive && style.has_computer_root() {
+            return sep.to_string();
+        }
+        return if dir.is_empty() {
+            sep.to_string()
+        } else {
+            dir.to_string()
+        };
     }
-    text.push_str(name);
-    text.push(separator(windows));
+    parsed.parts.pop();
+    if parsed.parts.is_empty() && !parsed.rooted {
+        return sep.to_string();
+    }
+    let mut text = style.display(&parsed);
+    if !text.ends_with(sep) {
+        text.push(sep);
+    }
     text
 }
 
-/// Whether `dir` is a file system root: `/`, or a drive such as `C:\` on
-/// Windows.
-fn is_root(dir: &str, windows: bool) -> bool {
-    let trimmed = dir.trim_end_matches(|c| is_separator(c, windows));
-    trimmed.is_empty() || (windows && trimmed.ends_with(':'))
+/// `dir` with `name` inside it, and a trailing separator. The separator
+/// is the one the user last typed in `dir`, so a path typed with `/` stays
+/// in `/` in a Windows style, and the style's own when `dir` has none.
+pub(crate) fn join_dir(dir: &str, name: &str, style: &PathStyle) -> String {
+    let sep = dir
+        .chars()
+        .rev()
+        .find(|c| style.is_separator(*c))
+        .unwrap_or(style.separator());
+    let mut text = dir.to_string();
+    if !text.ends_with(|c| style.is_separator(c)) {
+        text.push(sep);
+    }
+    text.push_str(name);
+    text.push(sep);
+    text
 }
 
 /// The path a directory's text names: no trailing separator, except for
 /// the root.
-pub(crate) fn directory_path(dir: &str, windows: bool) -> PathBuf {
-    if is_root(dir, windows) {
-        return PathBuf::from(if dir.is_empty() {
-            separator(windows).to_string()
-        } else {
-            dir.to_string()
-        });
+pub(crate) fn directory_path(dir: &str, style: &PathStyle) -> SourcePath {
+    if dir.is_empty() {
+        return style.path(style.separator().to_string());
     }
-    PathBuf::from(dir.trim_end_matches(|c| is_separator(c, windows)))
+    style.path(dir)
 }
 
 /// Whether the directory text starts at the home folder: `~` alone, or
 /// `~` and a separator.
-pub(crate) fn is_home_text(dir: &str, windows: bool) -> bool {
+pub(crate) fn is_home_text(dir: &str, style: &PathStyle) -> bool {
     dir == "~"
         || dir
             .strip_prefix('~')
-            .is_some_and(|rest| rest.starts_with(|c| is_separator(c, windows)))
+            .is_some_and(|rest| rest.starts_with(|c| style.is_separator(c)))
 }
 
 /// The path a directory's text names, with a leading `~` standing for
 /// `home` when there is one.
-pub(crate) fn resolve_dir(dir: &str, home: Option<&Path>, windows: bool) -> PathBuf {
+pub(crate) fn resolve_dir(dir: &str, home: Option<&SourcePath>, style: &PathStyle) -> SourcePath {
     match home {
-        Some(home) if is_home_text(dir, windows) => {
-            let rest = dir[1..].trim_matches(|c| is_separator(c, windows));
+        Some(home) if is_home_text(dir, style) => {
+            let rest = dir[1..].trim_matches(|c| style.is_separator(c));
             if rest.is_empty() {
-                home.to_path_buf()
+                home.clone()
             } else {
                 home.join(rest)
             }
         }
-        _ => directory_path(dir, windows),
+        _ => directory_path(dir, style),
     }
 }
 
 /// The text of a directory under `home` in the `~/...` form, with a
-/// trailing separator, and `text` itself when it is not under `home`.
-pub(crate) fn collapse_home(text: &str, home: Option<&Path>, windows: bool) -> String {
+/// trailing separator, and `text` itself when it is not under `home`. A
+/// path is under `home` by the style's own comparison, so `C:/Users/Me`
+/// is under `c:\users\me`.
+pub(crate) fn collapse_home(text: &str, home: Option<&SourcePath>, style: &PathStyle) -> String {
     let Some(home) = home else {
         return text.to_string();
     };
-    let home = home.to_string_lossy();
-    let home = home.trim_end_matches(|c| is_separator(c, windows));
-    if home.is_empty() {
+    let home = style.parse(home.as_str());
+    let at = style.parse(text);
+    let sep = style.separator();
+    if home.parts.is_empty() || style.key(&home.prefix) != style.key(&at.prefix) {
         return text.to_string();
     }
-    let sep = separator(windows);
-    let trimmed = text.trim_end_matches(|c| is_separator(c, windows));
-    if trimmed == home {
-        return format!("~{sep}");
+    let under = at.parts.len() >= home.parts.len()
+        && home
+            .parts
+            .iter()
+            .zip(&at.parts)
+            .all(|(a, b)| style.fold(a) == style.fold(b));
+    if !under {
+        return text.to_string();
     }
-    match text.strip_prefix(home) {
-        Some(rest) if rest.starts_with(|c| is_separator(c, windows)) => format!("~{rest}"),
-        _ => text.to_string(),
+    let mut out = format!("~{sep}");
+    for part in &at.parts[home.parts.len()..] {
+        out.push_str(part);
+        out.push(sep);
     }
+    out
 }
 
 /// Ranks `entries` by how well `query` matches their names: a subsequence
@@ -173,13 +193,14 @@ pub(crate) fn resolve_descend<E: Entry>(
     entries: &[E],
     matches: &[Match],
     query: &str,
+    style: &PathStyle,
 ) -> Option<SharedString> {
     if query.is_empty() {
         return None;
     }
     entries
         .iter()
-        .find(|entry| entry.is_folder() && entry.name().as_ref() == query)
+        .find(|entry| entry.is_folder() && style.fold(entry.name()) == style.fold(query))
         .or_else(|| {
             matches
                 .iter()
@@ -224,32 +245,64 @@ mod tests {
             .collect()
     }
 
+    fn posix() -> PathStyle {
+        PathStyle::posix()
+    }
+
+    fn windows() -> PathStyle {
+        PathStyle::windows()
+    }
+
     #[test]
     fn a_leading_tilde_names_the_home_when_there_is_one() {
-        let home = Some(Path::new("/Users/me"));
-        let at = |text: &str, home| resolve_dir(text, home, false);
-        assert_eq!(at("~/", home), PathBuf::from("/Users/me"));
-        assert_eq!(at("~", home), PathBuf::from("/Users/me"));
-        assert_eq!(at("~/code/", home), PathBuf::from("/Users/me/code"));
-        assert_eq!(at("~/", None), PathBuf::from("~"), "no home: a plain name");
-        assert_eq!(at("/~/", home), PathBuf::from("/~"), "only a leading tilde");
-        assert!(!is_home_text("~me/", false));
+        let style = posix();
+        let home = Some(style.path("/Users/me"));
+        let at = |text: &str, home: Option<&SourcePath>| {
+            resolve_dir(text, home, &style).as_str().to_string()
+        };
+        assert_eq!(at("~/", home.as_ref()), "/Users/me");
+        assert_eq!(at("~", home.as_ref()), "/Users/me");
+        assert_eq!(at("~/code/", home.as_ref()), "/Users/me/code");
+        assert_eq!(at("~/", None), "~", "no home: a plain name");
+        assert_eq!(at("/~/", home.as_ref()), "/~", "only a leading tilde");
+        assert!(!is_home_text("~me/", &style));
     }
 
     #[test]
     fn a_directory_under_home_takes_the_tilde_form() {
-        let home = Some(Path::new("/Users/me"));
-        let at = |text: &str| collapse_home(text, home, false);
+        let style = posix();
+        let home = Some(style.path("/Users/me"));
+        let at = |text: &str| collapse_home(text, home.as_ref(), &style);
         assert_eq!(at("/Users/me/"), "~/");
         assert_eq!(at("/Users/me/code/"), "~/code/");
         assert_eq!(at("/Users/"), "/Users/");
         assert_eq!(at("/Users/meow/"), "/Users/meow/", "not a child of home");
-        assert_eq!(collapse_home("/Users/me/", None, false), "/Users/me/");
+        assert_eq!(collapse_home("/Users/me/", None, &style), "/Users/me/");
+    }
+
+    #[test]
+    fn home_is_compared_by_the_styles_case_rule_and_either_separator() {
+        let style = windows();
+        let home = Some(style.path("C:\\Users\\Me"));
+        let at = |text: &str| collapse_home(text, home.as_ref(), &style);
+        assert_eq!(at("c:/users/me/code/"), "~\\code\\");
+        assert_eq!(at("C:\\Users\\Me\\"), "~\\");
+        assert_eq!(at("D:\\Users\\Me\\"), "D:\\Users\\Me\\");
+        assert_eq!(
+            collapse_home("/Users/me/", Some(&posix().path("/Users/me")), &posix()),
+            "~/"
+        );
+        let upper = Some(posix().path("/Users/Me"));
+        assert_eq!(
+            collapse_home("/users/me/", upper.as_ref(), &posix()),
+            "/users/me/",
+            "a POSIX style is case-sensitive"
+        );
     }
 
     #[test]
     fn a_path_splits_at_its_last_separator() {
-        let split = |text: &str| split_path(text, false);
+        let split = |text: &str| split_path(text, &posix());
         assert_eq!(split("/home/me/co"), ("/home/me/".into(), "co".into()));
         assert_eq!(split("/home/me/"), ("/home/me/".into(), "".into()));
         assert_eq!(split("/"), ("/".into(), "".into()));
@@ -260,42 +313,85 @@ mod tests {
 
     #[test]
     fn windows_paths_split_at_either_separator() {
+        let split = |text: &str| split_path(text, &windows());
         assert_eq!(
-            split_path("C:\\Users\\me/co", true),
+            split("C:\\Users\\me/co"),
             ("C:\\Users\\me/".into(), "co".into())
         );
-        assert_eq!(split_path("C:\\", true), ("C:\\".into(), "".into()));
-        assert_eq!(split_path("a\\b", false), ("/".into(), "a\\b".into()));
+        assert_eq!(split("C:\\"), ("C:\\".into(), "".into()));
+        assert_eq!(
+            split("C:"),
+            ("C:\\".into(), "".into()),
+            "a lone drive is a root"
+        );
+        assert_eq!(split("c"), ("\\".into(), "c".into()));
+        assert_eq!(
+            split_path("a\\b", &posix()),
+            ("/".into(), "a\\b".into()),
+            "a backslash is a name character on POSIX"
+        );
     }
 
     #[test]
     fn the_parent_keeps_a_trailing_separator_and_the_root_stays() {
-        assert_eq!(parent_text("/home/me/", false), "/home/");
-        assert_eq!(parent_text("/home/", false), "/");
-        assert_eq!(parent_text("/", false), "/");
-        assert_eq!(parent_text("C:\\Users\\", true), "C:\\");
-        assert_eq!(parent_text("C:\\", true), "C:\\");
+        let up = |text: &str, style: PathStyle| parent_text(text, &style);
+        assert_eq!(up("/home/me/", posix()), "/home/");
+        assert_eq!(up("/home/", posix()), "/");
+        assert_eq!(up("/", posix()), "/");
+        assert_eq!(up("C:\\Users\\", windows()), "C:\\");
+        assert_eq!(up("C:/Users/me/", windows()), "C:\\Users\\");
+        assert_eq!(up("C:\\", windows()), "C:\\");
+        assert_eq!(up("\\\\srv\\share\\dir\\", windows()), "\\\\srv\\share\\");
+        assert_eq!(
+            up("\\\\srv\\share\\", windows()),
+            "\\\\srv\\share\\",
+            "a share stays"
+        );
+        assert_eq!(
+            up("C:\\", PathStyle::windows().with_computer_root(true)),
+            "\\",
+            "above the drive, when the source lists drives"
+        );
+        assert_eq!(
+            up("\\", PathStyle::windows().with_computer_root(true)),
+            "\\"
+        );
     }
 
     #[test]
     fn a_folder_joins_with_separators_on_both_sides() {
-        assert_eq!(join_dir("/home/", "code", false), "/home/code/");
-        assert_eq!(join_dir("/", ".config", false), "/.config/");
-        assert_eq!(join_dir("C:\\", "Users", true), "C:\\Users\\");
+        assert_eq!(join_dir("/home/", "code", &posix()), "/home/code/");
+        assert_eq!(join_dir("/", ".config", &posix()), "/.config/");
+        assert_eq!(join_dir("C:\\", "Users", &windows()), "C:\\Users\\");
+        assert_eq!(join_dir("C:/Users", "me", &windows()), "C:/Users/me/");
+        assert_eq!(join_dir("C:Users", "me", &windows()), "C:Users\\me\\");
     }
 
     #[test]
     fn a_directory_path_drops_the_trailing_separator_except_at_the_root() {
-        assert_eq!(
-            directory_path("/home/me/", false),
-            PathBuf::from("/home/me")
-        );
-        assert_eq!(directory_path("/", false), PathBuf::from("/"));
-        assert_eq!(directory_path("C:\\", true), PathBuf::from("C:\\"));
-        assert_eq!(
-            directory_path("C:\\Users\\", true),
-            PathBuf::from("C:\\Users")
-        );
+        let at = |text: &str, style: PathStyle| directory_path(text, &style).as_str().to_string();
+        assert_eq!(at("/home/me/", posix()), "/home/me");
+        assert_eq!(at("/", posix()), "/");
+        assert_eq!(at("C:\\", windows()), "C:\\");
+        assert_eq!(at("C:\\Users\\", windows()), "C:\\Users");
+        assert_eq!(at("C:/Users/me/", windows()), "C:\\Users\\me");
+        assert_eq!(at("", windows()), "\\");
+    }
+
+    #[test]
+    fn windows_texts_that_name_one_folder_are_the_same_directory() {
+        let style = windows();
+        let same = [
+            "C:/Users/me",
+            "C:\\Users\\me",
+            "C:/Users\\me/",
+            "c:\\USERS\\Me\\",
+        ];
+        let first = directory_path(same[0], &style);
+        for text in same {
+            assert_eq!(directory_path(text, &style), first, "{text}");
+        }
+        assert_ne!(directory_path("C:/Users/you", &style), first);
     }
 
     #[test]
@@ -335,17 +431,17 @@ mod tests {
         let all = entries(&["code", "codex", "docs"]);
         let found = filter(&all, "code");
         assert_eq!(
-            resolve_descend(&all, &found, "code").as_deref(),
+            resolve_descend(&all, &found, "code", &posix()).as_deref(),
             Some("code")
         );
         let found = filter(&all, "cdx");
         assert_eq!(
-            resolve_descend(&all, &found, "cdx").as_deref(),
+            resolve_descend(&all, &found, "cdx", &posix()).as_deref(),
             Some("codex")
         );
         let found = filter(&all, "zzz");
-        assert_eq!(resolve_descend(&all, &found, "zzz"), None);
-        assert_eq!(resolve_descend(&all, &filter(&all, ""), ""), None);
+        assert_eq!(resolve_descend(&all, &found, "zzz", &posix()), None);
+        assert_eq!(resolve_descend(&all, &filter(&all, ""), "", &posix()), None);
     }
 
     #[test]
@@ -355,6 +451,9 @@ mod tests {
         assert_eq!(names(&all, &found)[0], "co");
         let all = entries(&["cooking", "co"]);
         let found = filter(&all, "co");
-        assert_eq!(resolve_descend(&all, &found, "co").as_deref(), Some("co"));
+        assert_eq!(
+            resolve_descend(&all, &found, "co", &posix()).as_deref(),
+            Some("co")
+        );
     }
 }

@@ -2,12 +2,12 @@
 //! machine, or API can implement, the local disk as the default, and an
 //! in-memory source for fixtures.
 
-use std::{collections::HashMap, io, path::Path, path::PathBuf, time::SystemTime};
+use std::{collections::HashMap, time::SystemTime};
 
 use gpui_kit::{App, AppContext as _, SharedString, Task};
 use smol::stream::StreamExt as _;
 
-use crate::path_browser::{Entry, PageToken};
+use crate::path_browser::{Entry, ListError, PageToken, PathStyle, SourcePath};
 
 /// What an entry of a listing is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,13 +128,12 @@ impl Entry for FileEntry {
 /// Folders first, then files, the visible before the hidden in each group,
 /// and each group in alphabetical order without regard to case: the order
 /// of [`LocalFiles`] and [`MemoryFiles`].
-pub(crate) fn sort_entries(entries: &mut [FileEntry]) {
+pub(crate) fn sort_entries(entries: &mut [FileEntry], style: &PathStyle) {
     entries.sort_by(|a, b| {
         b.is_folder()
             .cmp(&a.is_folder())
             .then_with(|| a.hidden.cmp(&b.hidden))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| style.compare_names(&a.name, &b.name))
     });
 }
 
@@ -184,9 +183,7 @@ impl FilePage {
 /// repeat across pages, by name, show once.
 ///
 /// ```
-/// use std::{io, path::Path};
-///
-/// use gpui_cn::{FileEntry, FilePage, FileSource, PageToken};
+/// use gpui_cn::{FileEntry, FilePage, FileSource, ListError, PageToken, SourcePath};
 /// use gpui_kit::{App, AppContext as _, Task};
 ///
 /// /// A source with the same two files in every folder.
@@ -195,10 +192,10 @@ impl FilePage {
 /// impl FileSource for Fixed {
 ///     fn list(
 ///         &self,
-///         _dir: &Path,
+///         _dir: &SourcePath,
 ///         _page: Option<PageToken>,
 ///         cx: &mut App,
-///     ) -> Task<io::Result<FilePage>> {
+///     ) -> Task<Result<FilePage, ListError>> {
 ///         // Any work goes on a task: a request, a query, a disk read.
 ///         cx.background_spawn(async move {
 ///             Ok(FilePage::new([
@@ -212,14 +209,35 @@ impl FilePage {
 pub trait FileSource: 'static {
     /// Lists the entries of `dir`, from the start when `page` is `None`,
     /// or else from the page `token` a previous page named.
-    fn list(&self, dir: &Path, page: Option<PageToken>, cx: &mut App)
-    -> Task<io::Result<FilePage>>;
+    fn list(
+        &self,
+        dir: &SourcePath,
+        page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<Result<FilePage, ListError>>;
 
     /// The source's home folder, which a leading `~` in the typed path
     /// stands for and where a picker with no start of its own begins. The
     /// default is `None`: a source with no home does not expand `~`, and
-    /// the picker starts at the root.
-    fn home(&self) -> Option<PathBuf> {
+    /// the picker starts at the root. A remote or virtual source gives its
+    /// own, made with [`path_style`](Self::path_style).
+    fn home(&self) -> Option<SourcePath> {
+        None
+    }
+
+    /// How the source writes its paths. The default is the style of the
+    /// machine the application runs on. A source for another machine
+    /// names its own: a Linux server is [`PathStyle::posix`] whatever
+    /// the client is.
+    fn path_style(&self) -> PathStyle {
+        PathStyle::host()
+    }
+
+    /// The value of the variable `name`, for `%NAME%` in a Windows-style
+    /// path that is pasted. The default knows none: a remote source never
+    /// reads the host's environment.
+    fn env(&self, name: &str) -> Option<String> {
+        let _ = name;
         None
     }
 }
@@ -232,21 +250,26 @@ pub struct LocalFiles;
 
 impl FileSource for LocalFiles {
     /// The home directory of the user running the application.
-    fn home(&self) -> Option<PathBuf> {
-        std::env::home_dir()
+    fn home(&self) -> Option<SourcePath> {
+        std::env::home_dir().map(|home| PathStyle::host().path(home.to_string_lossy()))
+    }
+
+    fn env(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
     }
 
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         _page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<FilePage>> {
-        cx.background_spawn(list_local(dir.to_path_buf()))
+    ) -> Task<Result<FilePage, ListError>> {
+        let dir = dir.to_path_buf();
+        cx.background_spawn(async move { Ok(list_local(dir).await?) })
     }
 }
 
-async fn list_local(dir: PathBuf) -> io::Result<FilePage> {
+async fn list_local(dir: std::path::PathBuf) -> std::io::Result<FilePage> {
     let mut read = smol::fs::read_dir(&dir).await?;
     let mut entries = Vec::new();
     while let Some(entry) = read.next().await {
@@ -274,7 +297,7 @@ async fn list_local(dir: PathBuf) -> io::Result<FilePage> {
         }
         entries.push(found);
     }
-    sort_entries(&mut entries);
+    sort_entries(&mut entries, &PathStyle::host());
     Ok(FilePage::new(entries))
 }
 
@@ -283,8 +306,9 @@ async fn list_local(dir: PathBuf) -> io::Result<FilePage> {
 /// fails for any other directory.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryFiles {
-    home: Option<PathBuf>,
-    dirs: HashMap<PathBuf, Vec<FileEntry>>,
+    style: PathStyle,
+    home: Option<SourcePath>,
+    dirs: HashMap<SourcePath, Vec<FileEntry>>,
 }
 
 impl MemoryFiles {
@@ -293,42 +317,49 @@ impl MemoryFiles {
         Self::default()
     }
 
+    /// Writes the paths of the directories in `style`. Set it before the
+    /// home and the directories. The default is the host's style.
+    pub fn with_style(mut self, style: PathStyle) -> Self {
+        self.style = style;
+        self
+    }
+
     /// Sets the home folder, which `~` stands for.
-    pub fn with_home(mut self, home: impl Into<PathBuf>) -> Self {
-        self.home = Some(home.into());
+    pub fn with_home(mut self, home: impl AsRef<str>) -> Self {
+        self.home = Some(self.style.path(home));
         self
     }
 
     /// Adds the directory `path` with `entries`.
     pub fn with_dir(
         mut self,
-        path: impl Into<PathBuf>,
+        path: impl AsRef<str>,
         entries: impl IntoIterator<Item = FileEntry>,
     ) -> Self {
         let mut entries: Vec<FileEntry> = entries.into_iter().collect();
-        sort_entries(&mut entries);
-        self.dirs.insert(path.into(), entries);
+        sort_entries(&mut entries, &self.style);
+        self.dirs.insert(self.style.path(path), entries);
         self
     }
 }
 
 impl FileSource for MemoryFiles {
-    fn home(&self) -> Option<PathBuf> {
+    fn home(&self) -> Option<SourcePath> {
         self.home.clone()
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.style
     }
 
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         _page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<FilePage>> {
+    ) -> Task<Result<FilePage, ListError>> {
         let found = self.dirs.get(dir).cloned();
-        cx.background_spawn(async move {
-            found
-                .map(FilePage::new)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such directory"))
-        })
+        cx.background_spawn(async move { found.map(FilePage::new).ok_or(ListError::NotFound) })
     }
 }
 
@@ -350,7 +381,7 @@ mod tests {
             FileEntry::file(".env"),
             FileEntry::folder("Docs"),
         ];
-        sort_entries(&mut entries);
+        sort_entries(&mut entries, &PathStyle::posix());
         assert_eq!(
             names(&entries),
             ["Docs", "src", ".git", "Alpha.txt", "beta.txt", ".env"]

@@ -1,11 +1,6 @@
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
-
 use gpui_cn::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
-    PageToken, gpui_kit::assets::IconName,
+    ListError, PageToken, PathStyle, SourcePath, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
@@ -34,19 +29,23 @@ impl FolderPickerStory {
 struct Fixture;
 
 impl FolderSource for Fixture {
-    fn home(&self) -> Option<PathBuf> {
-        Some(PathBuf::from(FIXTURE_HOME))
+    fn home(&self) -> Option<SourcePath> {
+        Some(PathStyle::posix().path(FIXTURE_HOME))
+    }
+
+    fn path_style(&self) -> PathStyle {
+        PathStyle::posix()
     }
 
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<FolderPage>> {
-        let dir = dir.to_path_buf();
+    ) -> Task<Result<FolderPage, ListError>> {
+        let dir = dir.clone();
         cx.background_spawn(async move {
-            let (names, next): (&[&str], Option<&str>) = match (dir.to_str(), page.as_ref()) {
+            let (names, next): (&[&str], Option<&str>) = match (Some(dir.as_str()), page.as_ref()) {
                 (Some(FIXTURE_HOME), _) => (
                     &[
                         "code",
@@ -65,7 +64,7 @@ impl FolderSource for Fixture {
                     (&["gpui-cn", "gpui-kit", "psl-tools"], Some("2"))
                 }
                 (Some("/home/prabirshrestha/code"), Some(_)) => (&["website", "zed"], None),
-                _ => return Err(io::Error::other("not in the fixture")),
+                _ => return Err(ListError::NotFound),
             };
             let page = FolderPage::new(names.iter().map(|name| FolderEntry::new(*name)));
             Ok(match next {
@@ -103,7 +102,7 @@ impl Story for FolderPickerStory {
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
             cx.subscribe(&state, |this: &mut Self, _, event, cx| {
                 if let FolderPickerEvent::Chosen(path) = event {
-                    this.chosen = format!("Chose {}.", path.display()).into();
+                    this.chosen = format!("Chose {path}.").into();
                 }
                 this.open = false;
                 cx.notify();
