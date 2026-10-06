@@ -33,7 +33,9 @@ mod typography;
 pub use avatar::AvatarStory;
 pub use badge::BadgeStory;
 pub use button::ButtonStory;
-pub use color::{ColorGroup, ColorStory, ColorToken, REGISTRY as COLOR_REGISTRY, grade};
+pub use color::{
+    ColorGroup, ColorStory, ColorToken, REGISTRY as COLOR_REGISTRY, color_matches, grade,
+};
 pub use command::CommandStory;
 pub use composer::ComposerStory;
 pub use dialog::DialogStory;

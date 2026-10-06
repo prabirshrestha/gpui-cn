@@ -257,11 +257,7 @@ impl Gallery {
         let stack = cx.new(|_| NavStackState::new());
         let settings = cx.new(|cx| SettingsPage::new(&sidebar, &stack, cx));
         let entries = stories();
-        let filter = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search components")
-                .clean_on_escape()
-        });
+        let filter = search_state("Search components", window, cx);
         cx.subscribe_in(
             &filter,
             window,
@@ -452,8 +448,8 @@ impl Gallery {
         self.close_sheet(cx);
     }
 
-    /// The indexes of the stories whose titles contain the sidebar's filter
-    /// text, without regard to case, in display order. With no text every
+    /// The indexes of the stories whose titles the sidebar's filter text
+    /// matches fuzzily, in display order. With no text every
     /// story matches.
     pub fn visible_stories(&self, cx: &App) -> Vec<usize> {
         let query = self.filter.read(cx).value();
@@ -604,15 +600,44 @@ impl ComponentsPage {
     }
 }
 
-/// The indexes of the titles that contain `query`, trimmed and compared
-/// without regard to case. An empty query matches every title.
+/// The indexes of the titles that `query` matches fuzzily, in the order of
+/// the titles. An empty query matches every title.
 fn matching<'a>(titles: impl Iterator<Item = &'a str>, query: &str) -> Vec<usize> {
-    let query = query.trim().to_lowercase();
-    titles
-        .enumerate()
-        .filter(|(_, title)| title.to_lowercase().contains(&query))
-        .map(|(ix, _)| ix)
-        .collect()
+    let titles: Vec<&str> = titles.collect();
+    let mut found: Vec<usize> = gpui_cn::fuzzy::rank(query, &titles, |title| title)
+        .into_iter()
+        .map(|found| found.index)
+        .collect();
+    found.sort_unstable();
+    found
+}
+
+/// The state of a search field in a story: the placeholder, and Escape
+/// clears the text. The sidebar's box and the Color page's share it.
+pub fn search_state(
+    placeholder: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(placeholder)
+            .clean_on_escape()
+    })
+}
+
+/// A search field over `state`: a search icon before the text and a clear
+/// button after it.
+pub fn search_input(
+    state: &Entity<InputState>,
+    id: impl Into<ElementId>,
+    label: &'static str,
+) -> Input {
+    Input::new(state)
+        .id(id)
+        .accessibility_label(label)
+        .prefix(Icon::from(IconName::Search).size_4())
+        .cleanable(true)
 }
 
 impl Gallery {
@@ -637,6 +662,8 @@ impl Gallery {
             .when(open, |this| {
                 this.header(
                     div()
+                        .id("story-title")
+                        .test_support()
                         .flex()
                         .items_center()
                         .h(heading.line_height * 1.6)
@@ -647,15 +674,11 @@ impl Gallery {
                 )
             })
             .when(open, |this| {
-                this.header(
-                    div().px_2().child(
-                        Input::new(&self.filter)
-                            .id("story-filter")
-                            .accessibility_label("Search components")
-                            .prefix(Icon::from(IconName::Search).size_4())
-                            .cleanable(true),
-                    ),
-                )
+                this.header(div().px_2().py_2().child(search_input(
+                    &self.filter,
+                    "story-filter",
+                    "Search components",
+                )))
             })
             .when(visible.is_empty(), |this| {
                 this.child(
@@ -992,8 +1015,9 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_matches_titles_by_substring_without_regard_to_case() {
+    fn the_filter_matches_titles_fuzzily_without_regard_to_case() {
         let titles = ["Switch", "Select", "Scroll area", "Title bar"];
+        assert_eq!(matching(titles.into_iter(), "scrla"), [2]);
         assert_eq!(matching(titles.into_iter(), ""), [0, 1, 2, 3]);
         assert_eq!(matching(titles.into_iter(), "  "), [0, 1, 2, 3]);
         assert_eq!(matching(titles.into_iter(), "S"), [0, 1, 2]);

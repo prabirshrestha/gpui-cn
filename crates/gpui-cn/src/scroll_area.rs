@@ -58,6 +58,7 @@ enum Content {
 pub struct ScrollArea {
     id: ElementId,
     content: Content,
+    handle: Option<ScrollHandle>,
     style: StyleRefinement,
 }
 
@@ -68,6 +69,7 @@ impl ScrollArea {
         Self {
             id: id.into(),
             content: Content::Children(Vec::new()),
+            handle: None,
             style: StyleRefinement::default(),
         }
     }
@@ -95,8 +97,19 @@ impl ScrollArea {
                 row_hint,
                 render_item: Box::new(render_item),
             },
+            handle: None,
             style: StyleRefinement::default(),
         }
+    }
+}
+
+impl ScrollArea {
+    /// Scrolls with `handle`, the caller's, so the caller can read how far
+    /// the region has moved. A region over a list has the list state for
+    /// that. Without one the region keeps its own, keyed by its id.
+    pub fn track(mut self, handle: &ScrollHandle) -> Self {
+        self.handle = Some(handle.clone());
+        self
     }
 }
 
@@ -152,14 +165,17 @@ impl RenderOnce for ScrollArea {
         let (frame_style, viewport_style) = split_style(self.style);
         let (bounce, scrollbar, can_scroll) = match self.content {
             Content::Children(children) => {
-                let handle = window
-                    .use_keyed_state(
-                        ElementId::NamedChild(self.id.clone().into(), "scroll".into()),
-                        cx,
-                        |_, _| ScrollHandle::new(),
-                    )
-                    .read(cx)
-                    .clone();
+                let handle = match self.handle {
+                    Some(handle) => handle,
+                    None => window
+                        .use_keyed_state(
+                            ElementId::NamedChild(self.id.clone().into(), "scroll".into()),
+                            cx,
+                            |_, _| ScrollHandle::new(),
+                        )
+                        .read(cx)
+                        .clone(),
+                };
                 let viewport = div()
                     .id(self.id.clone())
                     .test_support()

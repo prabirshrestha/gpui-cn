@@ -33,7 +33,7 @@ use std::{ops::Range, rc::Rc, time::Duration};
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Element, ElementId, Entity,
     EventEmitter, GlobalElementId, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, SharedString,
+    LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
     base::{
         Collapsible, Disableable, Placement, Selectable, StyledExt as _, TestSupportExt as _,
@@ -608,7 +608,22 @@ impl ParentElement for Sidebar {
 }
 
 impl RenderOnce for Sidebar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // The content scrolls under the header's bottom edge. A hairline
+        // fades in there once the content has moved, so rows that pass
+        // under the header read as cut by an edge, and none shows at rest.
+        let scroll = window
+            .use_keyed_state("sidebar-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let scrolled = scroll.offset().y < px(-0.5);
+        let edge = transition(
+            "sidebar-header-edge",
+            if scrolled { 1. } else { 0. },
+            Theme::global(cx).motion.fast_transition(),
+            window,
+            cx,
+        );
         let theme = cx.theme();
         let has_footer = !self.footer.is_empty();
         SidebarScoped::new(
@@ -623,9 +638,30 @@ impl RenderOnce for Sidebar {
                 })
                 .border_color(theme.sidebar_border)
                 .refine_style(&self.style)
-                .child(v_flex().flex_shrink_0().children(self.header))
+                .child(
+                    v_flex()
+                        .id("sidebar-header")
+                        .relative()
+                        .flex_shrink_0()
+                        .children(self.header)
+                        .when(edge > 0.001, |this| {
+                            this.child(
+                                div()
+                                    .id("sidebar-header-edge")
+                                    .test_support()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left_0()
+                                    .right_0()
+                                    .h_px()
+                                    .bg(theme.sidebar_border)
+                                    .opacity(edge),
+                            )
+                        }),
+                )
                 .child(
                     ScrollArea::new("sidebar-content")
+                        .track(&scroll)
                         .flex()
                         .flex_col()
                         .flex_1()

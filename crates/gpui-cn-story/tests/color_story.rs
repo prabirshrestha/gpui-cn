@@ -108,13 +108,15 @@ fn the_registry_matches_the_values_the_theme_tests_assert(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn a_swatch_copies_its_hex_and_says_so_for_a_moment(cx: &mut TestAppContext) {
+fn a_swatch_copies_its_token_code_and_says_so_for_a_moment(cx: &mut TestAppContext) {
     let (handle, story) = setup(cx);
-    let wanted = cx.update(|cx| {
-        let theme = cx.theme().clone();
-        let token = COLOR_REGISTRY.iter().find(|t| t.name == "field").unwrap();
-        to_hex((token.get)(&theme))
-    });
+    let wanted = COLOR_REGISTRY
+        .iter()
+        .find(|t| t.name == "field")
+        .unwrap()
+        .snippet
+        .to_string();
+    assert_eq!(wanted, "cx.theme().field");
     cx.update_window(handle.into(), |_, window, cx| {
         window.click(swatch("field"), cx)
     })
@@ -144,10 +146,127 @@ fn a_swatch_copies_its_hex_and_says_so_for_a_moment(cx: &mut TestAppContext) {
 }
 
 #[test]
+fn every_snippet_reads_the_token_it_is_named_for() {
+    for token in COLOR_REGISTRY {
+        let code = token
+            .snippet
+            .strip_prefix("cx.theme().")
+            .unwrap_or_else(|| panic!("{} does not start from the theme", token.name));
+        let code = code.strip_suffix("()").unwrap_or(code);
+        let last = code.rsplit('.').next().unwrap();
+        if token.name != "card" {
+            assert_eq!(last, token.name, "{}", token.snippet);
+        } else {
+            assert_eq!(code, "base.colors.surface");
+        }
+        assert!(
+            !token.snippet.contains('#'),
+            "{} carries a literal color",
+            token.name
+        );
+    }
+}
+
+#[test]
 fn ratios_grade_as_wcag_does() {
     assert_eq!(grade(15.2), "AAA");
     assert_eq!(grade(7.0), "AAA");
     assert_eq!(grade(4.5), "AA");
     assert_eq!(grade(3.2), "AA large");
     assert_eq!(grade(1.5), "Low");
+}
+
+fn search(
+    handle: &WindowHandle<gpui_kit::base::Root>,
+    story: &Entity<ColorStory>,
+    text: &str,
+    cx: &mut TestAppContext,
+) -> Vec<&'static str> {
+    cx.update_window((*handle).into(), |_, window, cx| {
+        let input = story.read(cx).search().clone();
+        input.update(cx, |input, cx| {
+            input.set_value(text.to_string(), window, cx)
+        });
+    })
+    .unwrap();
+    frames(handle, cx);
+    story.read_with(cx, |story, cx| {
+        story.visible(cx).iter().map(|token| token.name).collect()
+    })
+}
+
+#[gpui_kit::test]
+fn typing_focus_leaves_only_the_focus_colors(cx: &mut TestAppContext) {
+    let (handle, story) = setup(cx);
+    let shown = search(&handle, &story, "focus", cx);
+    assert!(shown.contains(&"focus_ring") && shown.contains(&"field_focus_border"));
+    assert!(shown.len() <= 4, "{shown:?}");
+    assert!(!shown.contains(&"background"));
+}
+
+#[gpui_kit::test]
+fn a_group_title_shows_the_group_and_empty_groups_hide(cx: &mut TestAppContext) {
+    let (handle, story) = setup(cx);
+    let shown = search(&handle, &story, "surfaces", cx);
+    assert!(shown.contains(&"background") && shown.contains(&"sidebar"));
+    let groups: HashSet<_> = story.read_with(cx, |story, cx| {
+        story.visible(cx).iter().map(|token| token.group).collect()
+    });
+    assert!(groups.contains(&gpui_cn_story::stories::ColorGroup::Surfaces));
+    assert!(groups.len() < gpui_cn_story::stories::ColorGroup::ALL.len());
+}
+
+#[gpui_kit::test]
+fn a_hex_query_finds_the_swatch_in_dark_and_light(cx: &mut TestAppContext) {
+    let (handle, story) = setup(cx);
+    for (mode, query, expected) in [
+        (ThemeMode::Dark, "#2c2c2c", "field"),
+        (ThemeMode::Dark, "799c", "field_focus_border"),
+        (ThemeMode::Light, "339c", "field_focus_border"),
+    ] {
+        cx.update(|cx| Theme::change(mode, cx));
+        frames(&handle, cx);
+        let shown = search(&handle, &story, query, cx);
+        assert!(shown.contains(&expected), "{query} in {mode:?}: {shown:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn nonsense_shows_the_empty_state_and_clearing_restores_everything(cx: &mut TestAppContext) {
+    let (handle, story) = setup(cx);
+    assert!(search(&handle, &story, "qzxqzxqzx", cx).is_empty());
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("color-empty").is_some());
+    })
+    .unwrap();
+    let all = search(&handle, &story, "", cx);
+    assert_eq!(all.len(), COLOR_REGISTRY.len());
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("color-empty").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn enter_in_the_search_focuses_the_first_match(cx: &mut TestAppContext) {
+    let (handle, story) = setup(cx);
+    search(&handle, &story, "focus_ring", cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let input = story.read(cx).search().clone();
+        use gpui_kit::Focusable as _;
+        input.focus_handle(cx).focus(window, cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    frames(&handle, cx);
+    cx.update(|cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("x".into())));
+    cx.update_window(handle.into(), |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    frames(&handle, cx);
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(
+        copied.as_deref(),
+        Some("cx.theme().focus_ring()"),
+        "the first match has focus"
+    );
 }

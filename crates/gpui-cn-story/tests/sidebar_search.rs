@@ -166,3 +166,62 @@ fn escape_clears_the_query_and_brings_every_row_back(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(shown(&handle, cx).len(), stories().len());
 }
+
+#[gpui_kit::test]
+fn the_header_keeps_its_clearance_and_its_edge_shows_only_when_scrolled(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    let handle = cx.open_window(size(px(1100.), px(500.)), |window, cx| {
+        let view = cx.new(|cx| Gallery::new(window, cx));
+        gpui_kit::base::Root::new(view, window, cx)
+    });
+    let token = px(8.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let title = window.find("story-title").bounds();
+        let search = window.find("story-filter").bounds();
+        let content = window.find("sidebar-content").bounds();
+        let above = f32::from(search.top() - title.bottom());
+        let below = f32::from(content.top() - search.bottom());
+        assert!((above - 8.).abs() <= 1., "above the box: {above}");
+        assert!((below - 8.).abs() <= 1., "below the box: {below}");
+        assert!(content.top() >= search.bottom() + token);
+        assert!(
+            window.try_find("sidebar-header-edge").is_none(),
+            "no edge at rest"
+        );
+        window.scroll(
+            "sidebar-content",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-90.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let content = window.find("sidebar-content").bounds();
+        let search = window.find("story-filter").bounds();
+        assert!(
+            content.top() >= search.bottom() + token,
+            "the clip edge keeps its clearance"
+        );
+        assert!(
+            window.try_find("sidebar-header-edge").is_some(),
+            "an edge once scrolled"
+        );
+        window.scroll(
+            "sidebar-content",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(500.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("sidebar-header-edge").is_none(),
+            "gone again at the top"
+        );
+    })
+    .unwrap();
+}

@@ -162,6 +162,32 @@ mod macos {
                 window.render_frame(cx);
             })
             .expect("close the palette");
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.scroll(
+                    "sidebar-content",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(0.),
+                        gpui_kit::px(-300.),
+                    )),
+                    cx,
+                );
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("scroll the sidebar");
+            capture(&mut cx, &format!("gallery-{name}-scrolled"));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.scroll(
+                    "sidebar-content",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(0.),
+                        gpui_kit::px(1000.),
+                    )),
+                    cx,
+                );
+                window.render_frame(cx);
+            })
+            .expect("scroll the sidebar back");
             for (query, label) in [("sel", "filtered"), ("zzzz", "unmatched")] {
                 cx.update_window(handle.into(), |_, window, cx| {
                     window.render_frame(cx);
@@ -377,6 +403,34 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the effort menu");
+                }
+                if story == "Color" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let search = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::ColorStory>(cx)
+                            .expect("the color story")
+                            .read(cx)
+                            .search()
+                            .clone();
+                        search.update(cx, |input, cx| input.set_value("focus", window, cx));
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("search the colors");
+                    capture(&mut cx, &format!("story-{slug}-search-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let search = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::ColorStory>(cx)
+                            .expect("the color story")
+                            .read(cx)
+                            .search()
+                            .clone();
+                        search.update(cx, |input, cx| input.set_value("", window, cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("clear the search");
                 }
                 if story == "Model picker" {
                     snap_picker(
