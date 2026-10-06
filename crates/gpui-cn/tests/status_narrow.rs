@@ -160,7 +160,7 @@ fn the_menu_of_an_icon_item_hangs_from_the_item(cx: &mut TestAppContext) {
             "the menu does not cover its item: {item:?} {menu:?}"
         );
         assert!(
-            (f32::from(menu.left() - item.left())).abs() < 12.,
+            (f32::from(menu.left() - item.left())).abs() < 1.5,
             "lined up: {item:?} {menu:?}"
         );
     })

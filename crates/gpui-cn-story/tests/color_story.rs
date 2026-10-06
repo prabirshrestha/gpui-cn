@@ -97,12 +97,11 @@ fn the_registry_matches_the_values_the_theme_tests_assert(cx: &mut TestAppContex
         list.iter()
             .find(|(n, _)| *n == name)
             .map(|(_, hex)| hex.clone())
+            .unwrap_or_else(|| panic!("the registry has no token named {name}"))
     };
     for (name, d, l) in expected {
-        if let Some(hex) = find(&dark, name) {
-            assert_eq!(hex, d, "{name} in dark");
-            assert_eq!(find(&light, name).as_deref(), Some(l), "{name} in light");
-        }
+        assert_eq!(find(&dark, name), d, "{name} in dark");
+        assert_eq!(find(&light, name), l, "{name} in light");
     }
 }
 

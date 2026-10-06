@@ -40,6 +40,16 @@ struct Setup {
 }
 
 fn setup(cx: &mut TestAppContext, disabled: bool, stops: Option<usize>) -> Setup {
+    setup_range(cx, disabled, stops, (0., 5., 1.), 2.)
+}
+
+fn setup_range(
+    cx: &mut TestAppContext,
+    disabled: bool,
+    stops: Option<usize>,
+    (min, max, step): (f32, f32, f32),
+    start: f32,
+) -> Setup {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
@@ -49,10 +59,10 @@ fn setup(cx: &mut TestAppContext, disabled: bool, stops: Option<usize>) -> Setup
     let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
         let state = cx.new(|_| {
             SliderState::new()
-                .min(0.)
-                .max(5.)
-                .step(1.)
-                .default_value(2.)
+                .min(min)
+                .max(max)
+                .step(step)
+                .default_value(start)
         });
         let log = events.clone();
         cx.subscribe(&state, move |_, _, event: &SliderEvent, _| {
@@ -288,5 +298,62 @@ fn a_touch_drag_on_the_track_moves_the_thumb(cx: &mut TestAppContext) {
     assert_eq!(
         setup.events.borrow().last().map(String::as_str),
         Some("release 5")
+    );
+}
+
+fn click_at_fraction(setup: &Setup, fraction: f32, cx: &mut TestAppContext) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        let bounds = window.find("effort").bounds();
+        let at = point(
+            bounds.left() + (bounds.size.width - px(1.)) * fraction,
+            bounds.center().y,
+        );
+        window.click_at("effort", at - bounds.origin, cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_press_between_two_steps_snaps_to_the_nearer_one(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, None);
+    for (fraction, expected) in [(0.45, 2.), (0.55, 3.), (0.05, 0.), (0.95, 5.), (0.3, 1.)] {
+        click_at_fraction(&setup, fraction, cx);
+        assert_eq!(value(&setup, cx), expected, "at {fraction}");
+    }
+}
+
+#[gpui_kit::test]
+fn an_empty_range_and_odd_stops_and_steps_do_not_break_the_slider(cx: &mut TestAppContext) {
+    let same = setup_range(cx, false, Some(3), (3., 3., 1.), 3.);
+    click_at_fraction(&same, 0.5, cx);
+    assert_eq!(value(&same, cx), 3., "min equals max");
+    for count in [0, 1] {
+        let few = setup_range(cx, false, Some(count), (0., 5., 1.), 2.);
+        click_at_fraction(&few, 1.0, cx);
+        assert_eq!(
+            value(&few, cx),
+            5.,
+            "{count} stops draw no ticks and still work"
+        );
+    }
+    let odd = setup_range(cx, false, None, (0., 5., 2.), 0.);
+    cx.update_window(odd.handle.into(), |_, window, cx| {
+        window.activate_window();
+        window.press("tab", cx);
+        window.press("end", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        value(&odd, cx),
+        5.,
+        "End goes to the max even when the step does not divide the range"
+    );
+    cx.update_window(odd.handle.into(), |_, window, cx| {
+        window.press("right", cx);
+    })
+    .unwrap();
+    assert!(
+        value(&odd, cx) <= 5.,
+        "a step past the end stays at the max"
     );
 }

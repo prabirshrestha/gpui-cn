@@ -204,12 +204,20 @@ fn an_empty_prompt_does_not_submit_and_the_send_button_is_disabled(cx: &mut Test
     })
     .unwrap();
     assert!(submits(&setup).is_empty());
+    assert!(
+        !setup.state.read_with(cx, |state, cx| state.can_submit(cx)),
+        "an empty prompt cannot be sent"
+    );
     type_text(&setup, "   ", cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.press("enter", cx);
     })
     .unwrap();
     assert!(submits(&setup).is_empty());
+    assert!(
+        !setup.state.read_with(cx, |state, cx| state.can_submit(cx)),
+        "spaces alone cannot be sent"
+    );
 }
 
 #[gpui_kit::test]
@@ -377,6 +385,10 @@ fn the_permission_menu_changes_the_mode_and_reports_it(cx: &mut TestAppContext) 
             .iter()
             .any(|event| matches!(event, ComposerEvent::PermissionChanged(id) if id == "plan"))
     );
+    let mode = setup.state.read_with(cx, |state, cx| {
+        state.permission().read(cx).selected().to_string()
+    });
+    assert_eq!(mode, "plan", "the state holds the mode the event reported");
 }
 
 #[gpui_kit::test]
@@ -411,6 +423,16 @@ fn the_model_picker_chooses_a_model_and_an_effort(cx: &mut TestAppContext) {
         window.render_frame(cx);
     })
     .unwrap();
+    let (model, effort) = setup.state.read_with(cx, |state, cx| {
+        let models = state.models().read(cx);
+        (models.selected().cloned(), models.effort())
+    });
+    assert_eq!(
+        model.as_deref(),
+        Some("acme-deep"),
+        "the state holds the model"
+    );
+    assert_eq!(effort, Some(5), "and the effort");
     let events = setup.events.borrow();
     assert!(
         events
@@ -539,4 +561,37 @@ fn dropped_files_are_reported_with_their_paths(cx: &mut TestAppContext) {
             PathBuf::from("/tmp/b.png")
         ])
     );
+}
+
+#[gpui_kit::test]
+fn attachments_alone_can_be_sent_and_a_queued_or_full_upload_blocks_the_send(
+    cx: &mut TestAppContext,
+) {
+    let setup = setup(cx, Options::default());
+    let can_submit = |setup: &Setup, cx: &mut TestAppContext| {
+        setup.state.read_with(cx, |state, cx| state.can_submit(cx))
+    };
+    assert!(!can_submit(&setup, cx), "nothing to send");
+    setup.state.update(cx, |state, cx| {
+        state.add_attachment(Attachment::new("a", "a.txt"), cx);
+    });
+    assert!(
+        can_submit(&setup, cx),
+        "a ready attachment is enough with no text"
+    );
+    setup.state.update(cx, |state, cx| {
+        state.set_attachment_progress("a", Some(0.), cx);
+    });
+    assert!(!can_submit(&setup, cx), "queued blocks the send");
+    setup.state.update(cx, |state, cx| {
+        state.set_attachment_progress("a", Some(100.), cx);
+    });
+    assert!(
+        !can_submit(&setup, cx),
+        "100 percent still waits for the application to clear the progress"
+    );
+    setup.state.update(cx, |state, cx| {
+        state.set_attachment_progress("a", None, cx);
+    });
+    assert!(can_submit(&setup, cx), "ready again");
 }

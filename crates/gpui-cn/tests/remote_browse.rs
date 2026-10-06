@@ -5,7 +5,7 @@
 
 mod support;
 
-use gpui_cn::{FilePickerEvent, FolderPickerEvent, PathStyle};
+use gpui_cn::{FilePickerEvent, FolderPickerEvent};
 use gpui_kit::{AppContext as _, TestAppContext};
 use support::{
     FakeRemote,
@@ -49,12 +49,12 @@ fn typing_a_drive_letter_switches_drives(cx: &mut TestAppContext) {
             "D:\\",
             "{which:?}: a lone drive is its root"
         );
-        assert!(present(&setup, row(which, "data"), cx), "{which:?}");
+        assert!(present(&setup, row("data"), cx), "{which:?}");
         clear(&setup, cx);
         type_text(&setup, "c:/users/ME/code/", cx);
         assert_eq!(dir(&setup, cx).to_lowercase(), "c:\\users\\me\\code");
         assert!(
-            present(&setup, row(which, "main.rs"), cx) || which == Which::Folder,
+            present(&setup, row("main.rs"), cx) || which == Which::Folder,
             "{which:?}: listed with the other spelling"
         );
     }
@@ -67,8 +67,8 @@ fn a_windows_listing_sorts_and_filters_without_case(cx: &mut TestAppContext) {
         let setup = start(cx, which, remote, initial("C:\\Users\\me"));
         clear(&setup, cx);
         type_text(&setup, "C:\\Users\\me\\doc", cx);
-        assert!(present(&setup, row(which, "Documents"), cx), "{which:?}");
-        assert!(!present(&setup, row(which, "Code"), cx));
+        assert!(present(&setup, row("Documents"), cx), "{which:?}");
+        assert!(!present(&setup, row("Code"), cx));
         assert_eq!(highlighted(&setup, cx).as_deref(), Some("Documents"));
     }
 }
@@ -102,7 +102,7 @@ fn up_goes_to_the_remote_root_and_stays_there(cx: &mut TestAppContext) {
             assert_eq!(dir(&setup, cx), expected, "{which:?}");
         }
         assert!(
-            present(&setup, row(which, "home"), cx),
+            present(&setup, row("home"), cx),
             "{which:?}: the root lists"
         );
         let setup = start(cx, which, FakeRemote::windows(), initial("C:\\Users\\me"));
@@ -118,23 +118,14 @@ fn a_big_listing_pages_and_the_picker_loads_the_next_page_on_a_click(cx: &mut Te
     for which in BOTH {
         let remote = FakeRemote::posix().with_page_size(2);
         let setup = start(cx, which, remote.clone(), initial("/home/me"));
-        assert!(
-            present(&setup, row(which, "code"), cx),
-            "{which:?}: first page"
-        );
-        assert!(
-            !present(&setup, row(which, "docs"), cx),
-            "{which:?}: not yet"
-        );
+        assert!(present(&setup, row("code"), cx), "{which:?}: first page");
+        assert!(!present(&setup, row("docs"), cx), "{which:?}: not yet");
         assert!(
             present(&setup, part("more"), cx),
             "{which:?}: a Load more row"
         );
         click(&setup, part("more"), cx);
-        assert!(
-            present(&setup, row(which, "docs"), cx),
-            "{which:?}: second page"
-        );
+        assert!(present(&setup, row("docs"), cx), "{which:?}: second page");
         assert_eq!(
             remote.requested(),
             ["/home/me", "/home/me@2"],
@@ -172,7 +163,7 @@ fn what_is_chosen_is_written_with_the_remotes_separator(cx: &mut TestAppContext)
         FakeRemote::windows(),
         initial("C:/Users/me/"),
     );
-    click(&setup, row(Which::File, "notes.txt"), cx);
+    click(&setup, row("notes.txt"), cx);
     cx.update(|cx| {
         let Picker::File(state) = &setup.picker else {
             unreachable!()
@@ -206,5 +197,4 @@ fn the_remotes_home_is_the_start_whatever_the_host_is(cx: &mut TestAppContext) {
         type_text(&setup, "~/Code/", cx);
         assert_eq!(dir(&setup, cx), "C:\\Users\\me\\Code", "{which:?}");
     }
-    let _ = PathStyle::host();
 }

@@ -6,7 +6,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 use gpui_kit::{
     AbsoluteLength, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId, FontWeight,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine,
-    SharedString, Size, Style, TextAlign, TextRun, Window, size,
+    SharedString, Size, Style, TextAlign, TextRun, Window,
 };
 
 /// The mark that stands for the removed middle.
@@ -199,7 +199,6 @@ impl Element for MiddleText {
                 cx,
             );
         }
-        let _ = size(Pixels::ZERO, Pixels::ZERO);
     }
 }
 

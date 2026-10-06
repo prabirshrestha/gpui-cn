@@ -85,7 +85,7 @@ fn every_example_owns_a_state_with_a_model_chosen(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn each_picker_opens_alone_by_its_own_trigger(cx: &mut TestAppContext) {
-    let (handle, story) = setup(cx);
+    let (handle, _) = setup(cx);
     let all: Vec<(&str, ElementId)> = vec![
         ("models", named("models", "trigger")),
         ("trigger-only", ElementId::from("trigger-only-button")),
@@ -96,7 +96,6 @@ fn each_picker_opens_alone_by_its_own_trigger(cx: &mut TestAppContext) {
         ("search", named("search", "trigger")),
         ("controlled", named("controlled", "trigger")),
     ];
-    let _ = story;
     for (index, (_, trigger)) in all.iter().enumerate() {
         cx.update_window(handle.into(), |_, window, cx| {
             window.click(trigger.clone(), cx);

@@ -683,7 +683,9 @@ impl RenderOnce for Composer {
             needs.push(need);
             needs.len() - 1
         };
-        let _ = has_leading.then(|| at(fixed));
+        if has_leading {
+            at(fixed);
+        }
         at(Need {
             natural: px(0.),
             min: px(0.),
@@ -698,8 +700,12 @@ impl RenderOnce for Composer {
             .as_ref()
             .and_then(|menu| menu.need(window, cx))
             .map(&mut at);
-        let _ = has_mic.then(|| at(fixed));
-        let _ = has_send.then(|| at(fixed));
+        if has_mic {
+            at(fixed);
+        }
+        if has_send {
+            at(fixed);
+        }
         let order: Vec<usize> = [effort_at, permission_at, model_at]
             .into_iter()
             .flatten()

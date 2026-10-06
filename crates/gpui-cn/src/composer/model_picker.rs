@@ -1689,7 +1689,6 @@ impl Rows {
                     fuzzy::matched(&query, text).unwrap_or_default()
                 };
                 let star_state = self.state.clone();
-                let model_id = model.id.clone();
                 let star_id = model.id.clone();
                 frame(ElementId::NamedChild(
                     self.id.clone().into(),
@@ -1779,7 +1778,6 @@ impl Rows {
                     }),
                 )
                 .on_click(move |_, window, cx| {
-                    let _ = &model_id;
                     click_state.update(cx, |state, cx| state.choose_row(index, window, cx));
                 })
                 .into_any_element()

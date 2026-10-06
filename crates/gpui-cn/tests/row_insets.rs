@@ -253,9 +253,11 @@ fn every_list_insets_its_rows_the_same_on_both_sides(cx: &mut TestAppContext) {
                 (left - right).abs() <= 0.5,
                 "{kind:?}: left inset {left}, right inset {right}"
             );
+            // The menu padding, and a hairline where the panel draws one.
+            let expected = if matches!(kind, Kind::Model) { 4. } else { 5. };
             assert!(
-                (4.0..=6.0).contains(&left),
-                "{kind:?}: the inset is the menu padding and a hairline, not {left}"
+                (left - expected).abs() <= 0.5,
+                "{kind:?}: the inset is {expected}, not {left}"
             );
             if !matches!(kind, Kind::Model | Kind::File | Kind::Folder) {
                 assert!(row.size.height >= padding, "{kind:?}: a row is a row tall");

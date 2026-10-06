@@ -10,8 +10,8 @@ use gpui_cn::{
 use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, TestAppContext, Window, assets::IconName, div, point, px, size,
-    test::TestWindowExt as _,
+    SharedString, Styled as _, TestAppContext, Window, assets::IconName, div, point,
+    prelude::FluentBuilder as _, px, size, test::TestWindowExt as _,
 };
 
 const SECONDARY: &str = if cfg!(target_os = "macos") {
@@ -22,6 +22,7 @@ const SECONDARY: &str = if cfg!(target_os = "macos") {
 
 struct Harness {
     state: Entity<ModelPickerState>,
+    bottom: bool,
 }
 
 impl Render for Harness {
@@ -30,7 +31,8 @@ impl Render for Harness {
             .size_full()
             .p_4()
             .flex()
-            .items_start()
+            .when(self.bottom, |this| this.items_end())
+            .when(!self.bottom, |this| this.items_start())
             .justify_end()
             .gap_2()
             .child(ModelPicker::new("model", &self.state))
@@ -92,6 +94,17 @@ fn start_with_motion(
     configure: impl FnOnce(ModelPickerState) -> ModelPickerState,
     motion: ReduceMotion,
 ) -> Setup {
+    start_placed(cx, providers, configure, motion, false)
+}
+
+/// A picker whose trigger sits at the top of the window, or at the bottom.
+fn start_placed(
+    cx: &mut TestAppContext,
+    providers: Vec<ModelProvider>,
+    configure: impl FnOnce(ModelPickerState) -> ModelPickerState,
+    motion: ReduceMotion,
+    bottom: bool,
+) -> Setup {
     cx.update(|cx| {
         gpui_kit::init(cx);
         gpui_cn::init(cx);
@@ -109,7 +122,7 @@ fn start_with_motion(
         slot = Some(state.clone());
         let harness = cx.new(|cx| {
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
-            Harness { state }
+            Harness { state, bottom }
         });
         Root::new(harness, window, cx)
     });
@@ -418,7 +431,29 @@ fn the_number_shortcuts_choose_the_nth_row(cx: &mut TestAppContext) {
 fn only_the_first_nine_rows_get_a_number_shortcut(cx: &mut TestAppContext) {
     let setup = start(cx, big_catalog(), |state| state);
     open(&setup, cx);
-    assert!(present(&setup, named(named(id(), "shortcut"), "m08"), cx) || true);
+    let badge = |name: &'static str| named(named(id(), "shortcut"), name);
+    assert!(
+        present(&setup, badge("m00"), cx),
+        "the first row has its badge"
+    );
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.scroll(
+            named(id(), "models"),
+            gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-300.))),
+            cx,
+        );
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert!(
+        present(&setup, model("m09"), cx),
+        "the tenth row is on screen"
+    );
+    assert!(
+        present(&setup, badge("m08"), cx),
+        "the ninth row has the last badge"
+    );
+    assert!(!present(&setup, badge("m09"), cx), "the tenth row has none");
     cx.update_window(setup.handle.into(), |_, window, cx| {
         setup
             .state
@@ -709,7 +744,6 @@ fn the_trigger_shows_the_open_state(cx: &mut TestAppContext) {
         closed.size, opened.size,
         "the pill keeps its size while open"
     );
-    let _ = point(px(0.), px(0.));
 }
 
 #[gpui_kit::test]
@@ -795,13 +829,21 @@ fn the_legacy_header_has_the_row_inset(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_panel_hangs_from_its_trigger_and_flips_when_it_has_no_room(cx: &mut TestAppContext) {
-    let setup = setup(cx);
-    open(&setup, cx);
-    let trigger_box = bounds(&setup, named(id(), "trigger"), cx);
-    let panel = bounds(&setup, named(id(), "body"), cx);
+    let high = setup(cx);
+    open(&high, cx);
+    let trigger_box = bounds(&high, named(id(), "trigger"), cx);
+    let panel = bounds(&high, named(id(), "body"), cx);
     assert!(
-        panel.top() >= trigger_box.bottom() || panel.bottom() <= trigger_box.top(),
-        "the panel never covers its own trigger: {trigger_box:?} {panel:?}"
+        panel.top() >= trigger_box.bottom(),
+        "a trigger near the top hangs the panel below it: {trigger_box:?} {panel:?}"
+    );
+    let low = start_placed(cx, catalog(), |state| state, ReduceMotion::On, true);
+    open(&low, cx);
+    let trigger_box = bounds(&low, named(id(), "trigger"), cx);
+    let panel = bounds(&low, named(id(), "body"), cx);
+    assert!(
+        panel.bottom() <= trigger_box.top(),
+        "a trigger near the bottom flips the panel above it: {trigger_box:?} {panel:?}"
     );
 }
 
@@ -1063,5 +1105,58 @@ fn number_shortcuts_skip_rows_that_are_folding_away(cx: &mut TestAppContext) {
             .borrow()
             .contains(&ModelPickerEvent::Selected("acme-fast".into())),
         "Cmd+1 chose the first row that is not folding away"
+    );
+}
+
+fn chose(setup: &Setup) -> Vec<String> {
+    setup
+        .events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            ModelPickerEvent::Selected(id) => Some(id.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn number_shortcuts_count_the_rows_of_a_search_and_of_the_favorites(cx: &mut TestAppContext) {
+    let setup = start(cx, catalog(), |state| {
+        state.with_favorites(["zed-alpha", "acme-deep"])
+    });
+    open(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.input("alpha", cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    let second = rows(&setup, cx)[1].clone();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press(&format!("{SECONDARY}-2"), cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert_eq!(
+        chose(&setup),
+        [second],
+        "Cmd+2 chose the second row of the search"
+    );
+
+    let setup = start(cx, catalog(), |state| {
+        state.with_favorites(["zed-alpha", "acme-deep"])
+    });
+    open(&setup, cx);
+    click(&setup, named(id(), "favorites"), cx);
+    assert_eq!(rows(&setup, cx), ["zed-alpha", "acme-deep"]);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press(&format!("{SECONDARY}-2"), cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert_eq!(
+        chose(&setup),
+        ["acme-deep"],
+        "Cmd+2 chose the second favorite"
     );
 }

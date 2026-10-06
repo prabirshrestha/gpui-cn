@@ -313,9 +313,7 @@ pub(crate) trait Host<E: Entry>: 'static + Sized {
     fn folder_created(&mut self, path: SourcePath, window: &mut Window, cx: &mut Context<Self>);
 
     /// The browser's rows or directory changed after an answer or an edit.
-    fn browser_changed(&mut self, cx: &mut Context<Self>) {
-        let _ = cx;
-    }
+    fn browser_changed(&mut self, _: &mut Context<Self>) {}
 }
 
 /// The row that names a new folder, open at the top of the list.

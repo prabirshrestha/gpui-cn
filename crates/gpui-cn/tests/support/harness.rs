@@ -212,8 +212,7 @@ pub fn part(name: &str) -> ElementId {
 
 /// The row of an entry: the folder picker names it directly, the file
 /// picker under `entry`.
-pub fn row(which: Which, name: &str) -> ElementId {
-    let _ = which;
+pub fn row(name: &str) -> ElementId {
     ElementId::NamedChild(part("entry").into(), name.to_string().into())
 }
 

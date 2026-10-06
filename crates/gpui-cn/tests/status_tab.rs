@@ -362,7 +362,6 @@ fn items_never_overlap_and_the_meter_stays_at_the_right(cx: &mut TestAppContext)
                 (inset - 12.).abs() < 6.,
                 "the meter keeps the tab's trailing padding at {width}: {inset}"
             );
-            let _ = cx;
         })
         .unwrap();
     }

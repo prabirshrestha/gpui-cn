@@ -103,9 +103,8 @@ fn settle(setup: &Setup, cx: &mut TestAppContext) {
 
 fn open(setup: &Setup, cx: &mut TestAppContext) {
     setup.open.set(true);
-    cx.update_window(setup.handle.into(), |_, window, cx| {
+    cx.update_window(setup.handle.into(), |_, window, _| {
         window.refresh();
-        let _ = cx;
     })
     .unwrap();
     settle(setup, cx);

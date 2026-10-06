@@ -87,7 +87,7 @@ fn selected_dir_path(setup: &Setup, cx: &mut TestAppContext) -> Option<String> {
 }
 
 fn is_listed(setup: &Setup, name: &str, cx: &mut TestAppContext) -> bool {
-    present(setup, row(setup.which, name), cx)
+    present(setup, row(name), cx)
 }
 
 #[gpui_kit::test]
@@ -477,81 +477,108 @@ fn the_memory_sources_make_folders_that_list_and_open(cx: &mut TestAppContext) {
     assert_eq!(dir(&setup, cx), "/home");
 }
 
-fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "gpui-cn-new-folder-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A temporary directory that is removed when the test ends, even when an
+/// assertion fails.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "gpui-cn-new-folder-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 
-#[gpui_kit::test]
-fn the_local_sources_make_a_real_folder_on_disk(cx: &mut TestAppContext) {
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+fn listed(setup: &Setup, cx: &mut TestAppContext) -> bool {
+    cx.update(|cx| match &setup.picker {
+        Picker::Folder(state) => state
+            .read(cx)
+            .listing()
+            .is_some_and(|l| matches!(l, gpui_cn::Listing::Ready(_))),
+        Picker::File(state) => state
+            .read(cx)
+            .listing()
+            .is_some_and(|l| matches!(l, gpui_cn::FileListing::Ready(_))),
+    })
+}
+
+fn make_on_disk<S: gpui_cn::FolderSource + gpui_cn::FileSource + Clone>(
+    cx: &mut TestAppContext,
+    which: Which,
+    source: S,
+    tag: &str,
+) {
     cx.executor().allow_parking();
-    let root = temp_dir("folders");
-    let initial = root.to_string_lossy().into_owned();
+    let root = TempDir::new(tag);
     let setup = start(
         cx,
-        Which::Folder,
-        OnlyFolders(LocalFolders),
+        which,
+        source,
         Options {
-            initial: Some(initial.clone()),
+            initial: Some(root.path().to_string_lossy().into_owned()),
             allow_new_folder: true,
             ..Options::default()
         },
     );
-    cx.run_until_parked();
-    std::thread::sleep(Duration::from_millis(50));
-    settle(&setup, cx);
-    click(&setup, button(), cx);
-    type_text(&setup, "made-here", cx);
-    press(&setup, "enter", cx);
-    std::thread::sleep(Duration::from_millis(50));
-    settle(&setup, cx);
-    assert!(root.join("made-here").is_dir(), "the folder exists on disk");
-    assert_eq!(created_events(&setup).len(), 1);
-    for _ in 0..20 {
-        if cx.update(|cx| match &setup.picker {
-            Picker::Folder(state) => state
-                .read(cx)
-                .listing()
-                .is_some_and(|l| matches!(l, gpui_cn::Listing::Ready(_))),
-            Picker::File(_) => true,
-        }) {
+    for _ in 0..250 {
+        settle(&setup, cx);
+        if listed(&setup, cx) {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(listed(&setup, cx), "the directory listed");
+    click(&setup, button(), cx);
+    type_text(&setup, "made-here", cx);
+    press(&setup, "enter", cx);
+    for _ in 0..250 {
         settle(&setup, cx);
+        if root.path().join("made-here").is_dir() && created_events(&setup).len() == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        root.path().join("made-here").is_dir(),
+        "{which:?}: the folder exists on disk"
+    );
+    assert_eq!(created_events(&setup).len(), 1, "{which:?}");
+    for _ in 0..250 {
+        settle(&setup, cx);
+        if listed(&setup, cx) && present(&setup, button(), cx) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
     click(&setup, button(), cx);
     type_text(&setup, "made-here", cx);
     press(&setup, "enter", cx);
-    assert!(present(&setup, error_id(), cx), "it exists now");
-    std::fs::remove_dir_all(&root).unwrap();
+    assert!(present(&setup, error_id(), cx), "{which:?}: it exists now");
+}
 
-    let root = temp_dir("files");
-    let setup = start(
-        cx,
-        Which::File,
-        OnlyFiles(LocalFiles),
-        Options {
-            initial: Some(root.to_string_lossy().into_owned()),
-            allow_new_folder: true,
-            ..Options::default()
-        },
-    );
-    std::thread::sleep(Duration::from_millis(50));
-    settle(&setup, cx);
-    click(&setup, button(), cx);
-    type_text(&setup, "sub", cx);
-    press(&setup, "enter", cx);
-    std::thread::sleep(Duration::from_millis(50));
-    settle(&setup, cx);
-    assert!(root.join("sub").is_dir());
-    std::fs::remove_dir_all(&root).unwrap();
+#[gpui_kit::test]
+fn the_local_folder_source_makes_a_real_folder_on_disk(cx: &mut TestAppContext) {
+    make_on_disk(cx, Which::Folder, OnlyFolders(LocalFolders), "folders");
+}
+
+#[gpui_kit::test]
+fn the_local_file_source_makes_a_real_folder_on_disk(cx: &mut TestAppContext) {
+    make_on_disk(cx, Which::File, OnlyFiles(LocalFiles), "files");
 }

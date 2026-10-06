@@ -225,12 +225,14 @@ fn the_upload_demo_runs_the_queue_in_order_and_ends_idle(cx: &mut TestAppContext
         "it starts by itself"
     );
     let mut last_sheet = 55.;
-    let mut landed: Vec<&str> = Vec::new();
-    for _ in 0..200 {
+    let mut landed: Vec<(&str, usize)> = Vec::new();
+    for step in 0..200 {
         tick(cx, 100);
         for id in ["sheet", "deck", "report"] {
-            if !landed.contains(&id) && progress_of(&story, id, cx) == Some(None) {
-                landed.push(id);
+            if !landed.iter().any(|(done, _)| *done == id)
+                && progress_of(&story, id, cx) == Some(None)
+            {
+                landed.push((id, step));
             }
         }
         if let Some(Some(p)) = progress_of(&story, "sheet", cx) {
@@ -246,9 +248,13 @@ fn the_upload_demo_runs_the_queue_in_order_and_ends_idle(cx: &mut TestAppContext
         }
     }
     assert_eq!(
-        landed,
+        landed.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
         ["sheet", "deck", "report"],
         "the files land in order"
+    );
+    assert!(
+        landed.windows(2).all(|pair| pair[0].1 < pair[1].1),
+        "each file lands on a later tick than the one before: {landed:?}"
     );
     assert!(
         !story.read_with(cx, |story, _| story.is_uploading()),
@@ -257,7 +263,7 @@ fn the_upload_demo_runs_the_queue_in_order_and_ends_idle(cx: &mut TestAppContext
     tick(cx, 2000);
     frames(&handle, cx);
     frames(&handle, cx);
-    cx.update_window(handle.into(), |_, window, cx| {
+    cx.update_window(handle.into(), |_, window, _| {
         let tile = ElementId::NamedChild(ElementId::from("files").into(), "sheet".into());
         assert!(
             window
@@ -270,7 +276,6 @@ fn the_upload_demo_runs_the_queue_in_order_and_ends_idle(cx: &mut TestAppContext
                 .try_find(ElementId::NamedChild(tile.into(), "percent".into()))
                 .is_none()
         );
-        let _ = cx;
     })
     .unwrap();
 }

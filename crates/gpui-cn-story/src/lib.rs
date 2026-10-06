@@ -530,7 +530,6 @@ impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The HUD reads GPUI's own frame trace, so its numbers are what a
         // frame of this window cost, not an estimate from outside.
-        let _ = (&window, &cx);
         // One sidebar for every page, so paging keeps its scroll position.
         // Settings shows its own sections in it.
         let sidebar = if self.settings_showing(cx) {

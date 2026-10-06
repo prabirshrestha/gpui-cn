@@ -790,3 +790,31 @@ impl IntoChild for ElementId {
         ElementId::NamedChild(self.into(), name.to_string().into())
     }
 }
+
+#[gpui_kit::test]
+fn a_shift_range_covers_the_rows_the_query_shows_and_no_others(cx: &mut TestAppContext) {
+    let setup = start(cx, project(), "/home/me", multiple());
+    type_text(&setup, "rs", cx);
+    let shown = names(&setup, cx);
+    assert!(shown.contains(&"lib.rs".to_string()) && shown.contains(&"main.rs".to_string()));
+    assert!(
+        !shown.contains(&"notes.txt".to_string()),
+        "the query hides it"
+    );
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    };
+    let files: Vec<String> = shown
+        .iter()
+        .filter(|n| n.ends_with(".rs"))
+        .cloned()
+        .collect();
+    click(&setup, entry(&files[0]), cx);
+    click_with(&setup, entry(files.last().unwrap()), shift, cx);
+    let mut expected = files.clone();
+    expected.sort();
+    let mut got = selection(&setup, cx);
+    got.sort();
+    assert_eq!(got, expected, "only the rows that show are in the range");
+}

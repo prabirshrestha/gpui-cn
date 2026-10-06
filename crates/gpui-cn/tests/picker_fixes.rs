@@ -39,8 +39,8 @@ fn first_visible(setup: &Setup, cx: &mut TestAppContext) -> (String, gpui_kit::P
     let list_top = bounds(setup, part("list"), cx).top();
     for n in 0..60 {
         let name = format!("d{n:02}");
-        if present(setup, row(setup.which, &name), cx) {
-            let top = bounds(setup, row(setup.which, &name), cx).top();
+        if present(setup, row(&name), cx) {
+            let top = bounds(setup, row(&name), cx).top();
             if top >= list_top {
                 return (name, top);
             }
@@ -72,11 +72,11 @@ fn loading_a_page_keeps_the_scroll_place(cx: &mut TestAppContext) {
         assert_ne!(name, "d00", "{which:?}: the list scrolled");
         load_more(&setup, cx);
         assert!(
-            present(&setup, row(which, &name), cx),
+            present(&setup, row(&name), cx),
             "{which:?}: {name} is still on screen"
         );
         assert_eq!(
-            bounds(&setup, row(which, &name), cx).top(),
+            bounds(&setup, row(&name), cx).top(),
             top,
             "{which:?}: {name} stays where it was"
         );
@@ -94,11 +94,11 @@ fn loading_a_page_keeps_the_scroll_place_under_a_query(cx: &mut TestAppContext) 
         assert_ne!(name, "d00", "{which:?}: the list scrolled");
         load_more(&setup, cx);
         assert!(
-            present(&setup, row(which, &name), cx),
+            present(&setup, row(&name), cx),
             "{which:?}: {name} is still on screen"
         );
         assert_eq!(
-            bounds(&setup, row(which, &name), cx).top(),
+            bounds(&setup, row(&name), cx).top(),
             top,
             "{which:?}: {name} stays where it was"
         );
@@ -362,7 +362,7 @@ fn making_a_folder_keeps_the_file_selection(cx: &mut TestAppContext) {
         FakeRemote::posix(),
         new_folder_options("/home/me"),
     );
-    click(&setup, row(Which::File, "notes.txt"), cx);
+    click(&setup, row("notes.txt"), cx);
     assert_eq!(selection(&setup, cx), ["/home/me/notes.txt"]);
     click(&setup, part("new-folder-button"), cx);
     type_text(&setup, "fresh", cx);
@@ -377,7 +377,7 @@ fn making_a_folder_keeps_the_file_selection(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn leaving_the_folder_reports_that_the_selection_changed(cx: &mut TestAppContext) {
     let setup = start(cx, Which::File, FakeRemote::posix(), at("/home/me"));
-    click(&setup, row(Which::File, "notes.txt"), cx);
+    click(&setup, row("notes.txt"), cx);
     let before = selection_events(&setup);
     cx.update_window(setup.handle.into(), |_, window, cx| {
         if let Picker::File(state) = &setup.picker {
@@ -400,17 +400,14 @@ fn a_folder_named_more_is_a_row_not_the_load_more_row(cx: &mut TestAppContext) {
         .with_dir("/m", [folder("more"), folder("other")])
         .with_page_size(1);
     let setup = start(cx, Which::Folder, remote, at("/m"));
-    assert!(
-        present(&setup, row(Which::Folder, "more"), cx),
-        "the folder row"
-    );
+    assert!(present(&setup, row("more"), cx), "the folder row");
     assert!(present(&setup, part("more"), cx), "the Load more row");
     click(&setup, part("more"), cx);
     assert!(
-        present(&setup, row(Which::Folder, "other"), cx),
+        present(&setup, row("other"), cx),
         "Load more loaded the page"
     );
-    click(&setup, row(Which::Folder, "more"), cx);
+    click(&setup, row("more"), cx);
     assert_eq!(dir(&setup, cx), "/m/more", "the folder opened");
 }
 
@@ -451,7 +448,7 @@ fn choosing_cancels_the_requests_still_running(cx: &mut TestAppContext) {
         let remote = FakeRemote::posix().with_page_size(4);
         let setup = start(cx, which, remote.clone(), at("/home/me"));
         if which == Which::File {
-            click(&setup, row(which, "notes.txt"), cx);
+            click(&setup, row("notes.txt"), cx);
         }
         remote
             .shared

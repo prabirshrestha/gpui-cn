@@ -11,7 +11,7 @@ use gpui_kit::{AppContext as _, TestAppContext};
 use support::{
     FakeRemote,
     harness::{
-        BOTH, Options, Picker, Setup, Which, bounds, cancel, click, list_bottom, list_height, part,
+        BOTH, Options, Picker, Setup, Which, cancel, click, list_bottom, list_height, part,
         present, retry, row, settle, start, wait,
     },
 };
@@ -52,7 +52,7 @@ fn a_lost_connection_shows_its_message_and_retry_lists_again(cx: &mut TestAppCon
             !present(&setup, part("message"), cx),
             "{which:?}: recovered"
         );
-        assert!(present(&setup, row(which, "code"), cx), "{which:?}: rows");
+        assert!(present(&setup, row("code"), cx), "{which:?}: rows");
         assert_eq!(
             remote.requested(),
             ["/home/me", "/home/me"],
@@ -103,7 +103,7 @@ fn a_source_that_needs_a_login_shows_sign_in_and_the_app_decides_the_rest(cx: &m
         retry(&setup, cx);
         assert!(!present(&setup, part("message"), cx), "{which:?}");
         assert!(
-            present(&setup, row(which, "code"), cx),
+            present(&setup, row("code"), cx),
             "{which:?}: rows after the login"
         );
         assert_eq!(remote.requested().len(), 2);
@@ -145,10 +145,9 @@ fn a_slow_remote_shows_the_spinner_and_the_dialog_never_moves(cx: &mut TestAppCo
         );
         assert_eq!(list_height(&setup, cx), height, "{which:?}: loading again");
         wait(&setup, 500, cx);
-        assert!(present(&setup, row(which, "code"), cx), "{which:?}: listed");
+        assert!(present(&setup, row("code"), cx), "{which:?}: listed");
         assert_eq!(list_height(&setup, cx), height, "{which:?}: rows");
         assert_eq!(list_bottom(&setup, cx), bottom);
-        let _ = bounds(&setup, part("list"), cx);
     }
 }
 
@@ -177,7 +176,7 @@ fn closing_the_dialog_mid_list_cancels_the_request(cx: &mut TestAppContext) {
         assert!(present(&setup, part("loading"), cx), "{which:?}: reopened");
         assert_eq!(remote.requested(), ["/home/me", "/home/me"], "listed again");
         wait(&setup, 500, cx);
-        assert!(present(&setup, row(which, "code"), cx), "{which:?}: rows");
+        assert!(present(&setup, row("code"), cx), "{which:?}: rows");
     }
 }
 
@@ -210,7 +209,7 @@ fn leaving_a_slow_folder_cancels_its_request(cx: &mut TestAppContext) {
     );
     wait(&setup, 500, cx);
     assert!(
-        present(&setup, row(Which::Folder, "code"), cx),
+        present(&setup, row("code"), cx),
         "back in the parent, listed from cache"
     );
 }

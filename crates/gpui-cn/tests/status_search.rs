@@ -4,8 +4,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_cn::{
-    ActiveTheme as _, ReduceMotion, StatusOption, StatusSelect, StatusSelectEvent,
-    StatusSelectState, Theme,
+    ReduceMotion, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState, Theme,
 };
 use gpui_kit::base::Root;
 use gpui_kit::{
@@ -286,7 +285,6 @@ fn the_panel_hangs_from_its_trigger_and_flips_near_the_bottom(cx: &mut TestAppCo
     click(&high, trigger(), cx);
     let (trigger_box, panel) = (bounds(&high, trigger(), cx), bounds(&high, menu(), cx));
     assert!(panel.bottom() <= trigger_box.top(), "above the trigger");
-    let _ = cx.update(|cx| cx.theme().metrics.clone());
 }
 
 #[gpui_kit::test]

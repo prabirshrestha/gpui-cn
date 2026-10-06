@@ -149,13 +149,15 @@ pub struct ThemeTokens {
     /// trigger: #cacaca on dark, sampled from the reference app, the ink
     /// a step toward the surface.
     pub select_indicator: Hsla,
-    /// The fill of a select trigger: #2a2a2a on dark, sampled from the
+    /// The fill of a select trigger: #2a2a2a on dark as sampled from the
     /// reference app on the window surface (it is #343434 on a #232323
-    /// card, the same step). The window surface on light, as shadcn's
+    /// card, the same step). The derivation gives #292929, one step off
+    /// the sample, and the test asserts the derived value. The window surface on light, as shadcn's
     /// `bg-transparent` trigger.
     pub select_trigger: Hsla,
-    /// The hairline around a select trigger: #3b3b3b on dark, sampled from
-    /// the reference app. The `input` token on light, as shadcn's
+    /// The hairline around a select trigger: #3b3b3b on dark as sampled
+    /// from the reference app. The derivation gives #3a3a3a, one step off
+    /// the sample, and the test asserts the derived value. The `input` token on light, as shadcn's
     /// `border-input`.
     pub select_trigger_border: Hsla,
     /// The hairline between two unselected tabs: the muted text at 60%,
