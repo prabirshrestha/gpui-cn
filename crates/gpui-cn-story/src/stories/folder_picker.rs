@@ -4,15 +4,15 @@ use std::{
 };
 
 use gpui_cn::{
-    Button, FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState,
-    FolderSource, PageToken, gpui_kit::assets::IconName,
+    FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
+    PageToken, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Task, Window, div,
 };
 
-use crate::{Story, note, page, section};
+use crate::{Story, note, page, picker_trigger, section};
 
 /// The home folder the fixture lists in the snapshot build.
 const FIXTURE_HOME: &str = "/home/prabirshrestha";
@@ -139,25 +139,23 @@ impl Render for FolderPickerStory {
                      up. Cmd+Enter (Ctrl+Enter elsewhere) chooses the folder.",
                     cx,
                 ))
-                .child(
-                    div().flex().child(
-                        Button::new(Self::TRIGGER)
-                            .label("Choose a folder")
-                            .on_click(move |_, _, cx| {
-                                opener
-                                    .update(cx, |this, cx| {
-                                        this.open = true;
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }),
+                .child(div().flex().child(
+                    picker_trigger(Self::TRIGGER, "Choose a folder", IconName::Folder).on_click(
+                        move |_, _, cx| {
+                            opener
+                                .update(cx, |this, cx| {
+                                    this.open = true;
+                                    cx.notify();
+                                })
+                                .ok();
+                        },
                     ),
-                )
+                ))
                 .child(note(self.chosen.clone(), cx))
                 .child(
                     FolderPicker::new("folder-picker", &self.state)
                         .open(self.open)
-                        .title("Choose a source folder")
+                        .title("Choose a folder")
                         .on_open_change(move |_, _, cx| {
                             this.update(cx, |this, cx| {
                                 this.open = false;

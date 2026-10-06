@@ -1,17 +1,27 @@
 use std::time::Duration;
 
+use std::f32::consts::TAU;
+
 use gpui_kit::{
-    App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, StyleRefinement, Styled, TestSupportExt as _, Window,
+    App, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder,
+    Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, TestSupportExt as _, Window,
     base::{self, ProgressIndicator, ProgressTrack, StyledExt as _, transition},
-    div, ease_in_out,
+    canvas, div, ease_in_out, point,
     prelude::FluentBuilder as _,
-    relative,
+    px, relative,
 };
 
 use crate::{ActiveTheme as _, Theme, looping};
 
-/// A shadcn-style progress bar on `gpui_base::Progress`.
+/// A shadcn-style progress bar, or a circular progress indicator, on
+/// `gpui_base::Progress`.
+///
+/// A ring and a bar are one concept in two shapes: work that is done by a
+/// percentage, or work of unknown length. [`circular`](Self::circular)
+/// draws the ring: a track with an arc that grows clockwise from twelve
+/// o'clock, in the inherited text color at the theme's ring size and stroke
+/// (the context meter of a composer is one). With no value the ring is the
+/// spinner's turning arc, and [`Spinner`](crate::Spinner) is that.
 ///
 /// Base owns the progress role and the value assistive technology reads.
 /// This type owns the look, which is shadcn's `Progress`: as wide as its
@@ -44,6 +54,7 @@ pub struct Progress {
     style: StyleRefinement,
     value: Option<f32>,
     accessibility_label: Option<SharedString>,
+    circular: bool,
 }
 
 impl Progress {
@@ -54,7 +65,21 @@ impl Progress {
             style: StyleRefinement::default(),
             value: None,
             accessibility_label: None,
+            circular: false,
         }
+    }
+
+    /// Draws a ring in place of the bar. Its size is the theme's ring
+    /// size, and `Styled` sizes it. With a value the arc runs clockwise
+    /// from the top; with none, an arc turns, as a spinner's.
+    pub fn circular(mut self) -> Self {
+        self.circular = true;
+        self
+    }
+
+    /// Whether the indicator is a ring.
+    pub fn is_circular(&self) -> bool {
+        self.circular
     }
 
     /// The percentage done, clamped to `0..=100`, or `None` for work whose
@@ -105,8 +130,153 @@ fn sweep(delta: f32) -> (f32, f32) {
     (start, end.max(start))
 }
 
+/// The strength of the track under a ring's arc: 20%, as the bar's track
+/// (shadcn's `bg-primary/20`).
+const TRACK_STRENGTH: f32 = 0.2;
+
+/// How long one turn of the indeterminate ring takes: one second, as
+/// Tailwind's `animate-spin`.
+const TURN: Duration = Duration::from_secs(1);
+
+/// How often the turn repaints: 30 fps, which a small ring shows as smooth.
+const TURN_FPS: u32 = 30;
+
+/// How much of a turn the indeterminate arc covers: three quarters, as
+/// Lucide's `loader-circle`.
+const SPINNER_ARC: f32 = 0.75;
+
+/// The arc of the indeterminate ring at `phase` through a turn, as
+/// (start, length) in turns clockwise from the top. The spinner and every
+/// indeterminate ring draw this arc.
+pub(crate) fn indeterminate_arc(phase: f32) -> (f32, f32) {
+    (phase.rem_euclid(1.), SPINNER_ARC)
+}
+
+/// The point on a circle at `fraction` of a turn clockwise from the top.
+fn on_circle(center: Point<Pixels>, radius: Pixels, fraction: f32) -> Point<Pixels> {
+    let angle = fraction * TAU;
+    point(
+        center.x + radius * angle.sin(),
+        center.y - radius * angle.cos(),
+    )
+}
+
+/// Paints the arc that starts `start` of a turn clockwise from the top and
+/// runs `length` of a turn. A full turn is two half arcs, because an arc
+/// cannot end where it began.
+fn paint_arc(
+    center: Point<Pixels>,
+    radius: Pixels,
+    (start, length): (f32, f32),
+    width: Pixels,
+    color: Hsla,
+    window: &mut Window,
+) {
+    if length <= 0. {
+        return;
+    }
+    let mut path = PathBuilder::stroke(width);
+    let radii = point(radius, radius);
+    path.move_to(on_circle(center, radius, start));
+    if length >= 1. {
+        path.arc_to(
+            radii,
+            px(0.),
+            false,
+            true,
+            on_circle(center, radius, start + 0.5),
+        );
+        path.arc_to(radii, px(0.), false, true, on_circle(center, radius, start));
+    } else {
+        path.arc_to(
+            radii,
+            px(0.),
+            length > 0.5,
+            true,
+            on_circle(center, radius, start + length),
+        );
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
+}
+
+impl Progress {
+    /// The ring: a track and a growing arc for a value, or the turning arc
+    /// for none.
+    fn render_ring(self, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
+        let slide = Theme::global(cx).motion.slide_transition();
+        let color = self
+            .style
+            .text
+            .color
+            .unwrap_or_else(|| window.text_style().color);
+        let (size, stroke) = {
+            let metrics = &cx.theme().metrics;
+            (metrics.ring_size, metrics.ring_stroke)
+        };
+        let id = self.id.clone();
+        let arc = match self.value {
+            Some(value) => {
+                let fraction = transition(
+                    ElementId::NamedChild(id.clone().into(), "value".into()),
+                    value / 100.,
+                    slide,
+                    window,
+                    cx,
+                )
+                .clamp(0., 1.);
+                Some((0., fraction))
+            }
+            None if Theme::holds_still(cx) => Some(indeterminate_arc(0.)),
+            None => Some(indeterminate_arc(looping::phase(
+                TURN, TURN_FPS, window, cx,
+            ))),
+        };
+        let has_track = self.value.is_some();
+        let progress_id = ElementId::NamedChild(id.clone().into(), "progress".into());
+        div()
+            .id(id)
+            .test_support()
+            .flex_shrink_0()
+            .size(size)
+            .refine_style(&self.style)
+            .child(
+                base::Progress::new(progress_id)
+                    .value(self.value.unwrap_or(0.))
+                    .indeterminate(self.value.is_none())
+                    .when_some(self.accessibility_label, |this, label| {
+                        this.accessibility_label(label)
+                    })
+                    .size_full()
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, _| {
+                                let radius =
+                                    (bounds.size.width.min(bounds.size.height) - stroke) / 2.;
+                                let center = bounds.center();
+                                if has_track {
+                                    let track = color.opacity(TRACK_STRENGTH);
+                                    paint_arc(center, radius, (0., 1.), stroke, track, window);
+                                }
+                                if let Some(arc) = arc {
+                                    paint_arc(center, radius, arc, stroke, color, window);
+                                }
+                            },
+                        )
+                        .size_full(),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
 impl RenderOnce for Progress {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.circular {
+            return self.render_ring(window, cx);
+        }
         let still = Theme::holds_still(cx);
         let slide = Theme::global(cx).motion.slide_transition();
         let (track, fill, radius) = {
@@ -174,6 +344,7 @@ impl RenderOnce for Progress {
                     )
                     .child(indicator),
             )
+            .into_any_element()
     }
 }
 
@@ -188,6 +359,33 @@ mod tests {
         assert_eq!(Progress::new("p").value(150.).percentage(), Some(100.));
         assert_eq!(Progress::new("p").value(-5.).percentage(), Some(0.));
         assert_eq!(Progress::new("p").value(40.).value(None).percentage(), None);
+    }
+
+    #[test]
+    fn the_ring_arc_starts_at_the_top_and_runs_clockwise() {
+        let center = point(px(10.), px(10.));
+        let radius = px(8.);
+        let top = on_circle(center, radius, 0.);
+        assert_eq!((top.x, top.y), (px(10.), px(2.)));
+        let right = on_circle(center, radius, 0.25);
+        assert!((right.x - px(18.)).abs() < px(0.001) && (right.y - px(10.)).abs() < px(0.001));
+        let bottom = on_circle(center, radius, 0.5);
+        assert!((bottom.x - px(10.)).abs() < px(0.001) && (bottom.y - px(18.)).abs() < px(0.001));
+    }
+
+    #[test]
+    fn the_indeterminate_arc_turns_once_and_keeps_its_length() {
+        assert_eq!(indeterminate_arc(0.), (0., SPINNER_ARC));
+        assert_eq!(indeterminate_arc(0.25), (0.25, SPINNER_ARC));
+        assert_eq!(indeterminate_arc(1.25).0, 0.25);
+    }
+
+    #[test]
+    fn circular_is_a_shape_not_a_value() {
+        assert!(!Progress::new("p").is_circular());
+        let ring = Progress::new("p").circular().value(40.);
+        assert!(ring.is_circular());
+        assert_eq!(ring.percentage(), Some(40.));
     }
 
     #[test]

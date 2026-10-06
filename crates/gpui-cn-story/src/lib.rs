@@ -166,6 +166,7 @@ impl StoryEntry {
 /// lands in the right place and only needs its section.
 pub fn stories() -> Vec<StoryEntry> {
     let mut entries = vec![
+        StoryEntry::of::<stories::ColorStory>(StorySection::Foundations),
         StoryEntry::of::<stories::TypographyStory>(StorySection::Foundations),
         StoryEntry::of::<stories::SpacingStory>(StorySection::Foundations),
         StoryEntry::of::<stories::ButtonStory>(StorySection::Actions),
@@ -187,7 +188,6 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::BadgeStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::TagStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::SkeletonStory>(StorySection::FeedbackAndDisplay),
-        StoryEntry::of::<stories::SpinnerStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::ProgressStory>(StorySection::FeedbackAndDisplay),
         StoryEntry::of::<stories::ThemeModePickerStory>(StorySection::Foundations),
         StoryEntry::of::<stories::SidebarStory>(StorySection::Navigation),
@@ -882,6 +882,17 @@ pub fn frame(height: gpui_kit::Pixels, cx: &App) -> gpui_kit::Stateful<gpui_kit:
         .overflow_hidden()
 }
 
+/// The button that opens a picker in a story: one variant, one size, and
+/// the icon of what it picks at the left, so the picker stories cannot
+/// drift apart. The label is sentence case, such as "Choose a folder".
+pub fn picker_trigger(id: impl Into<ElementId>, label: &'static str, icon: IconName) -> Button {
+    Button::new(id)
+        .outline()
+        .size(ButtonSize::Default)
+        .icon(Icon::from(icon))
+        .label(label)
+}
+
 /// A short explanation under a section title.
 pub fn note(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
@@ -960,7 +971,7 @@ mod tests {
             .filter(|e| e.section() == super::StorySection::Foundations)
             .map(|e| e.title())
             .collect();
-        assert_eq!(foundations, ["Spacing", "Theme mode picker", "Typography"]);
+        assert_eq!(foundations, ["Color", "Spacing", "Theme", "Typography"]);
     }
 
     #[test]

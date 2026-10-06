@@ -54,7 +54,6 @@ mod nav;
 mod path_browser;
 mod popover;
 mod progress;
-mod progress_ring;
 mod radio;
 mod root;
 mod scroll_area;
@@ -113,7 +112,6 @@ pub use nav::{
 };
 pub use popover::Popover;
 pub use progress::Progress;
-pub use progress_ring::ProgressRing;
 pub use radio::{Radio, RadioGroup, RadioMark};
 pub use scroll_area::ScrollArea;
 pub use select::{
@@ -149,8 +147,8 @@ pub mod prelude {
         Dialog, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker, FolderPickerState,
         Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
         MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
-        Popover, Progress, ProgressRing, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea,
-        Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
+        Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea, Select,
+        SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
         SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
         SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
         Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,

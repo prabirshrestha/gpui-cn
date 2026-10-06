@@ -13,7 +13,7 @@ pub struct ThemeModePickerStory {
 
 impl Story for ThemeModePickerStory {
     fn title() -> &'static str {
-        "Theme mode picker"
+        "Theme"
     }
 
     fn icon() -> IconName {
@@ -21,7 +21,8 @@ impl Story for ThemeModePickerStory {
     }
 
     fn description() -> &'static str {
-        "Three pictures of the appearance the theme can follow, with the chosen one ringed."
+        "Picks light, dark, or system: three pictures of the appearance the theme can follow, \
+         with the chosen one ringed."
     }
 
     fn view(_: &mut Window, cx: &mut App) -> AnyView {

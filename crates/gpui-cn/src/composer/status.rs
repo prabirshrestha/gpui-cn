@@ -4,10 +4,10 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use crate::{ActiveTheme as _, ProgressRing, StatusSelect};
+use crate::{ActiveTheme as _, Progress, StatusSelect};
 
 /// The context a conversation has used, as a ring and a percent: a
-/// [`ProgressRing`] beside the number, in the muted text color.
+/// circular [`Progress`] beside the number, in the muted text color.
 ///
 /// The percent is a plain value the application sets.
 ///
@@ -67,7 +67,8 @@ impl RenderOnce for ContextMeter {
             .text_color(muted)
             .refine_style(&self.style)
             .child(
-                ProgressRing::new(ElementId::NamedChild(self.id.into(), "ring".into()))
+                Progress::new(ElementId::NamedChild(self.id.into(), "ring".into()))
+                    .circular()
                     .value(percent)
                     .accessibility_label("Context used"),
             )

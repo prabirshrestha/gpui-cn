@@ -217,6 +217,7 @@ mod macos {
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
             for story in [
                 "Typography",
+                "Color",
                 "Spacing",
                 "Switch",
                 "Slider",
@@ -236,9 +237,8 @@ mod macos {
                 "Badge",
                 "Tag",
                 "Skeleton",
-                "Spinner",
                 "Progress",
-                "Theme mode picker",
+                "Theme",
                 "Sidebar",
                 "Nav stack",
                 "Scroll area",
