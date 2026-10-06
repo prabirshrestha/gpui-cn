@@ -983,11 +983,7 @@ enum Hint {
 }
 
 fn files_text(count: usize) -> String {
-    if count == 1 {
-        "1 file".to_string()
-    } else {
-        format!("{count} files")
-    }
+    crate::plural::counted(count, "file")
 }
 
 /// The line under the list: what is selected, and why files may be

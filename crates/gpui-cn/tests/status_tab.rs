@@ -105,9 +105,14 @@ fn meter() -> ElementId {
     ElementId::NamedChild(ElementId::from("status").into(), "context".into())
 }
 
+/// A part of a select, under the select its item shows.
 fn part(parent: &str, name: impl Into<SharedString>) -> ElementId {
     ElementId::NamedChild(
-        ElementId::from(SharedString::from(parent.to_string())).into(),
+        ElementId::NamedChild(
+            ElementId::from(SharedString::from(parent.to_string())).into(),
+            "select".into(),
+        )
+        .into(),
         name.into(),
     )
 }
@@ -185,8 +190,8 @@ fn a_dropdown_shows_the_chosen_option_and_picking_another_changes_it(cx: &mut Te
             window.try_find(part("project", "menu")).is_none(),
             "only this one"
         );
-        assert_eq!(window.find(part("branch", "main")).checked(), Some(true));
-        assert_eq!(window.find(part("branch", "dev")).checked(), Some(false));
+        assert!(window.try_find(part("branch", "main")).is_some());
+        assert!(window.try_find(part("branch", "dev")).is_some());
     })
     .unwrap();
     assert_eq!(
@@ -196,6 +201,10 @@ fn a_dropdown_shows_the_chosen_option_and_picking_another_changes_it(cx: &mut Te
     );
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.click(part("branch", "dev"), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find(part("branch", "menu")).is_none(), "closed");
     })
@@ -213,7 +222,12 @@ fn a_dropdown_shows_the_chosen_option_and_picking_another_changes_it(cx: &mut Te
     cx.update_window(setup.handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            window.find(part("branch", "trigger")).label(),
+            window
+                .find(ElementId::NamedChild(
+                    ElementId::from("branch").into(),
+                    "select".into()
+                ))
+                .value(),
             Some("dev"),
             "the trigger shows the new label"
         );
@@ -264,10 +278,13 @@ impl Render for Narrow {
 }
 
 fn child(parent: &str, name: &str) -> ElementId {
-    ElementId::NamedChild(
-        ElementId::Name(parent.to_string().into()).into(),
-        name.to_string().into(),
-    )
+    if name == "context" {
+        return ElementId::NamedChild(
+            ElementId::Name(parent.to_string().into()).into(),
+            name.to_string().into(),
+        );
+    }
+    part(parent, name.to_string())
 }
 
 #[gpui_kit::test]

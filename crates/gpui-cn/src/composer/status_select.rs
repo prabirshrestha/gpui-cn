@@ -1,17 +1,22 @@
+use std::{collections::HashMap, rc::Rc};
+
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, Focusable as _,
-    IntoElement, ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled,
-    Subscription, Window,
-    assets::IconName,
-    base::{Align, Selectable, StyledExt as _, h_flex},
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, RenderOnce, SharedString,
+    StyleRefinement, Styled, Subscription, Task, Window,
+    base::{Align, StyledExt as _, h_flex},
     div,
     prelude::FluentBuilder as _,
+    px, rems,
 };
 
 use crate::{
-    ActiveTheme as _, Button, ButtonSize, Command, CommandEntry, CommandEvent, CommandItem,
-    CommandState, DropdownMenu, Icon, MenuEntry, MenuEvent, MenuItem, MenuState, Popover, fuzzy,
-    menu::MenuLook, middle_text::MiddleText,
+    ActiveTheme as _, ButtonSize, Icon, Select, SelectEntry, SelectEvent, SelectItem, SelectState,
+    TooltipExt as _,
+    collapse::{self, Need},
+    fuzzy,
+    menu::{MenuLook, check_slot, label_block, line_slot},
+    middle_text::MiddleText,
 };
 
 /// How many options make a [`StatusSelect`] searchable when it is not told
@@ -95,39 +100,27 @@ pub enum StatusSelectEvent {
     Changed(SharedString),
 }
 
-/// The options of a status item, the chosen one, and its open menu.
+/// The options of a status item and the chosen one.
 ///
 /// Owned by the view that shows the item, which observes it so a change
 /// renders. The choice is kept by option id.
 pub struct StatusSelectState {
     options: Vec<StatusOption>,
     selected: SharedString,
-    menu: Entity<MenuState>,
-    open: bool,
-    _menu_events: Subscription,
 }
 
 impl EventEmitter<StatusSelectEvent> for StatusSelectState {}
 
 impl StatusSelectState {
     /// A state over `options` with the first chosen.
-    pub fn new(options: impl IntoIterator<Item = StatusOption>, cx: &mut Context<Self>) -> Self {
+    pub fn new(options: impl IntoIterator<Item = StatusOption>, _: &mut Context<Self>) -> Self {
         let options: Vec<_> = options.into_iter().collect();
-        let menu = cx.new(MenuState::new);
-        let subscription = cx.subscribe(&menu, |this, _, event: &MenuEvent, cx| {
-            if let MenuEvent::Activated(key) = event {
-                this.select(key.clone(), cx);
-            }
-        });
         Self {
             selected: options
                 .first()
                 .map(|option| option.id.clone())
                 .unwrap_or_default(),
             options,
-            menu,
-            open: false,
-            _menu_events: subscription,
         }
     }
 
@@ -158,19 +151,6 @@ impl StatusSelectState {
             .map(|option| &option.label)
     }
 
-    /// Whether the search list is open. A plain menu keeps its own state.
-    pub fn is_open(&self) -> bool {
-        self.open
-    }
-
-    /// Opens or closes the search list.
-    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.open != open {
-            self.open = open;
-            cx.notify();
-        }
-    }
-
     /// Chooses the option with `id` and emits `Changed`. An unknown id, or
     /// the one already chosen, changes nothing.
     pub fn select(&mut self, id: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -185,10 +165,10 @@ impl StatusSelectState {
 }
 
 /// An item of a [`ComposerStatusTab`](crate::ComposerStatusTab) that opens
-/// a menu: an icon, the chosen option's label in the text color, and a
-/// muted chevron. The surface shows only for the pointer, a press, or the
-/// open menu, as the permission trigger's does. The menu is a
-/// [`DropdownMenu`] with a check on the chosen option.
+/// a [`Select`]: a small ghost trigger with an icon, the chosen option's
+/// label, and a chevron, over the select's menu with a check on the chosen
+/// option. A list of [`SEARCH_MIN_OPTIONS`] options or more has the
+/// select's search field, which ranks what is typed fuzzily.
 ///
 /// ```no_run
 /// use gpui_cn::{StatusOption, StatusSelect, StatusSelectState};
@@ -214,6 +194,8 @@ pub struct StatusSelect {
     searchable: Option<bool>,
     placeholder: SharedString,
     empty: SharedString,
+    icon_only: bool,
+    width: Option<Pixels>,
     style: StyleRefinement,
 }
 
@@ -226,7 +208,9 @@ impl StatusSelect {
             icon: None,
             searchable: None,
             placeholder: "Search...".into(),
-            empty: "No results.".into(),
+            empty: "No results".into(),
+            icon_only: false,
+            width: None,
             style: StyleRefinement::default(),
         }
     }
@@ -237,31 +221,79 @@ impl StatusSelect {
         self
     }
 
-    /// Forces the presentation: `true` opens a list with a search field,
-    /// `false` a plain menu. Left alone, a select with
-    /// [`SEARCH_MIN_OPTIONS`] options or more is searchable.
+    /// Forces the presentation: `true` gives the menu a search field,
+    /// `false` a plain list. Left alone, a select with
+    /// [`SEARCH_MIN_OPTIONS`] options or more is searchable. It is read
+    /// when the item first renders.
     pub fn searchable(mut self, searchable: bool) -> Self {
         self.searchable = Some(searchable);
         self
     }
 
-    /// The hint in the search field of the list. The default is
-    /// "Search...". It is read when the list first opens.
+    /// The hint in the search field. The default is "Search...". It is
+    /// read when the item first renders.
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
         self
     }
 
-    /// The text shown while a search matches nothing. The default is
-    /// "No results."
+    /// The text shown while a search matches nothing. The default is "No
+    /// results".
     pub fn empty(mut self, text: impl Into<SharedString>) -> Self {
         self.empty = text.into();
         self
     }
 
-    /// Whether the select opens a search list for `options` options.
+    /// Shows the icon alone, with the label in a tooltip and no chevron, as
+    /// a tab does when it is too narrow for the labels. An item with no
+    /// icon ignores it.
+    pub fn icon_only(mut self, icon_only: bool) -> Self {
+        self.icon_only = icon_only;
+        self
+    }
+
+    /// Cuts the trigger to `width`, which the label ends in an ellipsis to
+    /// fit. A tab sets it when the labels do not all fit.
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Whether the item opens a menu with a search field, for a list of
+    /// `options` options.
     pub fn is_searchable(&self, options: usize) -> bool {
         self.searchable.unwrap_or(options >= SEARCH_MIN_OPTIONS)
+    }
+
+    /// What the item needs of a row: its natural width, its width with the
+    /// label at the minimum, and its width as an icon alone.
+    pub(crate) fn need(&self, window: &Window, cx: &App) -> Need {
+        let theme = cx.theme();
+        let padding = theme.metrics.control_padding_sm;
+        let rem = window.rem_size();
+        let gap = rems(0.375).to_pixels(rem);
+        let border = px(2.);
+        let icon = rems(1.).to_pixels(rem);
+        let chevron = rems(1.).to_pixels(rem);
+        let label = self
+            .state
+            .read(cx)
+            .selected_label()
+            .cloned()
+            .unwrap_or_default();
+        let natural_label = collapse::text_width(&label, window);
+        let kept = natural_label.min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+        let lead = if self.icon.is_some() {
+            icon + gap
+        } else {
+            px(0.)
+        };
+        let chrome = padding * 2. + border + lead + gap + chevron;
+        Need {
+            natural: chrome + natural_label,
+            min: chrome + kept,
+            icon_only: self.icon.is_some().then_some(theme.metrics.control_sm),
+        }
     }
 }
 
@@ -271,239 +303,182 @@ impl Styled for StatusSelect {
     }
 }
 
-/// Chooses an option when the search list's command is chosen. It lives in
-/// the window's keyed state, so the subscription is made once.
-struct Chooser {
+/// The select an item shows, made once, and the subscription that carries
+/// its choice back to the state.
+struct Inner {
+    select: Entity<SelectState<SharedString>>,
+    /// The state's choice the select last agreed with, so a choice made in
+    /// the select is not undone before the state hears of it.
+    synced: SharedString,
     _subscription: Subscription,
-}
-
-/// A built trigger, which the popover marks open through `Selectable`.
-#[derive(IntoElement)]
-struct Slot {
-    trigger: AnyElement,
-    open: bool,
-}
-
-impl Selectable for Slot {
-    fn selected(self, _: bool) -> Self {
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        false
-    }
-
-    fn open(self, _: bool) -> Self {
-        self
-    }
-
-    fn is_open(&self) -> bool {
-        self.open
-    }
-}
-
-impl RenderOnce for Slot {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.trigger
-    }
-}
-
-/// The rows of the search list for the options at `order`, in that order.
-fn search_entries(options: &[StatusOption], order: &[usize]) -> Vec<CommandEntry> {
-    order
-        .iter()
-        .map(|&index| {
-            let option = options[index].clone();
-            let (label, trailing, icon) = (
-                option.label.clone(),
-                option.trailing.clone(),
-                option.icon.clone(),
-            );
-            CommandEntry::from(
-                CommandItem::new(option.id.clone(), option.label.clone()).render(
-                    move |_, _, cx| {
-                        let theme = cx.theme();
-                        let caption_text = theme.base.typography.xs;
-                        let muted = theme.muted_foreground();
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap_2()
-                            .when_some(icon.clone(), |row, icon| {
-                                row.child(icon.size_4().flex_shrink_0().text_color(muted))
-                            })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(MiddleText::new(label.clone())),
-                            )
-                            .when_some(trailing.clone(), |row, word| {
-                                row.child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_size(caption_text.size)
-                                        .line_height(caption_text.line_height)
-                                        .text_color(muted)
-                                        .child(word),
-                                )
-                            })
-                    },
-                ),
-            )
-        })
-        .collect()
-}
-
-impl StatusSelect {
-    fn trigger(&self, label: SharedString, cx: &App) -> Button {
-        let (ink, muted, status_icon) = {
-            let theme = cx.theme();
-            (
-                theme.foreground(),
-                theme.composer_muted,
-                theme.metrics.status_icon,
-            )
-        };
-        Button::new(ElementId::NamedChild(
-            self.id.clone().into(),
-            "trigger".into(),
-        ))
-        .ghost()
-        .size(ButtonSize::Sm)
-        .accessibility_label(label.clone())
-        .text_color(ink)
-        .when_some(self.icon.clone(), |button, icon| {
-            button.icon(icon.size(status_icon))
-        })
-        .label(label)
-        .flex_shrink(1.)
-        .min_w_0()
-        .trailing_icon(Icon::from(IconName::ChevronDown).size_3().text_color(muted))
-    }
-
-    /// The search list: a popover under the trigger holding a palette over
-    /// the options, ranked by what is typed.
-    fn render_search(self, window: &mut Window, cx: &mut App) -> AnyElement {
-        let (options, open, label) = {
-            let read = self.state.read(cx);
-            (
-                read.options.clone(),
-                read.open,
-                read.selected_label().cloned().unwrap_or_default(),
-            )
-        };
-        let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
-        let command = window.use_keyed_state(child("list"), cx, {
-            let (options, placeholder) = (options.clone(), self.placeholder.clone());
-            move |window, cx| {
-                CommandState::new(placeholder, window, cx).with_search_handler(
-                    move |query, cx| {
-                        let options = options.clone();
-                        let labels: Vec<String> = options
-                            .iter()
-                            .map(|option| option.label.to_string())
-                            .collect();
-                        let ranked = cx.background_spawn(async move {
-                            fuzzy::rank(&query, &labels, |label| label.as_str())
-                                .into_iter()
-                                .map(|found| found.index)
-                                .collect::<Vec<_>>()
-                        });
-                        cx.spawn(async move |_, _| search_entries(&options, &ranked.await))
-                    },
-                    cx,
-                )
-            }
-        });
-        let state = self.state.clone();
-        let _chooser = window.use_keyed_state(child("chooser"), cx, {
-            let (state, command) = (state.clone(), command.clone());
-            move |window, cx| Chooser {
-                _subscription: cx.subscribe_in(
-                    &command,
-                    window,
-                    move |_, _, event: &CommandEvent, _, cx| {
-                        if let CommandEvent::Confirmed(key) = event {
-                            state.update(cx, |state, cx| {
-                                state.select(key.clone(), cx);
-                                state.set_open(false, cx);
-                            });
-                        }
-                    },
-                ),
-            }
-        });
-        let look = MenuLook::of(cx.theme(), window.rem_size());
-        let width = look.max_width;
-        let height = look.palette_height();
-        let focus = command.focus_handle(cx);
-        let trigger = self.trigger(label, cx).selected(open).into_any_element();
-        let toggle = state.clone();
-        let empty = self.empty.clone();
-        let palette_id = child("palette");
-        Popover::new(child("popover"))
-            .open(open)
-            .on_open_change(move |open, _, cx| {
-                toggle.update(cx, |state, cx| state.set_open(open, cx));
-            })
-            .align(Align::Start)
-            .track_focus(&focus)
-            .trigger(Slot { trigger, open })
-            .content(move |_, _| {
-                Command::new(palette_id.clone(), &command)
-                    .bordered(false)
-                    .empty(empty.clone())
-                    .w_full()
-                    .max_w_full()
-                    .h(height)
-            })
-            .w(width)
-            .p_0()
-            .flex_shrink(1.)
-            .min_w_0()
-            .refine_style(&self.style)
-            .into_any_element()
-    }
 }
 
 impl RenderOnce for StatusSelect {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let options = self.state.read(cx).options.len();
-        if self.is_searchable(options) {
-            return self.render_search(window, cx);
-        }
-        let menu = self.state.read(cx).menu.clone();
-        let label = self
-            .state
-            .read(cx)
-            .selected_label()
-            .cloned()
-            .unwrap_or_default();
-        let state = self.state.clone();
-        let trigger = self.trigger(label, cx);
-        DropdownMenu::new(self.id, &menu)
-            .align(Align::Start)
-            .flex_shrink(1.)
-            .min_w_0()
-            .refine_style(&self.style)
-            .trigger(trigger)
-            .items(move |_, cx| {
-                let state = state.read(cx);
-                state
-                    .options
+        let child = |name: &'static str| ElementId::NamedChild(self.id.clone().into(), name.into());
+        let (options, selected, label) = {
+            let read = self.state.read(cx);
+            (
+                read.options.clone(),
+                read.selected.clone(),
+                read.selected_label().cloned().unwrap_or_default(),
+            )
+        };
+        let searchable = self.is_searchable(options.len());
+        let by_id: Rc<HashMap<SharedString, StatusOption>> = Rc::new(
+            options
+                .iter()
+                .map(|option| (option.id.clone(), option.clone()))
+                .collect(),
+        );
+        let inner = window.use_keyed_state(child("inner"), cx, {
+            let (state, options, selected, placeholder) = (
+                self.state.clone(),
+                options.clone(),
+                selected.clone(),
+                self.placeholder.clone(),
+            );
+            move |window, cx| {
+                let selected_for_inner = selected.clone();
+                let entries: Vec<SelectEntry<SharedString>> = options
                     .iter()
-                    .map(|option| {
-                        let item = MenuItem::new(option.id.clone(), option.label.clone())
-                            .checked(option.id == state.selected);
-                        MenuEntry::from(match &option.description {
-                            Some(text) => item.description(text.clone()),
-                            None => item,
-                        })
-                    })
-                    .collect()
-            })
-            .into_any_element()
+                    .map(|option| SelectItem::new(option.id.clone(), option.label.clone()).into())
+                    .collect();
+                let select = cx.new(|cx| {
+                    let select = SelectState::new(entries, cx).with_selected([selected]);
+                    if searchable {
+                        let options = Rc::new(options);
+                        select.with_search_handler(
+                            placeholder,
+                            move |query, _| Task::ready(ranked(&options, &query)),
+                            window,
+                            cx,
+                        )
+                    } else {
+                        select
+                    }
+                });
+                let subscription = cx.subscribe(
+                    &select,
+                    move |inner: &mut Inner, _, event: &SelectEvent<SharedString>, cx| {
+                        if let SelectEvent::Changed(values) = event
+                            && let Some(value) = values.first()
+                        {
+                            let value = value.clone();
+                            inner.synced = value.clone();
+                            state.update(cx, |state, cx| state.select(value, cx));
+                        }
+                    },
+                );
+                Inner {
+                    select,
+                    synced: selected_for_inner,
+                    _subscription: subscription,
+                }
+            }
+        });
+        let select_state = inner.read(cx).select.clone();
+        if inner.read(cx).synced != selected {
+            inner.update(cx, |inner, _| inner.synced = selected.clone());
+            select_state.update(cx, |state, cx| state.set_selected([selected.clone()], cx));
+        }
+
+        let theme = cx.theme();
+        let menu_width = theme.metrics.menu_max_width;
+        let icon_width = theme.metrics.control_sm;
+        let icon_only = self.icon_only && self.icon.is_some();
+        let mut select = Select::new(child("select"), &select_state)
+            .size(ButtonSize::Sm)
+            .ghost()
+            .align(Align::Start)
+            .accessibility_label(label.clone())
+            .empty_text(self.empty.clone())
+            .when(searchable, |select| select.menu_width(menu_width))
+            .refine_style(&self.style)
+            .render_item({
+                let by_id = by_id.clone();
+                move |item, row, window, cx| option_row(&by_id, item, row, window, cx)
+            });
+        if icon_only {
+            let icon = self.icon.clone().expect("checked above");
+            select = select
+                .chevron(false)
+                .render_value(move |_, _, _| {
+                    div().w_full().flex().justify_center().child(icon.clone())
+                })
+                .w(icon_width);
+        } else {
+            select = select
+                .when_some(self.icon.clone(), |select, icon| select.icon(icon))
+                .when_some(self.width, |select, width| select.w(width));
+        }
+        if icon_only {
+            div()
+                .id(child("tip"))
+                .flex_shrink_0()
+                .child(select)
+                .managed_tooltip(label, window, &*cx)
+                .into_any_element()
+        } else {
+            select.into_any_element()
+        }
     }
+}
+
+/// The options a query matches, best first, as the select's rows. An empty
+/// query lists every option in order.
+fn ranked(options: &[StatusOption], query: &str) -> Vec<SelectEntry<SharedString>> {
+    fuzzy::rank(query, options, |option| &option.label)
+        .into_iter()
+        .map(|found| {
+            let option = &options[found.index];
+            SelectItem::new(option.id.clone(), option.label.clone()).into()
+        })
+        .collect()
+}
+
+/// The inside of an option's row: its icon, its label cut in the middle to
+/// fit, a muted word at the right, and the check, in the select's own row.
+fn option_row(
+    by_id: &HashMap<SharedString, StatusOption>,
+    item: &SelectItem<SharedString>,
+    row: crate::SelectRow,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let look = MenuLook::of(cx.theme(), window.rem_size());
+    let option = by_id.get(&item.key());
+    let caption_text = cx.theme().base.typography.xs;
+    let label = item.label().clone();
+    let description = option.and_then(|option| option.description.clone());
+    h_flex()
+        .flex_1()
+        .min_w_0()
+        .items_center()
+        .gap_2()
+        .children(
+            option
+                .and_then(|option| option.icon.clone())
+                .map(|icon| line_slot(&look).child(icon.size_4())),
+        )
+        .child(match description {
+            Some(description) => label_block(label, Some(description), &look),
+            None => div()
+                .flex_1()
+                .min_w_0()
+                .child(MiddleText::new(label))
+                .into_any_element(),
+        })
+        .children(
+            option
+                .and_then(|option| option.trailing.clone())
+                .map(|word| {
+                    line_slot(&look)
+                        .text_size(caption_text.size)
+                        .text_color(look.muted_foreground)
+                        .child(word)
+                }),
+        )
+        .child(check_slot(&look, row.is_selected(), row.is_disabled()))
+        .into_any_element()
 }

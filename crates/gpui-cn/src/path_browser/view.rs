@@ -107,17 +107,11 @@ pub(crate) fn row_frame(
     selected: bool,
     pointer_cursors: bool,
 ) -> impl ParentElement + Styled + StatefulInteractiveElement + IntoElement {
-    h_flex()
+    crate::menu::row_frame(look, highlighted || selected)
         .id(id)
         .test_support()
         .role(role)
-        .w_full()
         .h(look.row_height)
-        .px(look.row_padding)
-        .gap_2()
-        .items_center()
-        .rounded(look.row_radius)
-        .when(highlighted || selected, |this| this.bg(look.accent))
         .when(highlighted, |this| this.aria_active_descendant())
         .when(pointer_cursors, |this| this.cursor_pointer())
 }

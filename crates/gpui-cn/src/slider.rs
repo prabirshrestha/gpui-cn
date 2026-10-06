@@ -151,12 +151,12 @@ impl RenderOnce for Slider {
         let (rail, range, thumb, border, tick, tick_on, ring, lift) = {
             let theme = cx.theme();
             (
-                theme.slider_rail,
-                theme.control_accent,
+                theme.progress_track,
+                theme.primary(),
                 theme.switch_thumb,
-                theme.slider_thumb_border,
-                theme.slider_tick_off,
-                theme.slider_tick_on,
+                theme.field_border,
+                theme.muted_foreground(),
+                theme.solid_foreground,
                 theme.focus_ring(),
                 theme.base.shadow.sm.clone(),
             )

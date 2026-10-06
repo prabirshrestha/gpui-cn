@@ -1,12 +1,15 @@
 use gpui_kit::{
-    App, ElementId, Entity, IntoElement, RenderOnce, StyleRefinement, Styled, Window,
+    App, ElementId, Entity, IntoElement, ParentElement as _, RenderOnce, StyleRefinement, Styled,
+    Window,
     assets::IconName,
     base::{Align, StyledExt as _},
+    div, px, rems,
 };
 
 use crate::{
     ActiveTheme as _, Button, ButtonSize, DropdownMenu, EFFORT_LABELS, Icon, MenuEntry, MenuItem,
     ModelPickerState,
+    collapse::{self, Need},
 };
 
 /// The effort of the chosen model as a small dropdown: the level's name,
@@ -32,6 +35,7 @@ use crate::{
 pub struct EffortMenu {
     id: ElementId,
     state: Entity<ModelPickerState>,
+    icon_only: bool,
     style: StyleRefinement,
 }
 
@@ -41,8 +45,33 @@ impl EffortMenu {
         Self {
             id: id.into(),
             state: state.clone(),
+            icon_only: false,
             style: StyleRefinement::default(),
         }
+    }
+
+    /// Shows the gauge alone, with "Effort: Medium" in a tooltip and no
+    /// chevron, as a narrow toolbar does.
+    pub fn icon_only(mut self, icon_only: bool) -> Self {
+        self.icon_only = icon_only;
+        self
+    }
+
+    /// What the trigger needs of a row: its width with the label at the
+    /// minimum, and its width as an icon alone. Nothing while the chosen
+    /// model has no effort.
+    pub(crate) fn need(&self, window: &Window, cx: &App) -> Option<Need> {
+        let level = self.state.read(cx).effort()?;
+        let theme = cx.theme();
+        let padding = theme.metrics.control_padding_sm;
+        let rem = window.rem_size();
+        let gap = rems(0.375).to_pixels(rem);
+        let label = collapse::text_width(EFFORT_LABELS[usize::from(level)], window)
+            .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+        Some(Need::flexible(
+            padding * 2. + rems(1.).to_pixels(rem) + gap + label + gap + rems(0.75).to_pixels(rem),
+            Some(theme.metrics.control_sm),
+        ))
     }
 }
 
@@ -53,7 +82,8 @@ impl Styled for EffortMenu {
 }
 
 impl RenderOnce for EffortMenu {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let need = self.need(window, cx);
         let (level, menu) = {
             let state = self.state.read(cx);
             (state.effort(), state.effort_menu_state().clone())
@@ -61,17 +91,40 @@ impl RenderOnce for EffortMenu {
         let Some(level) = level else {
             return gpui_kit::div().into_any_element();
         };
-        let muted = cx.theme().composer_muted;
-        let trigger = Button::new(ElementId::NamedChild(
+        let muted = cx.theme().muted_foreground();
+        let word = EFFORT_LABELS[usize::from(level)];
+        let min = match (self.icon_only, need.and_then(|need| need.icon_only)) {
+            (true, Some(icon_only)) => icon_only,
+            _ => need.map_or(px(0.), |need| need.min),
+        };
+        let button = Button::new(ElementId::NamedChild(
             self.id.clone().into(),
             "trigger".into(),
         ))
         .ghost()
         .size(ButtonSize::Sm)
         .accessibility_label("Effort")
+        .min_w(min)
         .text_color(muted)
-        .label(EFFORT_LABELS[usize::from(level)])
-        .trailing_icon(Icon::from(IconName::ChevronDown).size_3());
+        .icon(Icon::from(IconName::Gauge));
+        let trigger = if self.icon_only {
+            button.tooltip(format!("Effort: {word}"))
+        } else {
+            let keep = collapse::text_width(word, window)
+                .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+            button
+                .child(
+                    div()
+                        .min_w(keep)
+                        .flex_shrink(1.)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(word),
+                )
+                .flex_shrink(1.)
+                .trailing_icon(Icon::from(IconName::ChevronDown).size_3())
+        };
         let state = self.state.clone();
         DropdownMenu::new(self.id, &menu)
             .align(Align::End)

@@ -7,8 +7,7 @@ use gpui_kit::{
     AnyElement, App, ElementId, Entity, FocusHandle, InteractiveElement as _, IntoElement, Length,
     MouseButton, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window,
-    assets::IconName,
-    base::{TestSupportExt as _, h_flex, v_flex},
+    base::{TestSupportExt as _, v_flex},
     div,
     prelude::FluentBuilder as _,
 };
@@ -18,10 +17,10 @@ use super::{
     state::SelectState,
 };
 use crate::{
-    Icon, ScrollArea,
+    ScrollArea,
     menu::{
-        MenuLook, MenuMotion, MenuPanels, TextMenuBuilder, label_block, line_slot, open_text_menu,
-        row_line, search_row, separator,
+        MenuLook, MenuMotion, MenuPanels, TextMenuBuilder, check_slot, label_block, line_slot,
+        open_text_menu, row_frame, row_line, search_row, separator,
     },
 };
 
@@ -301,22 +300,12 @@ impl<V: SelectValue> Rows<V> {
                         cx,
                     ),
                 };
-                h_flex()
+                row_frame(look, highlighted && !disabled)
                     .id(ElementId::NamedChild(id.clone().into(), item.key()))
                     .test_support()
-                    .w_full()
-                    .items_center()
-                    .gap_2()
                     // A fixed height is what a scroll to a far row counts
                     // on before the row is laid out.
-                    .map(|this| match row_height {
-                        Some(height) => this.h(height),
-                        None => this.min_h(look.row_height),
-                    })
-                    .px(look.row_padding)
-                    .py_1p5()
-                    .rounded(look.row_radius)
-                    .when(highlighted && !disabled, |this| this.bg(look.accent))
+                    .when_some(row_height, |this, height| this.h(height))
                     .text_color(if disabled {
                         look.muted_foreground
                     } else {
@@ -366,17 +355,7 @@ fn default_row_content<V: SelectValue>(
             .test_support()
             .child(leading)
     });
-    let check = line_slot(look).child(div().size_4().when(selected, |this| {
-        this.child(
-            Icon::from(IconName::Check)
-                .size_4()
-                .text_color(if disabled {
-                    look.muted_foreground
-                } else {
-                    look.indicator
-                }),
-        )
-    }));
+    let check = check_slot(look, selected, disabled);
     vec![
         row_line()
             .children(leading)

@@ -52,6 +52,9 @@ pub struct ComposerStory {
     wide_status: agents::SampleStatus,
     narrow_composer_status: agents::SampleStatus,
     narrow_composer: Entity<ComposerState>,
+    tiny_status: agents::SampleStatus,
+    tiny_composer_status: agents::SampleStatus,
+    tiny_composer: Entity<ComposerState>,
     branch_only: agents::SampleStatus,
 }
 
@@ -271,6 +274,11 @@ impl Story for ComposerStory {
             let narrow_composer_status = agents::SampleStatus::long(cx);
             let narrow_composer = agents::composer(window, cx);
             narrow_composer_status.watch(&narrow_composer, cx);
+            let tiny_status = agents::SampleStatus::long(cx);
+            let tiny_composer_status = agents::SampleStatus::long(cx);
+            let tiny_composer = agents::composer(window, cx);
+            tiny_composer_status.watch(&tiny_composer, cx);
+            cx.observe(&tiny_composer, |_, _, cx| cx.notify()).detach();
             cx.observe(&narrow_composer, |_, _, cx| cx.notify())
                 .detach();
             agent_status.watch(&agent, cx);
@@ -285,6 +293,8 @@ impl Story for ComposerStory {
                 &short_status,
                 &wide_status,
                 &narrow_composer_status,
+                &tiny_status,
+                &tiny_composer_status,
             ] {
                 for state in [&status.project, &status.device, &status.branch] {
                     cx.observe(state, |_: &mut Self, _, cx| cx.notify())
@@ -316,6 +326,9 @@ impl Story for ComposerStory {
                 wide_status,
                 narrow_composer_status,
                 narrow_composer,
+                tiny_status,
+                tiny_composer_status,
+                tiny_composer,
             };
             story.start_upload(cx);
             story
@@ -511,6 +524,11 @@ impl Render for ComposerStory {
                     ))
                     .child(
                         div()
+                            .w(px(200.))
+                            .child(self.tiny_status.tab("status-tiny").context(57.)),
+                    )
+                    .child(
+                        div()
                             .w(px(320.))
                             .child(self.narrow_status.tab("status-narrow").context(57.)),
                     )
@@ -518,6 +536,15 @@ impl Render for ComposerStory {
                         div()
                             .w(px(480.))
                             .child(self.wide_status.tab("status-medium").context(57.)),
+                    )
+                    .child(
+                        div().w(px(240.)).child(
+                            Composer::new("composer-tiny", &self.tiny_composer).status(
+                                self.tiny_composer_status
+                                    .tab("composer-tiny-status")
+                                    .context(57.),
+                            ),
+                        ),
                     )
                     .child(
                         div().w(px(340.)).child(
@@ -567,7 +594,7 @@ impl Render for ComposerStory {
                                 div()
                                     .h(px(64.))
                                     .mt(-px(1.))
-                                    .rounded(cx.theme().metrics.composer_radius)
+                                    .rounded(cx.theme().radius_xl())
                                     .border_1()
                                     .border_color(cx.theme().border())
                                     .bg(cx.theme().base.colors.surface),

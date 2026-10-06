@@ -1,10 +1,13 @@
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ParentElement, RenderOnce,
     StyleRefinement, Styled, TestSupportExt as _, Window, base::StyledExt as _, div,
-    prelude::FluentBuilder as _,
+    prelude::FluentBuilder as _, px,
 };
 
-use crate::{ActiveTheme as _, Progress, StatusSelect};
+use crate::{
+    ActiveTheme as _, Progress, StatusSelect,
+    collapse::{self, Fit, Measured},
+};
 
 /// The context a conversation has used, as a ring and a percent: a
 /// circular [`Progress`] beside the number, in the muted text color.
@@ -100,9 +103,16 @@ impl RenderOnce for ContextMeter {
 #[non_exhaustive]
 pub struct ComposerStatusTab {
     id: ElementId,
-    items: Vec<AnyElement>,
+    items: Vec<Entry>,
     trailing: Option<AnyElement>,
     style: StyleRefinement,
+}
+
+/// An item of the tab: a select the tab can collapse to an icon, or any
+/// other element.
+enum Entry {
+    Select(Box<StatusSelect>),
+    Other(AnyElement),
 }
 
 impl ComposerStatusTab {
@@ -117,8 +127,9 @@ impl ComposerStatusTab {
     }
 
     /// An item that opens a menu of options. See [`StatusSelect`].
-    pub fn select(self, select: StatusSelect) -> Self {
-        self.child(select)
+    pub fn select(mut self, select: StatusSelect) -> Self {
+        self.items.push(Entry::Select(Box::new(select)));
+        self
     }
 
     /// The context meter at the far right, at `percent` used.
@@ -143,12 +154,12 @@ impl Styled for ComposerStatusTab {
 
 impl ParentElement for ComposerStatusTab {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.items.extend(elements);
+        self.items.extend(elements.into_iter().map(Entry::Other));
     }
 }
 
 impl RenderOnce for ComposerStatusTab {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let metrics = &theme.metrics;
         let (height, inset, gap) = (
@@ -157,14 +168,70 @@ impl RenderOnce for ComposerStatusTab {
             metrics.status_tab_gap,
         );
         let (pad_left, pad_right) = (metrics.status_tab_inset, theme.base.spacing.lg);
-        let (fill, radius, text) = (
-            theme.status_tab,
-            metrics.status_tab_radius,
-            theme.text_control,
+        let tight = theme.base.spacing.sm;
+        let (fill, radius, text) = (theme.sidebar, theme.radius_lg(), theme.text_control);
+        // The tab's width and its trailing element's come from the last
+        // frame. The selects give up their labels from the right, until the
+        // row fits what is left of the tab.
+        let widths = window
+            .use_keyed_state(
+                ElementId::NamedChild(self.id.clone().into(), "widths".into()),
+                cx,
+                |_, _| (Measured::default(), Measured::default()),
+            )
+            .read(cx)
+            .clone();
+        let (tab_width, trailing_width) = widths;
+        let needs: Vec<_> = self
+            .items
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Select(select) => Some(select.need(window, cx)),
+                Entry::Other(_) => None,
+            })
+            .collect();
+        let order: Vec<usize> = (0..needs.len()).rev().collect();
+        let trailing_gap = if self.trailing.is_some() { gap } else { px(0.) };
+        let available =
+            tab_width.width() - pad_left - pad_right - trailing_width.width() - trailing_gap;
+        let collapsed = collapse::plan(
+            if tab_width.width() > px(0.) {
+                available
+            } else {
+                px(0.)
+            },
+            gap,
+            tight,
+            &needs,
+            &order,
         );
+        let gap = if collapsed.iter().any(|fit| fit.is_icon()) {
+            tight
+        } else {
+            gap
+        };
+        let mut selects = 0;
+        let items: Vec<AnyElement> = self
+            .items
+            .into_iter()
+            .map(|entry| match entry {
+                Entry::Select(select) => {
+                    let fit = collapsed.get(selects).copied().unwrap_or(Fit::Natural);
+                    selects += 1;
+                    match fit {
+                        Fit::Icon => select.icon_only(true),
+                        Fit::Shrunk(width) => select.width(width),
+                        Fit::Natural => *select,
+                    }
+                    .into_any_element()
+                }
+                Entry::Other(element) => element,
+            })
+            .collect();
         div()
             .id(self.id)
             .test_support()
+            .relative()
             .flex()
             .items_center()
             .justify_between()
@@ -178,6 +245,7 @@ impl RenderOnce for ComposerStatusTab {
             .text_size(text.size)
             .line_height(text.line_height)
             .refine_style(&self.style)
+            .child(tab_width.probe())
             .child(
                 div()
                     .flex()
@@ -185,9 +253,17 @@ impl RenderOnce for ComposerStatusTab {
                     .min_w_0()
                     .items_center()
                     .gap(gap)
-                    .children(self.items),
+                    .children(items),
             )
-            .when_some(self.trailing, |this, trailing| this.child(trailing))
+            .when_some(self.trailing, |this, trailing| {
+                this.child(
+                    div()
+                        .relative()
+                        .flex_shrink_0()
+                        .child(trailing)
+                        .child(trailing_width.probe()),
+                )
+            })
     }
 }
 

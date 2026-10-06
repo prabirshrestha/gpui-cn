@@ -222,12 +222,9 @@ fn the_panel_is_the_measured_size_and_lists_the_first_providers_models(cx: &mut 
 }
 
 #[gpui_kit::test]
-fn a_rail_entry_swaps_the_models_and_the_indicator_follows_it(cx: &mut TestAppContext) {
+fn a_rail_entry_swaps_the_models(cx: &mut TestAppContext) {
     let setup = setup(cx);
     open(&setup, cx);
-    let first = bounds(&setup, named(id(), "rail-indicator"), cx);
-    let acme = bounds(&setup, provider("acme"), cx);
-    assert!(first.top() <= acme.center().y && first.bottom() >= acme.center().y);
     click(&setup, provider("zed"), cx);
     assert_eq!(rows(&setup, cx), ["zed-one", "zed-alpha"]);
     assert_eq!(
@@ -236,19 +233,8 @@ fn a_rail_entry_swaps_the_models_and_the_indicator_follows_it(cx: &mut TestAppCo
             "zed".into()
         )))
     );
-    let moved = bounds(&setup, named(id(), "rail-indicator"), cx);
-    let zed = bounds(&setup, provider("zed"), cx);
-    assert!(moved.top() <= zed.center().y && moved.bottom() >= zed.center().y);
-    assert!(
-        moved.top() > first.top(),
-        "the indicator moved down the rail"
-    );
     click(&setup, named(id(), "favorites"), cx);
-    let at_favorites = bounds(&setup, named(id(), "rail-indicator"), cx);
-    let favorites = bounds(&setup, named(id(), "favorites"), cx);
-    assert!(
-        at_favorites.top() <= favorites.center().y && at_favorites.bottom() >= favorites.center().y
-    );
+    assert!(rows(&setup, cx).is_empty());
 }
 
 #[gpui_kit::test]
@@ -714,4 +700,97 @@ fn the_trigger_shows_the_open_state(cx: &mut TestAppContext) {
         "the pill keeps its size while open"
     );
     let _ = point(px(0.), px(0.));
+}
+
+#[gpui_kit::test]
+fn the_list_pane_insets_its_rows_equally_and_keeps_a_gap_between_them(cx: &mut TestAppContext) {
+    let setup = start(cx, big_catalog(), |state| state);
+    open(&setup, cx);
+    let metrics = cx.update(|cx| cx.theme().metrics.clone());
+    let inset = f32::from(px(4.).max(metrics.model_row * 0. + px(4.)));
+    let list = bounds(&setup, named(id(), "list"), cx);
+    let first = bounds(&setup, model("m00"), cx);
+    let second = bounds(&setup, model("m01"), cx);
+    let left = f32::from(first.left() - list.left());
+    let right = f32::from(list.right() - first.right());
+    assert!((left - inset).abs() <= 0.5, "left {left}");
+    assert!((right - inset).abs() <= 0.5, "right {right}");
+    let gap = f32::from(second.top() - first.bottom());
+    assert!((gap - 4.).abs() <= 0.5, "row gap {gap}");
+    let underline = bounds(&setup, named(id(), "underline"), cx);
+    let step = f32::from(first.top() - underline.bottom());
+    assert!(step >= 0., "the list starts under the divider: {step}");
+}
+
+#[gpui_kit::test]
+fn the_rail_has_one_active_entry_with_names_and_symmetric_insets(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    let rail = bounds(&setup, named(id(), "rail-box"), cx);
+    for entry in [
+        named(id(), "favorites"),
+        provider("acme"),
+        provider("zed"),
+        provider("moon"),
+    ] {
+        let tile = bounds(&setup, entry, cx);
+        let left = f32::from(tile.left() - rail.left());
+        let right = f32::from(rail.right() - tile.right());
+        assert!((left - right).abs() <= 1.5, "tile insets {left} {right}");
+    }
+    let order: Vec<f32> = [
+        named(id(), "favorites"),
+        provider("acme"),
+        provider("zed"),
+        provider("moon"),
+    ]
+    .into_iter()
+    .map(|entry| f32::from(bounds(&setup, entry, cx).top()))
+    .collect();
+    assert!(
+        order.windows(2).all(|pair| pair[0] < pair[1]),
+        "Favorites, then providers in order"
+    );
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        let labels: Vec<_> = ["acme", "zed", "moon"]
+            .iter()
+            .map(|name| window.find(provider(name)).label().map(str::to_string))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                Some("Acme".into()),
+                Some("Zed Labs".into()),
+                Some("Moon".into())
+            ]
+        );
+        assert_eq!(
+            window.find(named(id(), "favorites")).label(),
+            Some("Favorites")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_legacy_header_has_the_row_inset(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    let header = bounds(&setup, named(id(), "legacy"), cx);
+    let row = bounds(&setup, model("acme-fast"), cx);
+    assert_eq!(header.left(), row.left());
+    assert_eq!(header.right(), row.right());
+    assert_eq!(header.size.height, row.size.height);
+}
+
+#[gpui_kit::test]
+fn the_panel_hangs_from_its_trigger_and_flips_when_it_has_no_room(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    let trigger_box = bounds(&setup, named(id(), "trigger"), cx);
+    let panel = bounds(&setup, named(id(), "body"), cx);
+    assert!(
+        panel.top() >= trigger_box.bottom() || panel.bottom() <= trigger_box.top(),
+        "the panel never covers its own trigger: {trigger_box:?} {panel:?}"
+    );
 }

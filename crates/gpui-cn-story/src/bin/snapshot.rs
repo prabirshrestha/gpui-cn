@@ -108,6 +108,7 @@ mod macos {
                 .expect("open the model picker");
                 capture(cx, &format!("{prefix}-models-{name}"));
                 for (suffix, click, query) in [
+                    ("keyboard", None, None),
                     ("favorites", Some("favorites"), None),
                     ("legacy", Some("provider-codex"), None),
                     ("search", None, Some("opus")),
@@ -131,7 +132,7 @@ mod macos {
                                 window.press("cmd-a", cx);
                                 window.input(query, cx);
                             }
-                            _ => {}
+                            (None, None) => window.press("down", cx),
                         }
                         window.render_frame(cx);
                         window.render_frame(cx);
@@ -326,7 +327,11 @@ mod macos {
                         )
                     };
                     let status_branch = gpui_kit::ElementId::NamedChild(
-                        named("composer-agent-status", "branch").into(),
+                        gpui_kit::ElementId::NamedChild(
+                            named("composer-agent-status", "branch").into(),
+                            "select".into(),
+                        )
+                        .into(),
                         "trigger".into(),
                     );
                     cx.update_window(handle.into(), |_, window, cx| {

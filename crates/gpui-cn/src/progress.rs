@@ -130,10 +130,6 @@ fn sweep(delta: f32) -> (f32, f32) {
     (start, end.max(start))
 }
 
-/// The strength of the track under a ring's arc: 20%, as the bar's track
-/// (shadcn's `bg-primary/20`).
-const TRACK_STRENGTH: f32 = 0.2;
-
 /// How long one turn of the indeterminate ring takes: one second, as
 /// Tailwind's `animate-spin`.
 const TURN: Duration = Duration::from_secs(1);
@@ -211,9 +207,13 @@ impl Progress {
             .text
             .color
             .unwrap_or_else(|| window.text_style().color);
-        let (size, stroke) = {
-            let metrics = &cx.theme().metrics;
-            (metrics.ring_size, metrics.ring_stroke)
+        let (size, stroke, track_strength) = {
+            let theme = cx.theme();
+            (
+                theme.metrics.ring_size,
+                theme.metrics.ring_stroke,
+                theme.progress_track.a,
+            )
         };
         let id = self.id.clone();
         let arc = match self.value {
@@ -257,7 +257,7 @@ impl Progress {
                                     (bounds.size.width.min(bounds.size.height) - stroke) / 2.;
                                 let center = bounds.center();
                                 if has_track {
-                                    let track = color.opacity(TRACK_STRENGTH);
+                                    let track = color.opacity(track_strength);
                                     paint_arc(center, radius, (0., 1.), stroke, track, window);
                                 }
                                 if let Some(arc) = arc {

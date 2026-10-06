@@ -11,12 +11,14 @@ use gpui_kit::{
     },
     div,
     prelude::FluentBuilder as _,
+    px,
 };
 
 use crate::{
     ActiveTheme as _, Attachment, AttachmentStatus, AttachmentStrip, Button, ButtonSize,
     EffortMenu, ModelPicker, ModelPickerEvent, ModelPickerState, PermissionEvent, PermissionMenu,
     PermissionState, StatusSelectEvent, StatusSelectState, Textarea,
+    collapse::{self, Measured, Need},
 };
 
 /// The most lines the prompt grows to before it scrolls.
@@ -611,20 +613,17 @@ impl RenderOnce for Composer {
         let focused = input.read(cx).focus_handle(cx).contains_focused(window, cx);
         let theme = cx.theme();
         let (fill, border, focus_border, radius, accent, pad, gap) = (
-            theme.composer_card,
-            theme.composer_border,
+            theme.field,
+            theme.field_border,
             theme.field_focus_border,
-            theme.metrics.composer_radius,
-            theme.ring(),
+            theme.radius_xl(),
+            theme.field_focus_border,
             theme.metrics.composer_padding,
             theme.base.spacing.sm,
         );
-        let (ink, muted, placeholder) = (
-            theme.foreground(),
-            theme.composer_muted,
-            theme.composer_placeholder,
-        );
+        let (ink, muted) = (theme.foreground(), theme.muted_foreground());
         let disabled_opacity = theme.disabled_opacity;
+        let radius_full = theme.radius_full();
         let has_status = self.status.is_some();
 
         let events = |state: &Entity<ComposerState>, event: ComposerEvent| {
@@ -635,6 +634,10 @@ impl RenderOnce for Composer {
             }
         };
 
+        let has_leading = !matches!(self.leading, Slot::Hidden);
+        let has_mic = matches!(self.mic, Slot::Default if self.show_mic)
+            || matches!(self.mic, Slot::Custom(_));
+        let has_send = !matches!(self.send, Slot::Hidden);
         let leading = match self.leading {
             Slot::Default => Some(
                 Button::new(child(&id, "add"))
@@ -651,33 +654,94 @@ impl RenderOnce for Composer {
             Slot::Hidden => None,
             Slot::Custom(element) => Some(element),
         };
-        let permission = match self.permission {
-            Slot::Default => Some(
-                PermissionMenu::new(child(&id, "permission"), &permission)
-                    .flex_shrink(1.)
-                    .min_w_0()
-                    .into_any_element(),
-            ),
-            Slot::Hidden => None,
-            Slot::Custom(element) => Some(element),
-        };
+        // The toolbar's width is last frame's. When the default controls do
+        // not fit it, the model name and the permission label shrink to
+        // their minimums first, and then the effort control and the
+        // permission control become icons, in that order.
         let model_state = models.clone();
         let has_default_models = matches!(self.models, Slot::Default);
-        let models = match self.models {
-            Slot::Default => Some(
-                ModelPicker::new(child(&id, "models"), &models)
-                    .align(gpui_kit::base::Align::End)
+        let permission_menu = matches!(self.permission, Slot::Default)
+            .then(|| PermissionMenu::new(child(&id, "permission"), &permission));
+        let model_picker = has_default_models.then(|| {
+            ModelPicker::new(child(&id, "models"), &models).align(gpui_kit::base::Align::End)
+        });
+        let effort_menu = (has_default_models && model_state.read(cx).effort().is_some())
+            .then(|| EffortMenu::new(child(&id, "effort"), &model_state));
+        let toolbar_width = window
+            .use_keyed_state(child(&id, "toolbar-width"), cx, |_, _| Measured::default())
+            .read(cx)
+            .clone();
+        let fixed = {
+            let control = cx.theme().metrics.control_md;
+            Need {
+                natural: control,
+                min: control,
+                icon_only: None,
+            }
+        };
+        let mut needs = Vec::new();
+        let mut at = |need: Need| {
+            needs.push(need);
+            needs.len() - 1
+        };
+        let _ = has_leading.then(|| at(fixed));
+        at(Need {
+            natural: px(0.),
+            min: px(0.),
+            icon_only: None,
+        });
+        let permission_at = permission_menu
+            .as_ref()
+            .map(|menu| at(menu.need(window, cx)));
+        let model_need = model_picker.as_ref().map(|picker| picker.need(window, cx));
+        let model_at = model_need.map(&mut at);
+        let effort_at = effort_menu
+            .as_ref()
+            .and_then(|menu| menu.need(window, cx))
+            .map(&mut at);
+        let _ = has_mic.then(|| at(fixed));
+        let _ = has_send.then(|| at(fixed));
+        let order: Vec<usize> = [effort_at, permission_at, model_at]
+            .into_iter()
+            .flatten()
+            .collect();
+        let collapsed = collapse::plan(toolbar_width.width(), gap, gap, &needs, &order);
+        let is_collapsed = |index: Option<usize>| {
+            index.is_some_and(|index| collapsed.get(index).is_some_and(|fit| fit.is_icon()))
+        };
+        let permission = match self.permission {
+            Slot::Default => permission_menu.map(|menu| {
+                menu.icon_only(is_collapsed(permission_at))
                     .flex_shrink(1.)
-                    .min_w_0()
-                    .into_any_element(),
-            ),
+                    .into_any_element()
+            }),
             Slot::Hidden => None,
             Slot::Custom(element) => Some(element),
         };
-        let effort = (has_default_models && model_state.read(cx).effort().is_some()).then(|| {
-            EffortMenu::new(child(&id, "effort"), &model_state)
+        let models = match self.models {
+            Slot::Default => model_picker.map(|picker| {
+                // The popover's own root takes no style, so a box around it
+                // is what shrinks in the row, down to the pill's minimum.
+                let collapsed = is_collapsed(model_at);
+                let min = model_need
+                    .map(|need| match (collapsed, need.icon_only) {
+                        (true, Some(icon_only)) => icon_only,
+                        _ => need.min,
+                    })
+                    .unwrap_or_default();
+                div()
+                    .flex()
+                    .flex_shrink(1.)
+                    .min_w(min)
+                    .child(picker.icon_only(collapsed))
+                    .into_any_element()
+            }),
+            Slot::Hidden => None,
+            Slot::Custom(element) => Some(element),
+        };
+        let effort = effort_menu.map(|menu| {
+            menu.icon_only(is_collapsed(effort_at))
                 .flex_shrink(1.)
-                .min_w_0()
                 .into_any_element()
         });
         let mic = match self.mic {
@@ -687,7 +751,7 @@ impl RenderOnce for Composer {
                     .size(ButtonSize::Default)
                     .icon(IconName::Mic)
                     .text_color(muted)
-                    .rounded_full()
+                    .rounded(radius_full)
                     .accessibility_label("Dictate")
                     .tooltip("Dictate")
                     .disabled(disabled)
@@ -703,7 +767,7 @@ impl RenderOnce for Composer {
                     .primary()
                     .size(ButtonSize::Default)
                     .icon(IconName::ArrowUp)
-                    .rounded_full()
+                    .rounded(radius_full)
                     .accessibility_label("Send")
                     .tooltip("Send")
                     .disabled(!can_submit)
@@ -759,17 +823,19 @@ impl RenderOnce for Composer {
                 Textarea::new(&input)
                     .id(child(&id, "text"))
                     .accessibility_label("Prompt")
-                    .placeholder_color(placeholder)
                     .bg(gpui_kit::transparent_black())
                     .border_0()
                     .rounded_none(),
             )
             .child(
                 div()
+                    .relative()
                     .flex()
+                    .w_full()
                     .min_w_0()
                     .items_center()
                     .gap(gap)
+                    .child(toolbar_width.probe())
                     .children(leading)
                     .children(permission)
                     .children(self.toolbar)

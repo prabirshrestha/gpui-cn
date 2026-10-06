@@ -90,7 +90,6 @@ fn the_registry_matches_the_values_the_theme_tests_assert(cx: &mut TestAppContex
         ("popover_accent", "#3d3d3d", "#f6f6f7"),
         ("select_trigger", "#292929", "#ffffff"),
         ("select_trigger_border", "#3a3a3a", "#e5e5e6"),
-        ("radio_border", "#3b3b3b", "#e5e5e6"),
     ];
     let dark = hexes(cx, ThemeMode::Dark);
     let light = hexes(cx, ThemeMode::Light);

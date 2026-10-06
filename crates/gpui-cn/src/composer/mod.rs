@@ -15,8 +15,6 @@ pub use attachment::{
 };
 pub use effort::EffortMenu;
 pub use icons::ComposerAssets;
-#[cfg(test)]
-pub(crate) use model_picker::PickerLook;
 pub(crate) use model_picker::init as init_model_picker;
 pub use model_picker::{
     EFFORT_LABELS, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,

@@ -15,12 +15,13 @@ use gpui_kit::{
     },
     div,
     prelude::FluentBuilder as _,
-    radians,
+    radians, rems,
 };
 
 use crate::{
     ActiveTheme as _, Button, ButtonSize, Icon, MenuEvent, MenuState, Popover, ScrollArea, Theme,
-    menu::{MenuLook, search_row, search_style},
+    collapse::{self, Need},
+    menu::{MenuLook, row_frame, search_row, search_style, separator},
 };
 
 /// The names of the six effort levels, from the lowest to the highest.
@@ -881,6 +882,7 @@ pub struct ModelPicker {
     state: Entity<ModelPickerState>,
     trigger: Option<TriggerBuilder>,
     align: Align,
+    icon_only: bool,
     style: StyleRefinement,
 }
 
@@ -892,6 +894,7 @@ impl ModelPicker {
             state: state.clone(),
             trigger: None,
             align: Align::Start,
+            icon_only: false,
             style: StyleRefinement::default(),
         }
     }
@@ -910,6 +913,36 @@ impl ModelPicker {
         self.align = align;
         self
     }
+
+    /// Shows the default trigger as the provider's mark alone, with the
+    /// model's name in a tooltip and no chevron, as a very narrow toolbar
+    /// does. With no model chosen there is no mark, and the option does
+    /// nothing.
+    pub fn icon_only(mut self, icon_only: bool) -> Self {
+        self.icon_only = icon_only;
+        self
+    }
+
+    /// What the default trigger needs of a row: its width with the name cut
+    /// to the minimum, and its width as the provider's mark alone.
+    pub(crate) fn need(&self, window: &Window, cx: &App) -> Need {
+        let theme = cx.theme();
+        let padding = theme.metrics.control_padding_sm;
+        let rem = window.rem_size();
+        let gap = rems(0.375).to_pixels(rem);
+        let read = self.state.read(cx);
+        let label = read
+            .selected_model()
+            .map_or(SharedString::from("Select model"), |(_, model)| {
+                model.name.clone()
+            });
+        let label = collapse::text_width(&label, window)
+            .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+        Need::flexible(
+            padding * 2. + rems(1.).to_pixels(rem) + gap + label + gap + rems(0.75).to_pixels(rem),
+            read.selected_model().map(|_| theme.metrics.control_sm),
+        )
+    }
 }
 
 /// Styles the panel.
@@ -924,7 +957,8 @@ fn child(parent: &ElementId, name: &'static str) -> ElementId {
 }
 
 impl RenderOnce for ModelPicker {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let need = self.need(window, cx);
         let id = self.id;
         let state = self.state;
         let (open, search_focus) = {
@@ -951,30 +985,47 @@ impl RenderOnce for ModelPicker {
                 );
                 let (ink, muted) = {
                     let theme = cx.theme();
-                    (theme.foreground(), theme.composer_muted)
+                    (theme.foreground(), theme.muted_foreground())
                 };
-                let chevron = Icon::from(IconName::ChevronDown)
-                    .size_3()
-                    .when(open, |icon| icon.rotate(radians(PI)));
-                Button::new(child(&id, "trigger"))
-                    .ghost()
-                    .size(ButtonSize::Sm)
-                    .when_some(icon, |button, icon| button.icon(icon))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(ink)
-                            .child(label),
-                    )
-                    .flex_shrink(1.)
-                    .min_w_0()
-                    .trailing_icon(chevron)
-                    .text_color(muted)
-                    .selected(open)
-                    .into_any_element()
+                if self.icon_only
+                    && let Some(icon) = icon.clone()
+                {
+                    Button::new(child(&id, "trigger"))
+                        .ghost()
+                        .size(ButtonSize::Sm)
+                        .icon(icon)
+                        .accessibility_label(label.clone())
+                        .tooltip(label)
+                        .text_color(muted)
+                        .selected(open)
+                        .into_any_element()
+                } else {
+                    let keep = collapse::text_width(&label, window)
+                        .min(collapse::min_label_width(window, collapse::MIN_LABEL_CHARS));
+                    let chevron = Icon::from(IconName::ChevronDown)
+                        .size_3()
+                        .when(open, |icon| icon.rotate(radians(PI)));
+                    Button::new(child(&id, "trigger"))
+                        .ghost()
+                        .size(ButtonSize::Sm)
+                        .when_some(icon, |button, icon| button.icon(icon))
+                        .child(
+                            div()
+                                .min_w(keep)
+                                .flex_shrink(1.)
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_color(ink)
+                                .child(label),
+                        )
+                        .flex_shrink(1.)
+                        .min_w(need.min)
+                        .trailing_icon(chevron)
+                        .text_color(muted)
+                        .selected(open)
+                        .into_any_element()
+                }
             }
         };
         let content = {
@@ -1037,26 +1088,6 @@ impl RenderOnce for Slot {
     }
 }
 
-/// The colors the panel paints with: a menu's, from the same look as a
-/// select's menu, plus the one step between a menu's rest and its
-/// highlighted row that a hovered row takes.
-#[derive(Clone)]
-pub(crate) struct PickerLook {
-    pub(crate) menu: MenuLook,
-    pub(crate) hover: gpui_kit::Hsla,
-    pub(crate) accent: gpui_kit::Hsla,
-}
-
-impl PickerLook {
-    pub(crate) fn of(theme: &crate::ThemeTokens, rem_size: gpui_kit::Pixels) -> Self {
-        Self {
-            menu: MenuLook::of(theme, rem_size),
-            hover: theme.popover_hover,
-            accent: theme.control_accent,
-        }
-    }
-}
-
 /// The panel: the rail, the search, and the list.
 fn panel(
     id: &ElementId,
@@ -1065,13 +1096,9 @@ fn panel(
     cx: &mut App,
 ) -> gpui_kit::AnyElement {
     let theme = cx.theme();
-    let look = PickerLook::of(theme, window.rem_size());
-    let (rail_width, header_height, spacing) = (
-        theme.metrics.model_picker_rail,
-        theme.metrics.model_header,
-        theme.base.spacing.sm,
-    );
-    let ring = theme.control_accent;
+    let look = MenuLook::of(theme, window.rem_size());
+    let disabled_opacity = theme.disabled_opacity;
+    let (rail_width, header_height) = (theme.metrics.model_picker_rail, theme.metrics.model_header);
     let row_height = theme.metrics.model_row;
     let pointer_cursors = Theme::global(cx).pointer_cursors;
     let read = state.read(cx);
@@ -1089,7 +1116,6 @@ fn panel(
         "No models found"
     };
     let providers = read.providers.clone();
-    let searching_focused = search_focus.contains_focused(window, cx);
 
     let entry = |entry_id: ElementId,
                  icon: Icon,
@@ -1100,7 +1126,8 @@ fn panel(
         div()
             .relative()
             .w_full()
-            .py(look.menu.padding / 2.)
+            .py(look.padding / 2.)
+            .px(look.padding)
             .child(
                 Button::new(entry_id)
                     .ghost()
@@ -1108,30 +1135,16 @@ fn panel(
                     .icon(icon)
                     .accessibility_label(label.clone())
                     .tooltip(label)
-                    .mx(look.menu.padding)
+                    .w_full()
                     .text_color(if marked {
-                        look.menu.foreground
+                        look.foreground
                     } else {
-                        look.menu.muted_foreground
+                        look.muted_foreground
                     })
                     .selected(marked)
-                    .when(marked, |button| button.bg(look.menu.accent))
+                    .when(marked, |button| button.bg(look.accent))
                     .on_click(move |_, window, cx| on_click(window, cx)),
             )
-            .when(marked, |this| {
-                this.child(
-                    div()
-                        .id(child(id, "rail-indicator"))
-                        .test_support()
-                        .absolute()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
-                        .flex()
-                        .items_center()
-                        .child(div().w_0p5().h_5().rounded_l_full().bg(look.accent)),
-                )
-            })
             .into_any_element()
     };
     let mut marks = vec![entry(
@@ -1151,9 +1164,9 @@ fn panel(
     marks.push(
         div()
             .w_full()
-            .py(look.menu.padding)
-            .px(look.menu.padding * 2.)
-            .child(div().h_px().w_full().bg(look.menu.separator))
+            .py(look.padding)
+            .px(look.padding * 2.)
+            .child(div().h_px().w_full().bg(look.separator))
             .into_any_element(),
     );
     marks.extend(providers.iter().map(|provider| {
@@ -1172,13 +1185,9 @@ fn panel(
             },
         )
     }));
-    let rail = ScrollArea::new(child(id, "rail")).size_full().child(
-        div()
-            .flex()
-            .flex_col()
-            .py(look.menu.padding)
-            .children(marks),
-    );
+    let rail = ScrollArea::new(child(id, "rail"))
+        .size_full()
+        .child(div().flex().flex_col().py(look.padding).children(marks));
     let rail = div()
         .id(child(id, "rail-box"))
         .test_support()
@@ -1186,8 +1195,8 @@ fn panel(
         .w(rail_width)
         .h_full()
         .border_r_1()
-        .border_color(look.menu.separator)
-        .when(searching, |this| this.opacity(0.5))
+        .border_color(look.separator)
+        .when(searching, |this| this.opacity(disabled_opacity))
         .child(rail);
 
     let body = if empty {
@@ -1198,7 +1207,7 @@ fn panel(
             .flex()
             .items_center()
             .justify_center()
-            .text_color(look.menu.muted_foreground)
+            .text_color(look.muted_foreground)
             .child(empty_text)
             .into_any_element()
     } else {
@@ -1206,7 +1215,6 @@ fn panel(
             id: id.clone(),
             state: state.clone(),
             look: look.clone(),
-            ring,
             pointer_cursors,
         };
         ScrollArea::list(
@@ -1218,31 +1226,35 @@ fn panel(
         .size_full()
         .into_any_element()
     };
+    // The list pane keeps the menu's inset on every side, so the fills of
+    // rows, and the ring of a focused one, stay clear of the rail's
+    // hairline and the panel's border. A slot holds a row with half the
+    // gap above and below it, so the pane takes that half off its top and
+    // bottom, and a larger step under the underline.
+    let slot_gap = look.padding / 2.;
     let list_box = div()
         .id(child(id, "list"))
         .test_support()
         .flex_1()
         .min_h_0()
         .w_full()
+        .px(look.padding)
+        .pt(look.padding + slot_gap)
+        .pb(look.padding - slot_gap)
         .child(body);
 
-    let search_row = search_row(&search, &look.menu, window, cx)
+    let search_row = search_row(&search, &look, window, cx)
         .id(child(id, "search"))
         .test_support()
         .h(header_height)
         .w_full()
-        .mx(spacing);
+        .mx(look.padding);
     let underline = div()
         .id(child(id, "underline"))
         .test_support()
         .flex_shrink_0()
-        .mx(spacing * 2.)
-        .h_px()
-        .bg(if searching_focused {
-            look.accent
-        } else {
-            look.menu.separator
-        });
+        .px(look.padding)
+        .child(separator(&look));
     let main = v_flex()
         .flex_1()
         .min_w_0()
@@ -1339,8 +1351,7 @@ fn panel(
 struct Rows {
     id: ElementId,
     state: Entity<ModelPickerState>,
-    look: PickerLook,
-    ring: gpui_kit::Hsla,
+    look: MenuLook,
     pointer_cursors: bool,
 }
 
@@ -1358,7 +1369,7 @@ impl Rows {
     }
 
     fn row(&self, index: usize, window: &mut Window, cx: &mut App) -> gpui_kit::AnyElement {
-        let look = &self.look.menu;
+        let look = &self.look;
         let (row, highlighted, legacy_open) = {
             let state = self.state.read(cx);
             let Some(row) = state.rows.get(index).copied() else {
@@ -1369,26 +1380,12 @@ impl Rows {
         let touch = look.touch;
         let hover_state = self.state.clone();
         let click_state = self.state.clone();
-        let frame = |frame_id: ElementId, chosen: bool| {
-            div()
+        let frame = |frame_id: ElementId| {
+            row_frame(look, highlighted && !touch)
                 .id(frame_id)
                 .test_support()
-                .flex()
-                .flex_shrink_0()
-                .items_center()
-                .gap_2()
-                .w_full()
                 .h_full()
-                .px(look.row_padding)
-                .rounded(look.row_radius)
-                .border_1()
-                .border_color(gpui_kit::transparent_black())
                 .when(self.pointer_cursors, |this| this.cursor_pointer())
-                .when(highlighted && !touch, |this| this.bg(self.look.hover))
-                .when(chosen, |this| this.bg(look.accent))
-                .when(chosen && highlighted && !touch, |this| {
-                    this.border_color(self.ring)
-                })
                 .when(!touch, |this| {
                     this.on_mouse_move(move |_, _, cx| {
                         hover_state.update(cx, |state, cx| state.hover_row(index, cx));
@@ -1406,7 +1403,7 @@ impl Rows {
                     window,
                     cx,
                 );
-                frame(child(&self.id, "legacy"), false)
+                frame(child(&self.id, "legacy"))
                     .child(
                         v_flex()
                             .flex_1()
@@ -1423,7 +1420,7 @@ impl Rows {
                                     .text_size(caption_text.size)
                                     .line_height(caption_text.line_height)
                                     .text_color(look.muted_foreground)
-                                    .child(format!("{count} models")),
+                                    .child(crate::plural::counted(count, "model")),
                             ),
                     )
                     .child(
@@ -1467,10 +1464,10 @@ impl Rows {
                 } else {
                     1.
                 };
-                frame(
-                    ElementId::NamedChild(self.id.clone().into(), model.id.clone()),
-                    chosen,
-                )
+                frame(ElementId::NamedChild(
+                    self.id.clone().into(),
+                    model.id.clone(),
+                ))
                 .opacity(fade)
                 .child(
                     v_flex()
@@ -1529,7 +1526,7 @@ impl Rows {
                         model.id.clone(),
                     ))
                     .ghost()
-                    .size(ButtonSize::Sm)
+                    .size(ButtonSize::Default)
                     .icon(Icon::from(if favorite {
                         IconName::StarFill
                     } else {

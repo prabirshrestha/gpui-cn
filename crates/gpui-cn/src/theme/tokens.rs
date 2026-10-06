@@ -79,11 +79,11 @@ pub struct ThemeTokens {
     /// fill and a card to the whole. The reference app's disabled switch
     /// measures 60%; gpui-cn keeps one strength for every control.
     pub disabled_opacity: f32,
-    /// The color of a control that is on or chosen: the accent, as the
-    /// reference app paints a switch that is on (#539af8 on dark). The
-    /// track of an on switch and the disc of a chosen radio read this one
-    /// token, as macOS paints both in `controlAccentColor`.
-    pub control_accent: Hsla,
+    /// The color of a switch that is on and a radio that is chosen: the
+    /// accent, as the reference app paints a switch that is on (#539af8 on
+    /// dark). Only the switch and the radio read it, as macOS paints both
+    /// in `controlAccentColor`; no other component paints in the accent.
+    pub switch_track_on: Hsla,
     /// The track of a switch that is off.
     pub switch_track_off: Hsla,
     /// The thumb of a switch: the lighter of the surface and the ink, so
@@ -138,15 +138,6 @@ pub struct ThemeTokens {
     /// reference app's hovered menu row. On light the same step as a
     /// hovered sidebar row.
     pub popover_accent: Hsla,
-    /// The fill of a hovered or keyboard-highlighted row where another row
-    /// is chosen, such as in the model picker: halfway from the popover
-    /// surface to `popover_accent`, which is the chosen row's fill. Checked
-    /// first: `popover_accent` (the chosen fill itself), `popover_separator`
-    /// and `select_indicator` (a hairline and a check), and the sidebar
-    /// steps (on the sidebar surface, not a popover's). None is a step
-    /// below `popover_accent` on the popover surface. Not measured from the
-    /// reference app, whose picker screenshot shows no hovered row.
-    pub popover_hover: Hsla,
     /// A separator inside a popover: #3e3e3e on dark, sampled from the
     /// reference app's menus. The `border` step on light.
     pub popover_separator: Hsla,
@@ -183,62 +174,6 @@ pub struct ThemeTokens {
     /// the link color most of the way over the fill. One pixel, no spread.
     /// The ring itself on light, as shadcn's `border-ring`.
     pub field_focus_border: Hsla,
-    /// The empty rail of a slider: the ink at 18%, so it reads on any
-    /// surface, a card or a popover. The filled range is `control_accent`.
-    pub slider_rail: Hsla,
-    /// The hairline around a slider's thumb: the ink at 20%, so the white
-    /// thumb reads on a light surface.
-    pub slider_thumb_border: Hsla,
-    /// A tick on the empty rail: the ink at 45%.
-    pub slider_tick_off: Hsla,
-    /// A tick on the filled range: the solid foreground (white) at 80%.
-    pub slider_tick_on: Hsla,
-    /// The strip behind the top of a composer card: #282828 on the #181818
-    /// window, sampled from the composer reference screenshots at 2x, which is
-    /// the surface 8.75% toward the ink. On light, 5% toward the ink.
-    pub status_tab: Hsla,
-    /// The fill of a composer card: #363636 on dark, sampled from the same
-    /// screenshots, the surface 15.75% toward the ink, a step lighter than
-    /// the status tab. The surface itself on light, where the hairline does
-    /// the parting.
-    pub composer_card: Hsla,
-    /// The hairline around a composer card: #424242 on dark, sampled from
-    /// the same screenshots, the surface 21.6% toward the ink. On light,
-    /// 10% toward the ink. The card keeps it at rest and takes the focus
-    /// border while the caret is inside.
-    pub composer_border: Hsla,
-    /// The hint in an empty prompt: #686868 on dark, sampled from the same
-    /// screenshots, the card 54% of the way to the muted text. Dimmer than a
-    /// label, since it is not read as one.
-    pub composer_placeholder: Hsla,
-    /// Muted labels and icons on a composer card (the permission and model
-    /// triggers, the effort word): the muted text stepped toward the ink
-    /// until it reaches 4.5:1 on the card, WCAG AA for text. The reference
-    /// screenshots paint the effort word #9a9a9a, a little below that.
-    pub composer_muted: Hsla,
-    /// A risky choice, such as a permission mode that runs without asking:
-    /// the warning and destructive colors halfway, a tenth toward the ink.
-    /// The reference screenshots paint "Full access" #ef8b57 (this gives
-    /// #fb894a on dark).
-    pub warning_text: Hsla,
-    /// The ring of a radio that is not chosen: the field hairline, which
-    /// reads on a popover surface where the `input` hairline vanishes.
-    pub radio_border: Hsla,
-    /// The icon of a document attachment: the muted text, a neutral gray
-    /// (composer design spec; not measured from the reference app).
-    pub kind_document: Hsla,
-    /// The icon of a spreadsheet attachment: the accent, which is blue
-    /// (composer design spec).
-    pub kind_spreadsheet: Hsla,
-    /// The icon of a presentation attachment: the accent turned to purple,
-    /// at 280 degrees of hue (composer design spec).
-    pub kind_presentation: Hsla,
-    /// The icon of a code attachment: the accent turned to teal, at 176
-    /// degrees of hue (composer design spec).
-    pub kind_code: Hsla,
-    /// The icon of a video attachment: the accent turned to violet, at 252
-    /// degrees of hue (composer design spec).
-    pub kind_video: Hsla,
     /// The text of a multi-line field: 13px on an 18.5px line, the pitch
     /// measured from the reference app's settings textarea at 2x (37px),
     /// looser than `text_control` so lines of prose read apart.
@@ -362,10 +297,6 @@ pub struct MetricTokens {
     /// The side of an attachment tile: 56px (composer design spec; not
     /// measured from the reference app).
     pub attachment_tile: Pixels,
-    /// The icon of a file attachment tile: 18px, the same source.
-    pub attachment_icon: Pixels,
-    /// The stroke of the arc that draws around an uploading tile: 2px.
-    pub attachment_arc: Pixels,
     /// The width of the model picker's panel: 361px, measured from the
     /// reference app's picker at 2x (722px from edge to edge).
     pub model_picker_width: Pixels,
@@ -390,20 +321,12 @@ pub struct MetricTokens {
     /// The gap between the items of a status tab: 28px, the same
     /// screenshots (56px between two items).
     pub status_tab_gap: Pixels,
-    /// The icon of a status item: 14px, the same screenshots (28px).
-    pub status_icon: Pixels,
     /// The gap between a status item's icon and its text: 8px, the same
     /// screenshots (15px, rounded up to the step).
     pub status_label_gap: Pixels,
     /// How far the status tab is inset from each side of the card: 14px,
     /// the same screenshots (27px).
     pub status_tab_inset: Pixels,
-    /// The radius of the status tab's top corners: 16px, the same
-    /// screenshots (about 33px).
-    pub status_tab_radius: Pixels,
-    /// The radius of a composer's card: 19px, the same screenshots (about
-    /// 38px on a card 196px tall).
-    pub composer_radius: Pixels,
     /// The padding between a composer card's edge and its content: 4px.
     pub composer_padding: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
@@ -574,8 +497,6 @@ impl MetricTokens {
             ring_size: scaled(16.),
             ring_stroke: scaled(2.),
             attachment_tile: scaled(56.),
-            attachment_icon: scaled(18.),
-            attachment_arc: scaled(2.),
             model_picker_width: scaled(361.),
             model_picker_height: scaled(346.),
             model_picker_rail: scaled(44.),
@@ -584,10 +505,7 @@ impl MetricTokens {
             status_tab_height: scaled(38.),
             status_tab_inset: scaled(14.),
             status_tab_gap: scaled(28.),
-            status_icon: scaled(14.),
             status_label_gap: scaled(8.),
-            status_tab_radius: scaled(16.),
-            composer_radius: scaled(19.),
             composer_padding: scaled(4.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
@@ -707,7 +625,7 @@ impl ThemeTokens {
         let destructive_foreground = readable_on(config.semantic.destructive, surface, ink);
         // The reference app's switch: the accent when on, and when off a
         // gray a few steps from the surface. The thumb is white on both.
-        let control_accent = config.accent;
+        let switch_track_on = config.accent;
         let switch_track_off = toward_ink(0.20);
         let switch_thumb = lighter_of(surface, ink);
         let progress_track = primary.opacity(0.2);
@@ -732,34 +650,12 @@ impl ThemeTokens {
         let popover_step = |amount: f32| mix(popover, ink, amount);
         let popover_border = if dark { popover_step(0.13) } else { border };
         let popover_accent = popover_step(if dark { 0.09 } else { 0.033 });
-        let popover_hover = mix(popover, popover_accent, 0.5);
         let popover_separator = if dark { popover_step(0.095) } else { border };
         let popover_muted_foreground = mix(ink, popover, if dark { 0.32 } else { 0.38 });
         let select_indicator = mix(ink, popover, if dark { 0.227 } else { 0.38 });
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
         let tab_separator = muted_foreground.opacity(0.6);
-        let status_tab = mix(surface, ink, if dark { 0.0875 } else { 0.05 });
-        let composer_card = if dark {
-            mix(surface, ink, 0.1575)
-        } else {
-            surface
-        };
-        let composer_border = mix(surface, ink, if dark { 0.2160 } else { 0.10 });
-        let composer_placeholder = mix(composer_card, muted_foreground, 0.54);
-        let composer_muted = (0..=20)
-            .map(|step| mix(muted_foreground, ink, step as f32 * 0.05))
-            .find(|color| super::color::contrast_ratio(*color, composer_card) >= 4.5)
-            .unwrap_or(ink);
-        let warning_text = mix(
-            mix(config.semantic.warning, config.semantic.destructive, 0.45),
-            ink,
-            0.1,
-        );
-        let turned = |hue_degrees: f32| Hsla {
-            h: hue_degrees / 360.,
-            ..config.accent
-        };
         let field = if dark { toward_ink(0.104) } else { surface };
         let field_border = if dark { toward_ink(0.181) } else { input };
         let field_focus_border = if dark {
@@ -849,7 +745,7 @@ impl ThemeTokens {
             text_title,
             metrics: MetricTokens::derive(metrics.ui_font_size, metrics.touch),
             disabled_opacity: 0.55,
-            control_accent,
+            switch_track_on,
             switch_track_off,
             switch_thumb,
             success: config.semantic.success,
@@ -869,7 +765,6 @@ impl ThemeTokens {
             popover_foreground: ink,
             popover_border,
             popover_accent,
-            popover_hover,
             popover_separator,
             popover_muted_foreground,
             select_indicator,
@@ -879,22 +774,6 @@ impl ThemeTokens {
             field,
             field_border,
             field_focus_border,
-            slider_rail: ink.opacity(0.18),
-            slider_thumb_border: ink.opacity(0.2),
-            slider_tick_off: ink.opacity(0.45),
-            slider_tick_on: solid_foreground.opacity(0.8),
-            status_tab,
-            composer_card,
-            composer_border,
-            composer_placeholder,
-            composer_muted,
-            warning_text,
-            radio_border: field_border,
-            kind_document: muted_foreground,
-            kind_spreadsheet: config.accent,
-            kind_presentation: turned(280.),
-            kind_code: turned(176.),
-            kind_video: turned(252.),
             text_textarea,
         }
     }
@@ -1286,14 +1165,14 @@ mod tests {
         // The on track and the thumb are sampled from the reference app's
         // settings toggles at 2x on dark.
         let dark = dark();
-        assert_eq!(to_hex(dark.control_accent), "#539af8");
+        assert_eq!(to_hex(dark.switch_track_on), "#539af8");
         assert_eq!(to_hex(dark.switch_thumb), "#ffffff");
-        assert_eq!(dark.control_accent, dark.ring());
+        assert_eq!(dark.switch_track_on, dark.ring());
         assert!(lightness(dark.switch_track_off) > lightness(dark.background()));
         assert!(lightness(dark.switch_track_off) < lightness(dark.switch_thumb));
         let light = light();
         assert_eq!(to_hex(light.switch_thumb), "#ffffff");
-        assert_eq!(light.control_accent, light.ring());
+        assert_eq!(light.switch_track_on, light.ring());
         assert!(lightness(light.switch_track_off) < lightness(light.background()));
         assert_eq!(to_hex(light.focus_ring()), "#339cff80");
         assert_eq!(light.focus_ring().a, 0.5);
@@ -1573,22 +1452,9 @@ mod tests {
     #[test]
     fn a_chosen_radio_and_an_on_switch_share_the_accent() {
         for (tokens, hex) in [(dark(), "#539af8"), (light(), "#339cff")] {
-            assert_eq!(to_hex(tokens.control_accent), hex);
-            assert_eq!(tokens.control_accent, tokens.ring());
+            assert_eq!(to_hex(tokens.switch_track_on), hex);
+            assert_eq!(tokens.switch_track_on, tokens.ring());
         }
-    }
-
-    #[test]
-    fn slider_colors_are_translucent_ink_and_the_shared_accent() {
-        for tokens in [dark(), light()] {
-            assert_eq!(tokens.slider_rail.a, 0.18);
-            assert_eq!(tokens.slider_thumb_border.a, 0.2);
-            assert_eq!(tokens.slider_tick_off.a, 0.45);
-            assert_eq!(tokens.slider_tick_on.a, 0.8);
-            assert_eq!(tokens.slider_tick_on.alpha(1.), tokens.solid_foreground);
-        }
-        assert_eq!(to_hex(dark().slider_rail.alpha(1.)), "#ffffff");
-        assert_eq!(to_hex(light().slider_rail.alpha(1.)), "#1a1c1f");
     }
 
     #[test]
@@ -1606,149 +1472,40 @@ mod tests {
     }
 
     #[test]
-    fn attachment_kind_tints_turn_the_accent_and_the_tile_metrics_scale() {
-        let (dark, light) = (dark(), light());
-        let hexes = |t: &ThemeTokens| {
-            [
-                t.kind_document,
-                t.kind_spreadsheet,
-                t.kind_presentation,
-                t.kind_code,
-                t.kind_video,
-            ]
-            .map(to_hex)
-        };
-        assert_eq!(
-            hexes(&dark),
-            ["#969696", "#539af8", "#c153f8", "#53f8ed", "#7453f8"]
-        );
-        assert_eq!(
-            hexes(&light),
-            ["#67696b", "#339cff", "#bb33ff", "#33fff1", "#5c33ff"]
-        );
-        assert_eq!(
-            dark.kind_spreadsheet, dark.info,
-            "blue is the accent itself"
-        );
+    fn the_attachment_tile_metric_and_the_model_picker_metrics_are_set() {
+        let dark = dark();
         assert_eq!(dark.metrics.attachment_tile, px(56.));
-        assert_eq!(dark.metrics.attachment_icon, px(18.));
-    }
-
-    #[test]
-    fn model_picker_metrics_and_the_radio_ring_are_derived() {
-        let (dark, light) = (dark(), light());
         assert_eq!(dark.metrics.model_picker_width, px(361.));
         assert_eq!(dark.metrics.model_picker_height, px(346.));
         assert_eq!(dark.metrics.model_picker_rail, px(44.));
         assert_eq!(dark.metrics.model_row, px(47.));
         assert_eq!(dark.metrics.model_header, px(42.));
-        assert_eq!(dark.radio_border, dark.field_border);
-        assert_eq!(to_hex(dark.radio_border), "#3b3b3b");
-        assert_eq!(to_hex(light.radio_border), "#e5e5e6");
     }
 
     #[test]
-    fn the_model_picker_paints_with_the_menu_tokens_in_both_appearances() {
-        for theme in [dark(), light()] {
-            let picker = crate::composer::PickerLook::of(&theme, px(16.));
-            let select = crate::menu::MenuLook::of(&theme, px(16.));
-            let menu = &picker.menu;
-            assert_eq!(menu.surface, theme.popover, "surface");
-            assert_eq!(menu.border, theme.popover_border, "panel hairline");
-            assert_eq!(menu.accent, theme.popover_accent, "chosen row");
-            assert_eq!(picker.hover, theme.popover_hover, "hovered row");
-            assert_eq!(menu.separator, theme.popover_separator, "dividers");
-            for (picker, select) in [
-                (menu.surface, select.surface),
-                (menu.border, select.border),
-                (menu.accent, select.accent),
-                (menu.separator, select.separator),
-                (menu.foreground, select.foreground),
-                (menu.muted_foreground, select.muted_foreground),
-            ] {
-                assert_eq!(picker, select, "the picker and a select menu agree");
-            }
-            assert_eq!(menu.row_radius, select.row_radius);
-        }
-    }
-
-    #[test]
-    fn a_hovered_picker_row_is_between_the_menu_surface_and_its_highlight() {
-        for theme in [dark(), light()] {
-            let (surface, hover, accent) = (
-                lightness(theme.popover),
-                lightness(theme.popover_hover),
-                lightness(theme.popover_accent),
-            );
-            let (low, high) = (surface.min(accent), surface.max(accent));
-            assert!(hover > low && hover < high, "{surface} {hover} {accent}");
-        }
-        assert_eq!(to_hex(dark().popover_hover), "#343434");
-    }
-
-    #[test]
-    fn composer_colors_and_metrics_are_the_codex_samples() {
-        let (dark, light) = (dark(), light());
-        let m = &dark.metrics;
+    fn the_status_tab_metrics_are_the_reference_samples() {
+        let m = &dark().metrics;
         assert_eq!(m.status_tab_height, px(38.));
         assert_eq!(m.status_tab_inset, px(14.));
         assert_eq!(m.status_tab_gap, px(28.));
-        assert_eq!(m.status_icon, px(14.));
         assert_eq!(m.status_label_gap, px(8.));
-        assert_eq!(m.status_tab_radius, px(16.));
-        assert_eq!(m.composer_radius, px(19.));
         assert_eq!(m.composer_padding, px(4.));
-        let hexes = |t: &ThemeTokens| {
-            [
-                t.status_tab,
-                t.composer_card,
-                t.composer_border,
-                t.composer_placeholder,
-                t.composer_muted,
-                t.warning_text,
-            ]
-            .map(to_hex)
-        };
-        assert_eq!(
-            hexes(&dark),
-            [
-                "#282828", "#363636", "#424242", "#686868", "#a0a0a0", "#fb894a"
-            ]
-        );
-        assert_eq!(
-            hexes(&light),
-            [
-                "#f2f2f2", "#ffffff", "#e5e5e6", "#aaabac", "#67696b", "#a63f1d"
-            ]
-        );
     }
 
     #[test]
-    fn the_card_and_its_hairline_part_from_a_sidebar_colored_background() {
+    fn the_composer_reads_text_at_least_4_5_to_1_on_the_surfaces_it_uses() {
         use crate::theme::color::contrast_ratio;
         for tokens in [dark(), light()] {
-            let hairline = contrast_ratio(tokens.composer_border, tokens.sidebar);
+            let muted = contrast_ratio(tokens.muted_foreground(), tokens.field);
+            assert!(muted >= 4.5, "muted text on the card: {muted}");
+            let warning = contrast_ratio(tokens.warning, tokens.field);
+            assert!(warning >= 4.5, "the risky mode on the card: {warning}");
+            let tab = contrast_ratio(tokens.foreground(), tokens.sidebar);
+            assert!(tab >= 4.5, "text on the status tab: {tab}");
+            let hairline = contrast_ratio(tokens.field_border, tokens.sidebar);
             assert!(
-                hairline > 1.1,
-                "the hairline reads on the sidebar: {hairline}"
-            );
-            let card = contrast_ratio(tokens.composer_card, tokens.sidebar);
-            let border_to_card = contrast_ratio(tokens.composer_border, tokens.composer_card);
-            assert!(card > 1. || border_to_card > 1.1);
-        }
-    }
-
-    #[test]
-    fn muted_composer_text_reads_at_least_4_5_to_1_on_the_card() {
-        for tokens in [dark(), light()] {
-            let ratio =
-                crate::theme::color::contrast_ratio(tokens.composer_muted, tokens.composer_card);
-            assert!(ratio >= 4.5, "{ratio}");
-            let tab = crate::theme::color::contrast_ratio(tokens.foreground(), tokens.status_tab);
-            assert!(tab >= 4.5, "tab text {tab}");
-            assert!(
-                lightness(tokens.composer_card) != lightness(tokens.status_tab),
-                "the card and the tab differ"
+                hairline > 1.05,
+                "the card's hairline reads on the tab: {hairline}"
             );
         }
     }

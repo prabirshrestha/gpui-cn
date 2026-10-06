@@ -39,6 +39,7 @@
 mod avatar;
 mod badge;
 mod button;
+mod collapse;
 mod command;
 mod command_dialog;
 mod composer;
@@ -54,6 +55,7 @@ mod menu;
 mod middle_text;
 mod nav;
 mod path_browser;
+mod plural;
 mod popover;
 mod progress;
 mod radio;

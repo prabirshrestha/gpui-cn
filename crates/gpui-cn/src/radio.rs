@@ -56,9 +56,9 @@ impl Styled for RadioMark {
 /// control accent, the color a switch that is on takes for its track.
 fn colors(checked: bool, theme: &ThemeTokens) -> (Hsla, Option<Hsla>) {
     if checked {
-        (theme.control_accent, Some(theme.control_accent))
+        (theme.switch_track_on, Some(theme.switch_track_on))
     } else {
-        (theme.radio_border, None)
+        (theme.field_border, None)
     }
 }
 
@@ -362,8 +362,12 @@ mod tests {
             let (ring, fill) = colors(true, &theme);
             assert_eq!(fill.map(to_hex).as_deref(), Some(hex));
             assert_eq!(to_hex(ring), hex);
-            assert_eq!(fill, Some(theme.control_accent), "the switch's track token");
-            assert_eq!(colors(false, &theme), (theme.radio_border, None));
+            assert_eq!(
+                fill,
+                Some(theme.switch_track_on),
+                "the switch's track token"
+            );
+            assert_eq!(colors(false, &theme), (theme.field_border, None));
         }
     }
 

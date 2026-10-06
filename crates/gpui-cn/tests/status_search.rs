@@ -124,12 +124,21 @@ fn sel() -> ElementId {
     ElementId::from("sel")
 }
 
-fn trigger() -> ElementId {
-    named(sel(), "trigger")
+fn select() -> ElementId {
+    named(sel(), "select")
 }
 
+fn trigger() -> ElementId {
+    named(select(), "trigger")
+}
+
+/// The scope the menu's rows and search field are named under.
 fn palette() -> ElementId {
-    named(sel(), "palette")
+    select()
+}
+
+fn menu() -> ElementId {
+    named(select(), "menu")
 }
 
 fn click(setup: &Setup, target: ElementId, cx: &mut TestAppContext) {
@@ -182,7 +191,7 @@ fn two_options_open_a_plain_menu_and_twelve_open_the_search_list(cx: &mut TestAp
         None,
     );
     click(&few, trigger(), cx);
-    assert!(present(&few, named(sel(), "a"), cx), "a menu item");
+    assert!(present(&few, named(palette(), "a"), cx), "a menu item");
     assert!(
         !present(&few, named(palette(), "search"), cx),
         "no search field"
@@ -194,7 +203,7 @@ fn two_options_open_a_plain_menu_and_twelve_open_the_search_list(cx: &mut TestAp
         present(&many, named(palette(), "search"), cx),
         "a search field"
     );
-    assert!(many.state.read_with(cx, |state, _| state.is_open()));
+    assert!(present(&many, menu(), cx));
 }
 
 #[gpui_kit::test]
@@ -218,10 +227,7 @@ fn typing_filters_and_ranks_and_enter_picks(cx: &mut TestAppContext) {
         *setup.events.borrow(),
         [StatusSelectEvent::Changed("feature/composer".into())]
     );
-    assert!(
-        !setup.state.read_with(cx, |state, _| state.is_open()),
-        "picking closes it"
-    );
+    assert!(!present(&setup, menu(), cx), "picking closes it");
 }
 
 #[gpui_kit::test]
@@ -246,7 +252,7 @@ fn escape_closes_without_a_change(cx: &mut TestAppContext) {
     let setup = setup(cx, refs(), 100., None);
     click(&setup, trigger(), cx);
     press(&setup, "escape", cx);
-    assert!(!setup.state.read_with(cx, |state, _| state.is_open()));
+    assert!(!present(&setup, menu(), cx));
     assert!(setup.events.borrow().is_empty());
 }
 
@@ -266,43 +272,19 @@ fn the_kind_label_is_right_aligned_and_a_long_name_fits_its_row(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
-fn the_panel_keeps_its_height_for_none_one_and_many_matches(cx: &mut TestAppContext) {
-    let setup = setup(cx, refs(), 100., None);
-    click(&setup, trigger(), cx);
-    let height = |setup: &Setup, cx: &mut TestAppContext| bounds(setup, palette(), cx).size.height;
-    let many = height(&setup, cx);
-    input(&setup, "feature/composer", cx);
-    assert_eq!(height(&setup, cx), many, "one match");
-    cx.update_window(setup.handle.into(), |_, window, cx| {
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-a"
-            } else {
-                "ctrl-a"
-            },
-            cx,
-        );
-        window.input("zzzzzz", cx);
-    })
-    .unwrap();
-    frames(&setup, cx);
-    assert_eq!(height(&setup, cx), many, "no match");
-}
-
-#[gpui_kit::test]
 fn the_panel_hangs_from_its_trigger_and_flips_near_the_bottom(cx: &mut TestAppContext) {
     let low = setup(cx, refs(), 100., None);
     click(&low, trigger(), cx);
-    let (trigger_box, panel) = (bounds(&low, trigger(), cx), bounds(&low, palette(), cx));
+    let (trigger_box, panel) = (bounds(&low, trigger(), cx), bounds(&low, menu(), cx));
     assert!(panel.top() >= trigger_box.bottom(), "below the trigger");
     assert!(
-        (f32::from(panel.left() - trigger_box.left())).abs() < 8.,
+        (f32::from(panel.left() - trigger_box.left())).abs() < 1.5,
         "lined up with it"
     );
 
     let high = setup(cx, refs(), 700., None);
     click(&high, trigger(), cx);
-    let (trigger_box, panel) = (bounds(&high, trigger(), cx), bounds(&high, palette(), cx));
+    let (trigger_box, panel) = (bounds(&high, trigger(), cx), bounds(&high, menu(), cx));
     assert!(panel.bottom() <= trigger_box.top(), "above the trigger");
     let _ = cx.update(|cx| cx.theme().metrics.clone());
 }

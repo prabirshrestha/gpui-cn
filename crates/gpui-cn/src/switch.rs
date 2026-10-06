@@ -139,7 +139,7 @@ impl Surface {
     fn of(checked: bool, disabled: bool, theme: &ThemeTokens) -> Self {
         let metrics = &theme.metrics;
         let track = if checked {
-            theme.control_accent
+            theme.switch_track_on
         } else {
             theme.switch_track_off
         };

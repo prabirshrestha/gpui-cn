@@ -194,6 +194,36 @@ pub(crate) fn label_block(
         .into_any_element()
 }
 
+/// The frame of one row, the same in a select, a menu, a palette, and the
+/// pickers' lists: a full-width row at least a row tall, padded by the row
+/// padding, with the row radius, and the highlight fill when `highlighted`.
+/// The fill is painted on this element, so it takes the radius. Callers
+/// add their id, content, and handlers.
+pub(crate) fn row_frame(look: &MenuLook, highlighted: bool) -> gpui_kit::Div {
+    h_flex()
+        .w_full()
+        .min_h(look.row_height)
+        .py_1p5()
+        .flex_shrink_0()
+        .items_center()
+        .gap_2()
+        .px(look.row_padding)
+        .rounded(look.row_radius)
+        .when(highlighted, |this| this.bg(look.accent))
+}
+
+/// The check column at the right of a row: a row-line tall slot that holds
+/// the check while `shown`, and keeps its width otherwise so labels line up.
+pub(crate) fn check_slot(look: &MenuLook, shown: bool, muted: bool) -> gpui_kit::Div {
+    line_slot(look).child(div().size_4().when(shown, |this| {
+        this.child(Icon::from(IconName::Check).size_4().text_color(if muted {
+            look.muted_foreground
+        } else {
+            look.indicator
+        }))
+    }))
+}
+
 /// A box one text line tall that centers its child on that line, for a
 /// row's leading and trailing parts: in a row whose parts lie along the
 /// top, they line up with the label, the first line, and not with the
@@ -218,17 +248,11 @@ pub(crate) fn row_line() -> gpui_kit::Div {
 /// virtual list measures a row without its margin, so a margin would
 /// fold the gap away and paint the line on the next row.
 pub(crate) fn separator(look: &MenuLook) -> AnyElement {
-    separator_in(look, look.separator)
-}
-
-/// [`separator`] in `color`: a search field's underline takes the accent
-/// while the field has focus.
-pub(crate) fn separator_in(look: &MenuLook, color: Hsla) -> AnyElement {
     div()
         .w_full()
         .py(look.padding)
         .px(look.padding * 2.)
-        .child(div().h_px().w_full().bg(color))
+        .child(div().h_px().w_full().bg(look.separator))
         .into_any_element()
 }
 

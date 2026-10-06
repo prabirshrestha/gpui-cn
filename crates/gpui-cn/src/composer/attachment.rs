@@ -1,23 +1,23 @@
-use std::{f32::consts::FRAC_PI_2, rc::Rc};
+use std::rc::Rc;
 
 use gpui_kit::{
-    App, Bounds, ElementId, Hsla, ImageSource, InteractiveElement as _, IntoElement, ObjectFit,
-    ParentElement as _, PathBuilder, Pixels, Point, RenderOnce, SharedString, StyleRefinement,
-    Styled, StyledImage as _, TestSupportExt as _, Window,
+    App, ElementId, Hsla, ImageSource, InteractiveElement as _, IntoElement, ObjectFit,
+    ParentElement as _, Pixels, RenderOnce, SharedString, StyleRefinement, Styled,
+    StyledImage as _, TestSupportExt as _, Window,
     assets::IconName,
     base::{StyledExt as _, transition},
-    canvas, div, img, point,
+    div, img,
     prelude::FluentBuilder as _,
 };
 
-use crate::{ActiveTheme as _, Button, ButtonSize, Icon, Theme, ThemeTokens};
+use crate::{ActiveTheme as _, Button, ButtonSize, Icon, Progress, Theme};
 
 type DismissHandler = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 
-/// What kind of file an attachment is, which decides its icon and tint.
+/// What kind of file an attachment is, which decides its icon.
 ///
 /// The kinds come from one table: each row holds the kind's
-/// icon, its tint, its label, and the file extensions that map to it. A
+/// icon, its label, and the file extensions that map to it. A
 /// new kind is a row, not a new `match` arm.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -44,7 +44,6 @@ struct KindRow {
     kind: AttachmentKind,
     label: &'static str,
     icon: IconName,
-    tint: fn(&ThemeTokens) -> Hsla,
     extensions: &'static [&'static str],
 }
 
@@ -55,7 +54,6 @@ const KINDS: [KindRow; 7] = [
         kind: AttachmentKind::Image,
         label: "Image",
         icon: IconName::Image,
-        tint: |theme| theme.kind_document,
         extensions: &[
             "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic", "avif",
         ],
@@ -64,28 +62,24 @@ const KINDS: [KindRow; 7] = [
         kind: AttachmentKind::Document,
         label: "Document",
         icon: IconName::FileText,
-        tint: |theme| theme.kind_document,
         extensions: &["txt", "md", "pdf", "doc", "docx", "rtf", "odt", "pages"],
     },
     KindRow {
         kind: AttachmentKind::Spreadsheet,
         label: "Spreadsheet",
         icon: IconName::FileSpreadsheet,
-        tint: |theme| theme.kind_spreadsheet,
         extensions: &["csv", "tsv", "xls", "xlsx", "ods", "numbers"],
     },
     KindRow {
         kind: AttachmentKind::Presentation,
         label: "Presentation",
         icon: IconName::Presentation,
-        tint: |theme| theme.kind_presentation,
         extensions: &["ppt", "pptx", "odp", "key"],
     },
     KindRow {
         kind: AttachmentKind::Code,
         label: "Code",
         icon: IconName::FileCode,
-        tint: |theme| theme.kind_code,
         extensions: &[
             "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "h", "cpp", "swift", "rb",
             "sh", "json", "toml", "yaml", "yml", "html", "css",
@@ -95,14 +89,12 @@ const KINDS: [KindRow; 7] = [
         kind: AttachmentKind::Video,
         label: "Video",
         icon: IconName::Video,
-        tint: |theme| theme.kind_video,
         extensions: &["mp4", "mov", "mkv", "webm", "avi", "m4v"],
     },
     KindRow {
         kind: AttachmentKind::Other,
         label: "File",
         icon: IconName::File,
-        tint: |theme| theme.kind_document,
         extensions: &[],
     },
 ];
@@ -133,11 +125,6 @@ impl AttachmentKind {
     /// The icon of the kind.
     pub fn icon(self) -> IconName {
         self.row().icon
-    }
-
-    /// The color of the kind's icon in `theme`.
-    pub fn tint(self, theme: &ThemeTokens) -> Hsla {
-        (self.row().tint)(theme)
     }
 
     /// A short name for the kind, such as "Spreadsheet".
@@ -249,82 +236,17 @@ impl Attachment {
     }
 }
 
-/// How far along `outline` the corner of a rounded rectangle starts to
-/// bend.
-const CORNER_STEPS: usize = 8;
-
-/// The outline of a rounded rectangle from the middle of its top edge,
-/// clockwise, as points: straight sides and eight points per corner.
-fn outline(bounds: Bounds<Pixels>, radius: Pixels) -> Vec<Point<Pixels>> {
-    let radius = radius
-        .min(bounds.size.width / 2.)
-        .min(bounds.size.height / 2.);
-    let (left, top, right, bottom) = (bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
-    let mut points = vec![point(bounds.center().x, top)];
-    let corners = [
-        (point(right - radius, top + radius), -FRAC_PI_2),
-        (point(right - radius, bottom - radius), 0.),
-        (point(left + radius, bottom - radius), FRAC_PI_2),
-        (point(left + radius, top + radius), 2. * FRAC_PI_2),
-    ];
-    for (center, start) in corners {
-        for step in 0..=CORNER_STEPS {
-            let angle = start + FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
-            points.push(point(
-                center.x + radius * angle.cos(),
-                center.y + radius * angle.sin(),
-            ));
-        }
-    }
-    points.push(point(bounds.center().x, top));
-    points
-}
-
-/// The first `fraction` of an outline's length, as points ending exactly
-/// at that length.
-fn outline_prefix(points: &[Point<Pixels>], fraction: f32) -> Vec<Point<Pixels>> {
-    let length = |a: Point<Pixels>, b: Point<Pixels>| {
-        let (dx, dy) = (f32::from(b.x - a.x), f32::from(b.y - a.y));
-        (dx * dx + dy * dy).sqrt()
-    };
-    let total: f32 = points.windows(2).map(|pair| length(pair[0], pair[1])).sum();
-    let mut remaining = total * fraction.clamp(0., 1.);
-    let mut prefix = vec![points[0]];
-    if remaining <= 0. {
-        return prefix;
-    }
-    for pair in points.windows(2) {
-        let segment = length(pair[0], pair[1]);
-        if segment >= remaining {
-            let t = if segment > 0. {
-                remaining / segment
-            } else {
-                0.
-            };
-            prefix.push(point(
-                pair[0].x + (pair[1].x - pair[0].x) * t,
-                pair[0].y + (pair[1].y - pair[0].y) * t,
-            ));
-            return prefix;
-        }
-        remaining -= segment;
-        prefix.push(pair[1]);
-    }
-    prefix
-}
-
 /// The look of a tile, read from the theme in one borrow.
 struct Look {
     side: Pixels,
-    icon: Pixels,
-    text: Pixels,
-    arc: Pixels,
+    text: gpui_kit::base::TextStyleToken,
     radius: Pixels,
+    radius_full: Pixels,
+    busy_opacity: f32,
     fill: Hsla,
     border: Hsla,
     tint: Hsla,
     name: Hsla,
-    accent: Hsla,
     percent: Hsla,
     frost: Hsla,
     frost_glyph: Hsla,
@@ -332,9 +254,9 @@ struct Look {
 
 /// One tile of the attachment strip: an image thumbnail, or a bordered
 /// file tile with a tinted kind icon and the name. A tile that uploads
-/// draws an accent arc around its border and a percent counter at its top
-/// right; when the upload ends, the counter fades out as the dismiss
-/// button fades in, and the arc fades.
+/// draws a circular [`Progress`](crate::Progress) at its top left and a
+/// percent counter at its top right; when the upload ends, the counter and
+/// the ring fade out as the dismiss button fades in.
 ///
 /// ```
 /// use gpui_cn::{Attachment, AttachmentTile};
@@ -393,15 +315,14 @@ impl RenderOnce for AttachmentTile {
             let metrics = &theme.metrics;
             Look {
                 side: metrics.attachment_tile,
-                icon: metrics.attachment_icon,
-                text: metrics.badge_count_text,
-                arc: metrics.attachment_arc,
+                text: theme.base.typography.xs,
                 radius: theme.radius_lg(),
+                radius_full: theme.radius_full(),
+                busy_opacity: theme.disabled_opacity,
                 fill: theme.field,
                 border: theme.field_border,
-                tint: kind.tint(theme),
+                tint: theme.muted_foreground(),
                 name: theme.muted_foreground(),
-                accent: theme.info,
                 percent: theme.foreground(),
                 frost: theme.scrim,
                 frost_glyph: theme.solid_foreground,
@@ -415,17 +336,6 @@ impl RenderOnce for AttachmentTile {
             child_id("uploading"),
             if uploading { 1. } else { 0. },
             slide.clone(),
-            window,
-            cx,
-        );
-        let fraction = transition(
-            child_id("arc"),
-            match status {
-                AttachmentStatus::Uploading(value) => value / 100.,
-                AttachmentStatus::Queued => 0.,
-                AttachmentStatus::Ready => 1.,
-            },
-            slide,
             window,
             cx,
         );
@@ -452,7 +362,7 @@ impl RenderOnce for AttachmentTile {
                 .right_1()
                 .p_0()
                 .size_4()
-                .rounded_full()
+                .rounded(look.radius_full)
                 .bg(fill)
                 .text_color(glyph)
                 .opacity(1. - shown)
@@ -465,7 +375,8 @@ impl RenderOnce for AttachmentTile {
             .relative()
             .flex_shrink_0()
             .size(look.side)
-            .text_size(look.text)
+            .text_size(look.text.size)
+            .line_height(look.text.line_height)
             .refine_style(&self.style)
             .child(
                 div()
@@ -481,66 +392,50 @@ impl RenderOnce for AttachmentTile {
                                 .size_full()
                                 .rounded(look.radius)
                                 .object_fit(ObjectFit::Cover)
-                                .when(busy, |this| this.opacity(0.6)),
+                                .when(busy, |this| this.opacity(look.busy_opacity)),
                         ),
-                        None => this.child(
-                            div()
-                                .size_full()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_between()
-                                .py_1()
-                                .child(
-                                    div().flex().flex_1().items_center().child(
-                                        Icon::from(kind.icon())
-                                            .size(look.icon)
-                                            .text_color(look.tint),
+                        None => {
+                            this.child(
+                                div()
+                                    .size_full()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_between()
+                                    .py_1()
+                                    .child(div().flex().flex_1().items_center().child(
+                                        Icon::from(kind.icon()).size_5().text_color(look.tint),
+                                    ))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .px_1()
+                                            .truncate()
+                                            .text_center()
+                                            .text_color(look.name)
+                                            .when(busy, |this| this.opacity(look.busy_opacity))
+                                            .child(attachment.name.clone()),
                                     ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .px_1()
-                                        .truncate()
-                                        .text_center()
-                                        .text_color(look.name)
-                                        .when(busy, |this| this.opacity(0.6))
-                                        .child(attachment.name.clone()),
-                                ),
-                        ),
+                            )
+                        }
                     }),
             )
             .when(shown > 0.001, |this| {
-                let accent = look.accent.opacity(shown);
-                let (arc, radius) = (look.arc, look.radius);
                 this.child(
-                    canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, _| {
-                            let inset = arc / 2.;
-                            let bounds = Bounds {
-                                origin: bounds.origin + point(inset, inset),
-                                size: bounds.size - gpui_kit::size(arc, arc),
-                            };
-                            let points = outline_prefix(&outline(bounds, radius - inset), fraction);
-                            if points.len() < 2 {
-                                return;
-                            }
-                            let mut path = PathBuilder::stroke(arc);
-                            path.move_to(points[0]);
-                            for next in &points[1..] {
-                                path.line_to(*next);
-                            }
-                            if let Ok(path) = path.build() {
-                                window.paint_path(path, accent);
-                            }
-                        },
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
+                    div()
+                        .id(child_id("arc"))
+                        .test_support()
+                        .absolute()
+                        .top_1()
+                        .left_1()
+                        .opacity(shown)
+                        .text_color(look.percent)
+                        .child(
+                            Progress::new(child_id("ring"))
+                                .circular()
+                                .value(percent)
+                                .accessibility_label("Upload progress"),
+                        ),
                 )
                 .child(
                     div()
@@ -647,7 +542,6 @@ impl RenderOnce for AttachmentStrip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{px, size};
 
     #[test]
     fn extensions_choose_the_kind_without_regard_to_case() {
@@ -720,29 +614,5 @@ mod tests {
     fn an_image_source_makes_an_image_attachment() {
         let image = Attachment::new("a", "a.bin").image(ImageSource::from("x.png"));
         assert_eq!(image.kind_of(), AttachmentKind::Image);
-    }
-
-    #[test]
-    fn the_outline_starts_at_the_top_middle_and_the_prefix_ends_where_the_length_does() {
-        let bounds = Bounds {
-            origin: point(px(0.), px(0.)),
-            size: size(px(56.), px(56.)),
-        };
-        let points = outline(bounds, px(10.));
-        assert_eq!(points[0], point(px(28.), px(0.)));
-        assert_eq!(points[points.len() - 1], points[0], "a closed loop");
-        let quarter = outline_prefix(&points, 0.25);
-        let end = quarter[quarter.len() - 1];
-        assert!(
-            end.x > px(50.) && end.y > px(10.) && end.y < px(46.),
-            "down the right edge: {end:?}"
-        );
-        let half = outline_prefix(&points, 0.5);
-        let end = half[half.len() - 1];
-        assert!((end.x - px(28.)).abs() < px(0.5) && (end.y - px(56.)).abs() < px(0.5));
-        assert_eq!(outline_prefix(&points, 0.), vec![points[0]]);
-        let whole = outline_prefix(&points, 1.);
-        let end = whole[whole.len() - 1];
-        assert!((end.x - px(28.)).abs() < px(0.01) && end.y.abs() < px(0.01));
     }
 }

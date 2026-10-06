@@ -45,3 +45,29 @@ fn the_permission_set_is_the_claude_code_style_one() {
         .collect();
     assert_eq!(ids, ["default", "accept-edits", "plan", "bypass"]);
 }
+
+#[test]
+fn no_provider_mark_is_a_glyph_the_picker_uses_for_a_control() {
+    use gpui_cn::gpui_kit::assets::IconName;
+    for mark in [
+        gpui_cn_story::agents::CODEX_ICON,
+        gpui_cn_story::agents::CLAUDE_ICON,
+    ] {
+        for control in [
+            IconName::Star,
+            IconName::StarFill,
+            IconName::Heart,
+            IconName::Check,
+            IconName::ChevronDown,
+            IconName::ChevronUp,
+            IconName::ChevronRight,
+            IconName::Search,
+        ] {
+            assert_ne!(mark, control);
+        }
+    }
+    assert_ne!(
+        gpui_cn_story::agents::CODEX_ICON,
+        gpui_cn_story::agents::CLAUDE_ICON
+    );
+}

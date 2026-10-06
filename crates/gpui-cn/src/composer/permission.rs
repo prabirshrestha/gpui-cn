@@ -5,13 +5,19 @@ use gpui_kit::{
     base::{Align, Selectable, StyledExt as _},
     div,
     prelude::FluentBuilder as _,
+    px, rems,
 };
 
 use crate::{
     ActiveTheme as _, Button, ButtonSize, DropdownMenu, Icon, MenuEntry, MenuEvent, MenuItem,
     MenuState,
+    collapse::{self, Need},
     menu::{MenuLook, label_block, line_slot, row_line},
 };
+
+/// How many characters of its label the permission trigger keeps before it
+/// becomes an icon.
+const MIN_LABEL_CHARS: usize = 6;
 
 /// The key of the menu row that reports [`PermissionEvent::LearnMore`].
 const LEARN_MORE: &str = "learn-more";
@@ -282,6 +288,7 @@ pub struct PermissionMenu {
     trigger: Option<TriggerBuilder>,
     learn_more: bool,
     align: Align,
+    icon_only: bool,
     style: StyleRefinement,
 }
 
@@ -294,6 +301,7 @@ impl PermissionMenu {
             trigger: None,
             learn_more: true,
             align: Align::Start,
+            icon_only: false,
             style: StyleRefinement::default(),
         }
     }
@@ -316,6 +324,35 @@ impl PermissionMenu {
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
+    }
+
+    /// Shows the icon of the chosen mode alone, with its label in a
+    /// tooltip and no chevron, as a narrow toolbar does. A mode with no
+    /// icon ignores it.
+    pub fn icon_only(mut self, icon_only: bool) -> Self {
+        self.icon_only = icon_only;
+        self
+    }
+
+    /// What the trigger needs of a row: its width with the label at the
+    /// minimum, and its width as an icon alone.
+    pub(crate) fn need(&self, window: &Window, cx: &App) -> Need {
+        let theme = cx.theme();
+        let padding = theme.metrics.control_padding_sm;
+        let rem = window.rem_size();
+        let gap = rems(0.375).to_pixels(rem);
+        let (label, has_icon) = match self.state.read(cx).selected_mode() {
+            Some(mode) => (mode.label.clone(), mode.icon.is_some()),
+            None => ("Permission".into(), false),
+        };
+        let label = collapse::text_width(&label, window)
+            .min(collapse::min_label_width(window, MIN_LABEL_CHARS));
+        let icon = rems(1.).to_pixels(rem);
+        let lead = if has_icon { icon + gap } else { px(0.) };
+        Need::flexible(
+            padding * 2. + lead + label,
+            has_icon.then_some(theme.metrics.control_sm),
+        )
     }
 }
 
@@ -360,7 +397,7 @@ fn entries(state: &Entity<PermissionState>, learn_more: bool, cx: &App) -> Vec<M
         MenuItem::new(mode.id.clone(), mode.label.clone())
             .render(move |_, window, cx| {
                 let look = MenuLook::of(cx.theme(), window.rem_size());
-                let warning = cx.theme().warning_text;
+                let warning = cx.theme().warning;
                 let icon_color = match tone {
                     PermissionTone::Warning => warning,
                     PermissionTone::Normal => look.muted_foreground,
@@ -396,12 +433,17 @@ fn entries(state: &Entity<PermissionState>, learn_more: bool, cx: &App) -> Vec<M
 }
 
 impl RenderOnce for PermissionMenu {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let menu_state = self.state.read(cx).menu.clone();
         let learn_more = self.learn_more;
         let state = self.state.clone();
+        let need = self.need(window, cx);
         let menu = DropdownMenu::new(self.id.clone(), &menu_state)
             .align(self.align)
+            .min_w(match (self.icon_only, need.icon_only) {
+                (true, Some(icon_only)) => icon_only,
+                _ => need.min,
+            })
             .refine_style(&self.style)
             .items(move |_, cx| entries(&state, learn_more, cx));
         match self.trigger {
@@ -413,18 +455,38 @@ impl RenderOnce for PermissionMenu {
                     .ghost()
                     .size(ButtonSize::Sm)
                     .flex_shrink(1.)
-                    .min_w_0()
                     .accessibility_label("Permission mode");
                 let theme = cx.theme();
-                let (warning, muted) = (theme.warning_text, theme.composer_muted);
+                let (warning, muted) = (theme.warning, theme.muted_foreground());
                 let button = match self.state.read(cx).selected_mode().cloned() {
-                    Some(mode) => button
-                        .label(mode.label.clone())
-                        .text_color(match mode.tone {
+                    Some(mode) => {
+                        let color = match mode.tone {
                             PermissionTone::Warning => warning,
                             PermissionTone::Normal => muted,
-                        })
-                        .when_some(mode.icon.clone(), |button, icon| button.icon(icon)),
+                        };
+                        match mode.icon.clone() {
+                            Some(icon) if self.icon_only => button
+                                .icon(icon)
+                                .text_color(color)
+                                .tooltip(mode.label.clone()),
+                            icon => {
+                                let keep = collapse::text_width(&mode.label, window)
+                                    .min(collapse::min_label_width(window, MIN_LABEL_CHARS));
+                                button
+                                    .when_some(icon, |button, icon| button.icon(icon))
+                                    .child(
+                                        div()
+                                            .min_w(keep)
+                                            .flex_shrink(1.)
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .child(mode.label.clone()),
+                                    )
+                                    .text_color(color)
+                            }
+                        }
+                    }
                     None => button.label("Permission").text_color(muted),
                 };
                 menu.trigger(button).into_any_element()

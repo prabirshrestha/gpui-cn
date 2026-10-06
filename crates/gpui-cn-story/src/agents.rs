@@ -17,12 +17,22 @@ pub const DEFAULT_MODEL: &str = "gpt-5.6-mini";
 /// The models starred at the start: one of each provider.
 pub const FAVORITES: [&str; 2] = ["gpt-5.6-terra", "sonnet-5.5"];
 
+/// The mark of the Codex provider: a terminal.
+pub const CODEX_ICON: IconName = IconName::SquareTerminal;
+
+/// The mark of the Claude provider: an asterisk. No provider mark is a
+/// star, a heart, a check, a chevron, or a search glyph, which are the
+/// picker's own controls.
+pub const CLAUDE_ICON: IconName = IconName::Asterisk;
+
 /// The two providers: Codex and Claude. This is the one catalog every
-/// composer and model picker sample in the story uses.
+/// composer and model picker sample in the story uses. Each provider has a
+/// stand-in Lucide mark: the picker takes any icon, and an application
+/// passes its own brand mark there.
 pub fn catalog() -> Vec<ModelProvider> {
     vec![
         ModelProvider::new("codex", "Codex")
-            .icon(IconName::SquareTerminal)
+            .icon(CODEX_ICON)
             .models([
                 ModelEntry::new("gpt-5.6-mini", "GPT-5.6 Mini").effort(true),
                 ModelEntry::new("gpt-5.6-terra", "GPT-5.6 Terra").effort(true),
@@ -36,7 +46,7 @@ pub fn catalog() -> Vec<ModelProvider> {
                     .legacy(true),
             ]),
         ModelProvider::new("claude", "Claude")
-            .icon(IconName::Star)
+            .icon(CLAUDE_ICON)
             .models([
                 ModelEntry::new("fable-5.1", "Fable 5.1").effort(true),
                 ModelEntry::new("opus-5.5", "Opus 5.5").effort(true),
