@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use gpui_cn::{
-    Attachment, AttachmentStrip, Button, ButtonSize, Composer, ComposerEvent, ComposerState,
-    ComposerStatusTab, ModelEntry, ModelPicker, ModelPickerState, ModelProvider, PermissionMenu,
-    PermissionMode, PermissionState, gpui_kit::assets::IconName,
+    ActiveTheme as _, Attachment, AttachmentStrip, Button, ButtonSize, Composer, ComposerEvent,
+    ComposerState, ComposerStatusTab, ModelEntry, ModelPicker, ModelPickerState, ModelProvider,
+    PermissionMenu, PermissionMode, PermissionState, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, Image, ImageFormat, ImageSource, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Window, div, px,
 };
 
-use crate::{Story, note, page, section};
+use crate::{Story, agents, note, page, section};
 
 /// A checkerboard drawn as SVG, so the story needs no picture file.
 const CHECKER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#5b8def"/><rect width="1" height="1" fill="#8fb1f7"/><rect x="2" width="1" height="1" fill="#8fb1f7"/><rect y="1" x="1" width="1" height="1" fill="#8fb1f7"/><rect y="1" x="3" width="1" height="1" fill="#8fb1f7"/><rect y="2" width="1" height="1" fill="#8fb1f7"/><rect y="2" x="2" width="1" height="1" fill="#8fb1f7"/><rect y="3" x="1" width="1" height="1" fill="#8fb1f7"/><rect y="3" x="3" width="1" height="1" fill="#8fb1f7"/></svg>"##;
@@ -34,6 +34,7 @@ pub struct ComposerStory {
     rich: Entity<ComposerState>,
     custom: Entity<ComposerState>,
     log: SharedString,
+    agent: Entity<ComposerState>,
 }
 
 impl ComposerStory {
@@ -47,6 +48,10 @@ impl ComposerStory {
                     ModelEntry::new("orbit-mini", "Orbit Mini"),
                     ModelEntry::new("orbit-pro", "Orbit Pro").effort(true),
                     ModelEntry::new("orbit-max", "Orbit Max").effort(true),
+                    ModelEntry::new("orbit-lite", "Orbit Lite"),
+                    ModelEntry::new("orbit-edge", "Orbit Edge"),
+                    ModelEntry::new("orbit-old", "Orbit 1"),
+                    ModelEntry::new("orbit-older", "Orbit 0"),
                 ]),
             ModelProvider::new("lumen", "Lumen")
                 .icon(IconName::Sun)
@@ -63,6 +68,21 @@ impl ComposerStory {
             ModelProvider::new("tide", "Tide")
                 .icon(IconName::Globe)
                 .models([ModelEntry::new("tide-s", "Tide S")]),
+            ModelProvider::new("ember", "Ember")
+                .icon(IconName::Heart)
+                .models([ModelEntry::new("ember-1", "Ember One")]),
+            ModelProvider::new("dusk", "Dusk")
+                .icon(IconName::Moon)
+                .models([ModelEntry::new("dusk-1", "Dusk One")]),
+            ModelProvider::new("grid", "Grid")
+                .icon(IconName::Network)
+                .models([ModelEntry::new("grid-1", "Grid One")]),
+            ModelProvider::new("chip", "Chip")
+                .icon(IconName::Cpu)
+                .models([ModelEntry::new("chip-1", "Chip One")]),
+            ModelProvider::new("paint", "Paint")
+                .icon(IconName::Palette)
+                .models([ModelEntry::new("paint-1", "Paint One")]),
         ]
     }
 
@@ -144,8 +164,11 @@ impl Story for ComposerStory {
                 )
             });
             let basic = cx.new(|cx| ComposerState::new(window, cx));
+            let rich_models = cx.new(|cx| {
+                ModelPickerState::new(Self::catalog(), window, cx).with_selected("orbit-pro")
+            });
             let rich =
-                cx.new(|cx| ComposerState::new(window, cx).with_models(models.clone(), window, cx));
+                cx.new(|cx| ComposerState::new(window, cx).with_models(rich_models, window, cx));
             rich.update(cx, |state, cx| {
                 for attachment in [
                     Attachment::new("photo", "photo.png").image(checker()),
@@ -169,6 +192,9 @@ impl Story for ComposerStory {
                 cx.observe(composer, |_: &mut Self, _, cx| cx.notify())
                     .detach();
             }
+            let agent = agents::composer(window, cx);
+            cx.observe(&agent, |_: &mut Self, _, cx| cx.notify())
+                .detach();
             cx.observe(&models, |_, _, cx| cx.notify()).detach();
             cx.observe(&custom_models, |_, _, cx| cx.notify()).detach();
             cx.observe(&permission, |_, _, cx| cx.notify()).detach();
@@ -184,6 +210,7 @@ impl Story for ComposerStory {
                 rich,
                 custom,
                 log: "Nothing yet. Type a prompt and press Enter.".into(),
+                agent,
             }
         })
         .into()
@@ -211,6 +238,30 @@ impl Render for ComposerStory {
         let (model, custom_model) = (chosen(&self.models), chosen(&self.custom_models));
         let log = self.log.clone();
         page([
+            section(
+                "Coding agents",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .w(px(560.))
+                    .child(note(
+                        "The model picker's rail switches between the three providers of \
+                         the example catalog, and the permission menu holds a Claude Code \
+                         style set. Both are plain data in the story, and the application's \
+                         to change.",
+                        cx,
+                    ))
+                    .child(
+                        Composer::new("composer-agent", &self.agent).status(
+                            ComposerStatusTab::new("composer-agent-status")
+                                .branch("feature/composer")
+                                .folder("gpui-cn")
+                                .context(57.),
+                        ),
+                    ),
+            )
+            .into_any_element(),
             section(
                 "Composer",
                 div()
@@ -368,6 +419,31 @@ impl Render for ComposerStory {
                         ComposerStatusTab::new("status-custom")
                             .branch("feature/composer")
                             .context(92.),
+                    )
+                    .child(note(
+                        "Over a card stub the tab keeps its own 34px and the card's hairline \
+                         covers its bottom edge.",
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                ComposerStatusTab::new("status-joined")
+                                    .branch("Main")
+                                    .folder("project-sea")
+                                    .context(57.),
+                            )
+                            .child(
+                                div()
+                                    .h(px(64.))
+                                    .mt(-px(1.))
+                                    .rounded(cx.theme().metrics.composer_radius)
+                                    .border_1()
+                                    .border_color(cx.theme().border())
+                                    .bg(cx.theme().base.colors.surface),
+                            ),
                     ),
             )
             .into_any_element(),

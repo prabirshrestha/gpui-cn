@@ -21,6 +21,13 @@ fn setup(cx: &mut TestAppContext) -> (WindowHandle<gpui_kit::base::Root>, Entity
     (handle, gallery.unwrap())
 }
 
+fn index_of(title: &str) -> usize {
+    gpui_cn_story::stories()
+        .iter()
+        .position(|story| story.title() == title)
+        .expect("a story with that title")
+}
+
 fn click(
     handle: &WindowHandle<gpui_kit::base::Root>,
     cx: &mut TestAppContext,
@@ -54,36 +61,36 @@ fn selecting_stories_builds_a_history_that_back_and_forward_walk(cx: &mut TestAp
 
     // Click two stories in the sidebar. A row's push is deferred past its
     // click, so each click gets its own update.
-    click(&handle, cx, gpui_kit::ElementId::from(("story", 2usize)));
-    assert_eq!(state(&gallery, cx), (Some(2), 2, 0));
-    click(&handle, cx, gpui_kit::ElementId::from(("story", 4usize)));
-    assert_eq!(state(&gallery, cx), (Some(4), 3, 0));
+    click(&handle, cx, gpui_cn_story::story_row("Menu"));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Menu")), 2, 0));
+    click(&handle, cx, gpui_cn_story::story_row("Badge"));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Badge")), 3, 0));
 
     // Selecting the story already showing pushes nothing.
     cx.update_window(handle.into(), |_, window, cx| {
         gallery.update(cx, |gallery, cx| {
-            gallery.open_story(4, NavMotion::Animated, window, cx)
+            gallery.open_story(index_of("Badge"), NavMotion::Animated, window, cx)
         });
     })
     .unwrap();
-    assert_eq!(state(&gallery, cx), (Some(4), 3, 0));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Badge")), 3, 0));
 
     // Back walks the stories, forward returns.
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
-    assert_eq!(state(&gallery, cx), (Some(2), 2, 1));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Menu")), 2, 1));
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
     assert_eq!(state(&gallery, cx), (Some(0), 1, 2));
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
     assert_eq!(state(&gallery, cx), (Some(0), 1, 2), "the root stays");
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_forward(cx)));
-    assert_eq!(state(&gallery, cx), (Some(2), 2, 1));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Menu")), 2, 1));
 
     // Settings is a page like the others; a new push drops the forward
     // history.
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_settings(cx)));
     assert_eq!(state(&gallery, cx), (None, 3, 0));
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
-    assert_eq!(state(&gallery, cx), (Some(2), 2, 1));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Menu")), 2, 1));
 }
 
 #[gpui_kit::test]
@@ -92,18 +99,18 @@ fn the_title_bar_arrows_drive_the_history(cx: &mut TestAppContext) {
     let arrow = |name: &'static str| {
         gpui_kit::ElementId::NamedChild(gpui_kit::ElementId::from("nav").into(), name.into())
     };
-    click(&handle, cx, gpui_kit::ElementId::from(("story", 1usize)));
-    assert_eq!(state(&gallery, cx), (Some(1), 2, 0));
+    click(&handle, cx, gpui_cn_story::story_row("Command"));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Command")), 2, 0));
     click(&handle, cx, arrow("back"));
     assert_eq!(state(&gallery, cx), (Some(0), 1, 1));
     click(&handle, cx, arrow("forward"));
-    assert_eq!(state(&gallery, cx), (Some(1), 2, 0));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Command")), 2, 0));
 }
 
 #[gpui_kit::test]
 fn the_arrows_stay_in_the_title_bar_while_the_sidebar_is_closed(cx: &mut TestAppContext) {
     let (handle, gallery) = setup(cx);
-    click(&handle, cx, gpui_kit::ElementId::from(("story", 1usize)));
+    click(&handle, cx, gpui_cn_story::story_row("Command"));
     cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.toggle_sidebar(cx)));
     let arrow = |name: &'static str| {
         gpui_kit::ElementId::NamedChild(gpui_kit::ElementId::from("nav").into(), name.into())
@@ -111,7 +118,7 @@ fn the_arrows_stay_in_the_title_bar_while_the_sidebar_is_closed(cx: &mut TestApp
     click(&handle, cx, arrow("back"));
     assert_eq!(state(&gallery, cx), (Some(0), 1, 1));
     click(&handle, cx, arrow("forward"));
-    assert_eq!(state(&gallery, cx), (Some(1), 2, 0));
+    assert_eq!(state(&gallery, cx), (Some(index_of("Command")), 2, 0));
 }
 
 #[gpui_kit::test]
@@ -205,13 +212,13 @@ fn picking_a_story_keeps_the_sidebar_scrolled_where_it_was(cx: &mut TestAppConte
     });
     let mut gallery = None;
     // Short enough that the story list scrolls.
-    let handle = cx.open_window(size(px(1100.), px(420.)), |window, cx| {
+    let handle = cx.open_window(size(px(1100.), px(500.)), |window, cx| {
         let view = cx.new(|cx| Gallery::new(window, cx));
         gallery = Some(view.clone());
         gpui_kit::base::Root::new(view, window, cx)
     });
     let gallery = gallery.unwrap();
-    let row = gpui_kit::ElementId::from(("story", 12usize));
+    let row = gpui_cn_story::story_row("Spinner");
     let scrolled = cx
         .update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -228,7 +235,7 @@ fn picking_a_story_keeps_the_sidebar_scrolled_where_it_was(cx: &mut TestAppConte
         })
         .unwrap();
     click(&handle, cx, row.clone());
-    assert_eq!(state(&gallery, cx).0, Some(12));
+    assert_eq!(state(&gallery, cx).0, Some(index_of("Spinner")));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(

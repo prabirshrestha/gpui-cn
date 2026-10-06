@@ -13,7 +13,7 @@ use gpui_kit::{
     },
     div,
     prelude::FluentBuilder as _,
-    px, radians,
+    radians,
 };
 
 use crate::{
@@ -172,6 +172,7 @@ pub struct ModelPickerState {
     effort: u8,
     active: SharedString,
     search: Entity<InputState>,
+    focus: FocusHandle,
     slider: Entity<SliderState>,
     open: bool,
     effort_open: bool,
@@ -258,6 +259,7 @@ impl ModelPickerState {
             selected: None,
             effort: DEFAULT_EFFORT,
             search,
+            focus: cx.focus_handle(),
             slider,
             open: false,
             effort_open: false,
@@ -547,11 +549,19 @@ impl RenderOnce for ModelPicker {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let id = self.id;
         let state = self.state;
-        let (open, search_focus) = {
+        let (open, panel_focus) = {
             let read = state.read(cx);
-            (read.open, read.search.read(cx).focus_handle(cx))
+            (read.open, read.focus.clone())
         };
-        let width = cx.theme().metrics.model_picker_width;
+        let (width, radius, muted, text) = {
+            let theme = cx.theme();
+            (
+                theme.metrics.model_picker_width,
+                theme.metrics.model_picker_radius,
+                theme.muted_foreground(),
+                theme.text_composer,
+            )
+        };
 
         let trigger = match self.trigger {
             Some(build) => build(open, state.read(cx)),
@@ -567,6 +577,8 @@ impl RenderOnce for ModelPicker {
                     .size(ButtonSize::Sm)
                     .label(label)
                     .trailing_icon(chevron)
+                    .text_color(muted)
+                    .text_size(text.size)
                     .selected(open)
                     .into_any_element()
             }
@@ -585,10 +597,15 @@ impl RenderOnce for ModelPicker {
             .open(open)
             .on_open_change(on_open_change)
             .align(self.align)
-            .track_focus(&search_focus)
+            .track_focus(&panel_focus)
             .trigger(Slot { trigger, open })
             .content(content)
             .w(width)
+            .p_0()
+            .text_size(text.size)
+            .line_height(text.line_height)
+            .rounded(radius)
+            .overflow_hidden()
             .refine_style(&self.style)
     }
 }
@@ -633,6 +650,7 @@ fn panel(
     cx: &mut App,
 ) -> gpui_kit::AnyElement {
     let look = MenuLook::of(cx.theme(), window.rem_size());
+    let search_width = cx.theme().metrics.model_search_width;
     let (rail_width, row_height, list_height, card_height) = {
         let metrics = &cx.theme().metrics;
         (
@@ -642,10 +660,23 @@ fn panel(
             metrics.effort_card_height,
         )
     };
+    let (header_height, panel_radius, rail_fill, rail_selected, chip_fill, spacing, row_radius) = {
+        let theme = cx.theme();
+        (
+            theme.metrics.model_header,
+            theme.metrics.model_picker_radius,
+            theme.model_rail,
+            theme.model_rail_selected,
+            theme.model_chip,
+            theme.base.spacing.sm,
+            theme.radius_lg(),
+        )
+    };
     let touch = cx.theme().touch;
     let read = state.read(cx);
     let query = read.query(cx);
     let search = read.search.clone();
+    let read_focus = read.focus.clone();
     let slider = read.slider.clone();
     let effort_open = read.effort_open;
     let selected = read.selected.clone();
@@ -657,6 +688,7 @@ fn panel(
         .map(|(p, m)| (providers[p].clone(), providers[p].models[m].clone()))
         .collect();
     let search_focus = search.read(cx).focus_handle(cx);
+    let panel_focus = read_focus.clone();
 
     if let Some(level) = effort {
         let current = slider.read(cx).value().end();
@@ -667,19 +699,20 @@ fn panel(
         }
     }
 
-    let rail = ScrollArea::new(child(id, "rail"))
-        .w(rail_width)
-        .h_full()
-        .flex_shrink_0()
+    let rail_marks = ScrollArea::new(child(id, "rail"))
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
         .child(
             div()
                 .flex()
                 .flex_col()
-                .items_center()
                 .gap_1()
                 .p_1()
                 .children(providers.iter().map(|provider| {
                     let (state, provider_id) = (state.clone(), provider.id.clone());
+                    let current = provider.id == active && query.trim().is_empty();
                     Button::new(ElementId::NamedChild(
                         child(id, "provider").into(),
                         provider.id.clone(),
@@ -689,10 +722,10 @@ fn panel(
                     .icon(provider.icon.clone())
                     .accessibility_label(provider.name.clone())
                     .tooltip(provider.name.clone())
-                    .selected(provider.id == active && query.trim().is_empty())
-                    .when(provider.id == active && query.trim().is_empty(), |button| {
-                        button.bg(look.accent)
-                    })
+                    .w_full()
+                    .text_color(look.muted_foreground)
+                    .selected(current)
+                    .when(current, |button| button.bg(rail_selected))
                     .on_click(move |_, window, cx| {
                         let provider_id = provider_id.clone();
                         state.update(cx, |state, cx| {
@@ -701,6 +734,13 @@ fn panel(
                     })
                 })),
         );
+    let rail = div()
+        .relative()
+        .flex_shrink_0()
+        .w(rail_width)
+        .bg(rail_fill)
+        .rounded_l(panel_radius - gpui_kit::px(1.))
+        .child(rail_marks);
 
     let effort_card = effort_open && effort.is_some();
     let model_rows = rows.iter().flat_map(|(provider, model)| {
@@ -718,8 +758,10 @@ fn panel(
         let chip = (checked && model.effort).then(|| {
             let toggle = state.clone();
             Button::new(child(id, "effort"))
-                .size(ButtonSize::Xs)
+                .size(ButtonSize::Sm)
                 .rounded_full()
+                .bg(chip_fill)
+                .text_color(look.muted_foreground)
                 .label(
                     effort
                         .map(|level| EFFORT_LABELS[usize::from(level)])
@@ -749,7 +791,7 @@ fn panel(
             .w_full()
             .h(row_height)
             .px(look.row_padding)
-            .rounded(look.row_radius)
+            .rounded(row_radius)
             .cursor_pointer()
             .when(checked, |this| this.bg(look.accent))
             .when(!touch, |this| this.hover(|style| style.bg(look.accent)))
@@ -767,6 +809,7 @@ fn panel(
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
+                    .text_color(look.foreground)
                     .child(model.name.clone()),
             )
             .children(chip)
@@ -779,62 +822,68 @@ fn panel(
             .collect::<Vec<_>>()
     });
 
-    let list: gpui_kit::AnyElement = if rows.is_empty() {
-        div()
-            .h(row_height)
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(look.muted_foreground)
-            .child("No models found")
-            .into_any_element()
-    } else {
-        let extra = if effort_card
-            && rows
-                .iter()
-                .any(|(_, model)| selected.as_ref() == Some(&model.id))
-        {
-            card_height
+    let list: gpui_kit::AnyElement = div()
+        .id(child(id, "list"))
+        .test_support()
+        .w_full()
+        .h(list_height)
+        .flex_shrink_0()
+        .child(if rows.is_empty() {
+            div()
+                .id(child(id, "empty"))
+                .test_support()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(look.muted_foreground)
+                .child("No models found")
+                .into_any_element()
         } else {
-            px(0.)
-        };
-        let height = (row_height * rows.len() as f32 + extra).min(list_height);
-        ScrollArea::new(child(id, "models"))
-            .w_full()
-            .h(height)
-            .child(div().flex().flex_col().children(model_rows))
-            .into_any_element()
-    };
+            ScrollArea::new(child(id, "models"))
+                .size_full()
+                .child(div().flex().flex_col().children(model_rows))
+                .into_any_element()
+        })
+        .into_any_element();
 
     let main = div()
         .flex()
         .flex_col()
         .flex_1()
         .min_w_0()
-        .gap_1()
+        .px(spacing)
+        .pb(spacing)
         .child(
             div()
-                .h(row_height)
-                .px(look.row_padding)
                 .flex()
+                .flex_shrink_0()
                 .items_center()
+                .justify_between()
+                .h(header_height)
+                .pl(look.row_padding)
                 .text_color(look.muted_foreground)
-                .child("Models"),
+                .child("Models")
+                .child(
+                    div().w(search_width).child(
+                        Input::new(&search)
+                            .id(child(id, "search"))
+                            .accessibility_label("Quick Search")
+                            .suffix(
+                                Icon::from(IconName::Search)
+                                    .size_4()
+                                    .text_color(look.muted_foreground),
+                            )
+                            .h(header_height - gpui_kit::px(4.))
+                            .min_h(gpui_kit::px(0.))
+                            .px_2()
+                            .text_right()
+                            .bg(gpui_kit::transparent_black())
+                            .border_color(gpui_kit::transparent_black()),
+                    ),
+                ),
         )
-        .child(
-            div().px_1().child(
-                Input::new(&search)
-                    .id(child(id, "search"))
-                    .accessibility_label("Quick Search")
-                    .prefix(
-                        Icon::from(IconName::Search)
-                            .size_4()
-                            .text_color(look.muted_foreground),
-                    )
-                    .cleanable(true),
-            ),
-        )
-        .child(div().p_1().child(list));
+        .child(list);
 
     let key_state = state.clone();
     div()
@@ -842,6 +891,7 @@ fn panel(
         .flex()
         .w_full()
         .items_stretch()
+        .track_focus(&panel_focus)
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key == "/" && !search_focus.is_focused(window) {
                 cx.stop_propagation();

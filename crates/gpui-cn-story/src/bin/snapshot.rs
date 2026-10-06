@@ -87,6 +87,22 @@ mod macos {
         for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
             cx.update(|cx| Theme::change(mode, cx));
             capture(&mut cx, &format!("gallery-{name}"));
+            for (query, label) in [("sel", "filtered"), ("zzzz", "unmatched")] {
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click("story-filter", cx);
+                    window.press("cmd-a", cx);
+                    window.input(query, cx);
+                    window.render_frame(cx);
+                })
+                .expect("filter the story list");
+                capture(&mut cx, &format!("gallery-{name}-{label}"));
+            }
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.press("escape", cx);
+                window.render_frame(cx);
+            })
+            .expect("clear the filter");
             // Closed: off the canvas, the shell's default, then the rail.
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.toggle_sidebar(cx)));
             capture(&mut cx, &format!("gallery-{name}-collapsed"));
@@ -219,6 +235,7 @@ mod macos {
                     capture(&mut cx, &format!("story-{slug}-typed-{name}"));
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
+                        gpui_cn_story::reveal(named("permission", "trigger"), window, cx);
                         window.click(named("permission", "trigger"), cx);
                         window.render_frame(cx);
                         window.render_frame(cx);
@@ -250,6 +267,21 @@ mod macos {
                     capture(&mut cx, &format!("story-{slug}-models-effort-{name}"));
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.press("escape", cx);
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the model picker");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.click(named("models", "trigger"), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.press("/", cx);
+                        window.input("zzzz", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("search the model picker for nothing");
+                    capture(&mut cx, &format!("story-{slug}-models-empty-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
                         window.press("escape", cx);
                         window.render_frame(cx);
                     })
@@ -365,6 +397,8 @@ mod macos {
                     .expect("open the picker");
                     for (suffix, text) in [
                         // The gallery is reused per appearance, so the path is set again.
+                        ("home", Some("~/")),
+                        ("tilde", Some("~/co")),
                         ("open", Some("/home/prabirshrestha/")),
                         ("filtered", Some("/home/prabirshrestha/co")),
                         ("error", Some("/home/prabirshrestha/code/psl/")),

@@ -55,7 +55,7 @@ impl Styled for ContextMeter {
 impl RenderOnce for ContextMeter {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, gap) = (theme.muted_foreground(), theme.base.spacing.sm);
+        let (muted, gap) = (theme.muted_foreground(), theme.metrics.status_label_gap);
         let percent = self.percent;
         div()
             .id(self.id.clone())
@@ -112,7 +112,11 @@ impl Styled for StatusLabel {
 impl RenderOnce for StatusLabel {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, gap) = (theme.muted_foreground(), theme.base.spacing.xs);
+        let (muted, gap, icon) = (
+            theme.muted_foreground(),
+            theme.metrics.status_label_gap,
+            theme.metrics.status_icon,
+        );
         div()
             .flex()
             .flex_shrink_0()
@@ -120,7 +124,7 @@ impl RenderOnce for StatusLabel {
             .gap(gap)
             .text_color(muted)
             .refine_style(&self.style)
-            .child(self.icon.size_3p5())
+            .child(self.icon.size(icon))
             .child(self.label)
     }
 }
@@ -129,8 +133,11 @@ impl RenderOnce for StatusLabel {
 /// such as a branch and a folder, and a [`ContextMeter`] at the far right.
 ///
 /// The tab is inset from each side of the card and rounded on top only.
-/// Its bottom edge is meant to sit behind the card, so the items are
-/// centered above it, in the part of the tab that shows.
+/// The tab is exactly [`status_tab_height`](crate::theme::MetricTokens::status_tab_height)
+/// tall, with the items centered in it and square bottom corners, and it
+/// carries no hidden height. A [`Composer`](crate::Composer) sets its card
+/// directly under the tab, tucked over the tab's bottom edge by the card's
+/// hairline.
 /// [`branch`](Self::branch), [`folder`](Self::folder), and
 /// [`context`](Self::context) fill the default items; any other element
 /// joins the left side as a child, and [`trailing`](Self::trailing)
@@ -204,13 +211,13 @@ impl RenderOnce for ComposerStatusTab {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let metrics = &theme.metrics;
-        let (height, inset, overlap) = (
+        let (height, inset, gap) = (
             metrics.status_tab_height,
             metrics.status_tab_inset,
-            metrics.status_tab_overlap,
+            metrics.status_tab_gap,
         );
-        let (fill, radius, text) = (theme.status_tab, theme.radius_xl(), theme.text_control);
-        let (gap, pad) = (theme.base.spacing.md, theme.base.spacing.md);
+        let (pad_left, pad_right) = (metrics.control_padding_md, theme.base.spacing.lg);
+        let (fill, radius, text) = (theme.status_tab, theme.radius_xl(), theme.text_composer);
         div()
             .id(self.id)
             .test_support()
@@ -219,8 +226,8 @@ impl RenderOnce for ComposerStatusTab {
             .justify_between()
             .h(height)
             .mx(inset)
-            .px(pad)
-            .pb(overlap)
+            .pl(pad_left)
+            .pr(pad_right)
             .gap(gap)
             .rounded_t(radius)
             .bg(fill)

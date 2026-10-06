@@ -49,7 +49,11 @@ fn the_tab_is_thirty_four_high_and_inset_from_both_sides(cx: &mut TestAppContext
     let handle = setup(cx, false);
     cx.update_window(handle.into(), |_, window, cx| {
         let tab = window.find("status").bounds();
-        assert_eq!(tab.size.height, px(34.));
+        assert_eq!(
+            tab.size.height,
+            px(34.),
+            "exactly the visible strip, no hidden height"
+        );
         assert_eq!(tab.origin.x, px(28.), "inset from the left");
         assert_eq!(tab.size.width, px(500. - 56.), "inset from both sides");
         assert_eq!(
@@ -69,8 +73,12 @@ fn the_meter_sits_at_the_far_right_and_holds_a_sixteen_pixel_ring(cx: &mut TestA
         let bounds = window.find(meter()).bounds();
         assert_eq!(
             bounds.right(),
-            tab.right() - px(12.),
-            "the tab's side padding"
+            tab.right() - px(16.),
+            "the tab's right padding"
+        );
+        assert!(
+            (bounds.center().y - (tab.top() + px(17.))).abs() <= px(0.5),
+            "centered in the 34px that show"
         );
         let ring = window
             .find(ElementId::NamedChild(meter().into(), "ring".into()))

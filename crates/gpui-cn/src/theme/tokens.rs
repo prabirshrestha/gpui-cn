@@ -79,9 +79,11 @@ pub struct ThemeTokens {
     /// fill and a card to the whole. The reference app's disabled switch
     /// measures 60%; gpui-cn keeps one strength for every control.
     pub disabled_opacity: f32,
-    /// The track of a switch that is on: the accent, as the reference
-    /// app paints it (#539af8 on dark).
-    pub switch_track_on: Hsla,
+    /// The color of a control that is on or chosen: the accent, as the
+    /// reference app paints a switch that is on (#539af8 on dark). The
+    /// track of an on switch and the disc of a chosen radio read this one
+    /// token, as macOS paints both in `controlAccentColor`.
+    pub control_accent: Hsla,
     /// The track of a switch that is off.
     pub switch_track_off: Hsla,
     /// The thumb of a switch: the lighter of the surface and the ink, so
@@ -176,9 +178,19 @@ pub struct ThemeTokens {
     /// which reads against both the window and the card (BoardUI composer
     /// spec: a grey strip; not measured from the reference app).
     pub status_tab: Hsla,
-    /// The ring of a radio that is not chosen: the muted text at 60%, so it
-    /// reads on a popover surface where the `input` hairline vanishes
-    /// (shadcn's `border-input` is the hairline on light).
+    /// The fill of the model picker's provider rail: the popover surface a
+    /// step toward the ink on light (#f6f6f7 over white, as the BoardUI
+    /// screenshot) and a step toward the window on dark, so the rail reads
+    /// darker than the panel. Not measured from the reference app.
+    pub model_rail: Hsla,
+    /// The tile behind the selected provider in the rail: one more step
+    /// from `model_rail` toward the ink.
+    pub model_rail_selected: Hsla,
+    /// The pill of an effort chip on the highlighted model row: the popover
+    /// surface eight percent toward the ink on light, sixteen on dark.
+    pub model_chip: Hsla,
+    /// The ring of a radio that is not chosen: the field hairline, which
+    /// reads on a popover surface where the `input` hairline vanishes.
     pub radio_border: Hsla,
     /// The icon of a document attachment: the muted text, a neutral gray
     /// (BoardUI composer spec; not measured from the reference app).
@@ -195,6 +207,11 @@ pub struct ThemeTokens {
     /// The icon of a video attachment: the accent turned to violet, at 252
     /// degrees of hue (BoardUI composer spec).
     pub kind_video: Hsla,
+    /// The text of the composer family (the permission and model triggers,
+    /// the status tab, the model picker): 15px normal weight, read from the
+    /// BoardUI screenshots at 2x, where the toolbar labels measure about
+    /// 15px. The `text_heading` size, without its weight.
+    pub text_composer: TextStyleToken,
     /// The text of a multi-line field: 13px on an 18.5px line, the pitch
     /// measured from the reference app's settings textarea at 2x (37px),
     /// looser than `text_control` so lines of prose read apart.
@@ -331,23 +348,40 @@ pub struct MetricTokens {
     /// The width of the provider rail at the picker's left: 44px, the same
     /// source.
     pub model_picker_rail: Pixels,
-    /// The height of a model row: 36px, the same source.
+    /// The height of a model row: 40px, measured from the BoardUI picker
+    /// screenshot at 2x.
     pub model_row: Pixels,
-    /// The tallest the list of models grows before it scrolls: six rows.
+    /// The height of the model picker's list: six rows, in every state. The
+    /// panel never changes height: a short result leaves room, an empty one
+    /// centers its message in this box, and a long one, or an open effort
+    /// card, scrolls inside it.
     pub model_list_height: Pixels,
+    /// The height of the picker's header row, "Models" and Quick Search:
+    /// 34px, the same screenshot.
+    pub model_header: Pixels,
+    /// The width of the picker's Quick Search field: 150px, the same
+    /// screenshot.
+    pub model_search_width: Pixels,
+    /// The corner radius of the picker's panel: 20px, the same screenshot.
+    pub model_picker_radius: Pixels,
     /// The height of the effort card that opens under the chosen model: 88px,
     /// the same source.
     pub effort_card_height: Pixels,
     /// The height of a composer's status tab: 34px (BoardUI composer spec;
     /// not measured from the reference app).
     pub status_tab_height: Pixels,
+    /// The gap between the items of a status tab: 14px, measured from the
+    /// BoardUI reference screenshot at 2x (28px between "Main" and the
+    /// folder icon).
+    pub status_tab_gap: Pixels,
+    /// The icon of a status label: 13px, the same screenshot.
+    pub status_icon: Pixels,
+    /// The gap between a status label's icon and its text: 6px, the same
+    /// screenshot.
+    pub status_label_gap: Pixels,
     /// How far the status tab is inset from each side of the card: 28px,
     /// the same source.
     pub status_tab_inset: Pixels,
-    /// How far the card of a composer covers the status tab behind it:
-    /// 12px, so the tab's items show above the card (BoardUI composer
-    /// spec; not measured from the reference app).
-    pub status_tab_overlap: Pixels,
     /// The radius of a composer's card: 24px, the same source.
     pub composer_radius: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
@@ -515,12 +549,17 @@ impl MetricTokens {
             attachment_arc: scaled(2.),
             model_picker_width: scaled(341.),
             model_picker_rail: scaled(44.),
-            model_row: scaled(36.),
-            model_list_height: scaled(216.),
+            model_row: scaled(40.),
+            model_header: scaled(34.),
+            model_search_width: scaled(150.),
+            model_picker_radius: scaled(20.),
+            model_list_height: scaled(240.),
             effort_card_height: scaled(88.),
             status_tab_height: scaled(34.),
             status_tab_inset: scaled(28.),
-            status_tab_overlap: scaled(12.),
+            status_tab_gap: scaled(14.),
+            status_icon: scaled(13.),
+            status_label_gap: scaled(6.),
             composer_radius: scaled(24.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
@@ -638,7 +677,7 @@ impl ThemeTokens {
         let destructive_foreground = readable_on(config.semantic.destructive, surface, ink);
         // The reference app's switch: the accent when on, and when off a
         // gray a few steps from the surface. The thumb is white on both.
-        let switch_track_on = config.accent;
+        let control_accent = config.accent;
         let switch_track_off = toward_ink(0.20);
         let switch_thumb = lighter_of(surface, ink);
         let progress_track = primary.opacity(0.2);
@@ -669,6 +708,11 @@ impl ThemeTokens {
         let select_trigger = if dark { toward_ink(0.09) } else { surface };
         let select_trigger_border = if dark { toward_ink(0.178) } else { input };
         let tab_separator = muted_foreground.opacity(0.6);
+        let model_rail = if dark {
+            mix(popover, surface, 0.4)
+        } else {
+            mix(popover, ink, 0.04)
+        };
         let turned = |hue_degrees: f32| Hsla {
             h: hue_degrees / 360.,
             ..config.accent
@@ -762,7 +806,7 @@ impl ThemeTokens {
             text_title,
             metrics: MetricTokens::derive(metrics.ui_font_size, metrics.touch),
             disabled_opacity: 0.55,
-            switch_track_on,
+            control_accent,
             switch_track_off,
             switch_thumb,
             success: config.semantic.success,
@@ -792,12 +836,19 @@ impl ThemeTokens {
             field_border,
             field_focus_border,
             status_tab: selected,
-            radio_border: muted_foreground.opacity(0.6),
+            model_rail,
+            model_rail_selected: mix(model_rail, ink, if dark { 0.08 } else { 0.05 }),
+            model_chip: mix(popover, ink, if dark { 0.16 } else { 0.08 }),
+            radio_border: field_border,
             kind_document: muted_foreground,
             kind_spreadsheet: config.accent,
             kind_presentation: turned(280.),
             kind_code: turned(176.),
             kind_video: turned(252.),
+            text_composer: TextStyleToken {
+                weight: FontWeight::NORMAL,
+                ..text_heading
+            },
             text_textarea,
         }
     }
@@ -1189,14 +1240,14 @@ mod tests {
         // The on track and the thumb are sampled from the reference app's
         // settings toggles at 2x on dark.
         let dark = dark();
-        assert_eq!(to_hex(dark.switch_track_on), "#539af8");
+        assert_eq!(to_hex(dark.control_accent), "#539af8");
         assert_eq!(to_hex(dark.switch_thumb), "#ffffff");
-        assert_eq!(dark.switch_track_on, dark.ring());
+        assert_eq!(dark.control_accent, dark.ring());
         assert!(lightness(dark.switch_track_off) > lightness(dark.background()));
         assert!(lightness(dark.switch_track_off) < lightness(dark.switch_thumb));
         let light = light();
         assert_eq!(to_hex(light.switch_thumb), "#ffffff");
-        assert_eq!(light.switch_track_on, light.ring());
+        assert_eq!(light.control_accent, light.ring());
         assert!(lightness(light.switch_track_off) < lightness(light.background()));
         assert_eq!(to_hex(light.focus_ring()), "#339cff80");
         assert_eq!(light.focus_ring().a, 0.5);
@@ -1472,6 +1523,14 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_radio_and_an_on_switch_share_the_accent() {
+        for (tokens, hex) in [(dark(), "#539af8"), (light(), "#339cff")] {
+            assert_eq!(to_hex(tokens.control_accent), hex);
+            assert_eq!(tokens.control_accent, tokens.ring());
+        }
+    }
+
+    #[test]
     fn radio_metrics_are_the_shadcn_values() {
         let default = light();
         assert_eq!(default.metrics.radio_size, px(16.), "shadcn size-4");
@@ -1520,12 +1579,30 @@ mod tests {
         let (dark, light) = (dark(), light());
         assert_eq!(dark.metrics.model_picker_width, px(341.));
         assert_eq!(dark.metrics.model_picker_rail, px(44.));
-        assert_eq!(dark.metrics.model_row, px(36.));
-        assert_eq!(dark.metrics.model_list_height, px(216.), "six rows");
+        assert_eq!(dark.metrics.model_row, px(40.));
+        assert_eq!(dark.metrics.model_header, px(34.));
+        assert_eq!(dark.metrics.model_picker_radius, px(20.));
+        assert_eq!(dark.metrics.model_list_height, px(240.), "six rows");
         assert_eq!(dark.metrics.effort_card_height, px(88.));
-        assert_eq!(dark.radio_border.a, 0.6);
-        assert_eq!(to_hex(dark.radio_border.alpha(1.)), "#969696");
-        assert_eq!(to_hex(light.radio_border.alpha(1.)), "#67696b");
+        assert_eq!(dark.radio_border, dark.field_border);
+        assert_eq!(to_hex(dark.radio_border), "#3b3b3b");
+        assert_eq!(to_hex(light.radio_border), "#e5e5e6");
+        assert_eq!(
+            [
+                to_hex(dark.model_rail),
+                to_hex(dark.model_rail_selected),
+                to_hex(dark.model_chip)
+            ],
+            ["#242424", "#333333", "#4a4a4a"]
+        );
+        assert_eq!(
+            [
+                to_hex(light.model_rail),
+                to_hex(light.model_rail_selected),
+                to_hex(light.model_chip)
+            ],
+            ["#f5f5f5", "#e8e8e9", "#eaeaeb"]
+        );
     }
 
     #[test]
@@ -1533,7 +1610,11 @@ mod tests {
         let (dark, light) = (dark(), light());
         assert_eq!(dark.metrics.status_tab_height, px(34.));
         assert_eq!(dark.metrics.status_tab_inset, px(28.));
-        assert_eq!(dark.metrics.status_tab_overlap, px(12.));
+        assert_eq!(dark.text_composer.size, px(15.));
+        assert_eq!(dark.text_composer.weight, FontWeight::NORMAL);
+        assert_eq!(dark.metrics.status_tab_gap, px(14.));
+        assert_eq!(dark.metrics.status_icon, px(13.));
+        assert_eq!(dark.metrics.status_label_gap, px(6.));
         assert_eq!(dark.metrics.composer_radius, px(24.));
         assert_eq!(dark.status_tab, dark.selected);
         assert_eq!(to_hex(dark.status_tab), "#2c2c2c");

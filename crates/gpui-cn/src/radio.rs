@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Axis, ClickEvent, ElementId, InteractiveElement as _, IntoElement,
+    AnyElement, App, Axis, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement,
     ParentElement, Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
     StyleRefinement, Styled, TestSupportExt as _, Window,
     accesskit::Orientation,
@@ -11,12 +11,13 @@ use gpui_kit::{
     px,
 };
 
-use crate::{ActiveTheme as _, Theme};
+use crate::{ActiveTheme as _, Theme, ThemeTokens};
 
 type ChangeHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
-/// The round indicator of a radio: a ring that holds a dot while checked,
-/// shadcn's `RadioGroupItem`. It paints only. A row that is already a
+/// The round indicator of a radio: a thin grey ring, or while checked a
+/// disc of the control accent with a white dot, as macOS paints it. The
+/// accent is the one a switch that is on uses. It paints only. A row that is already a
 /// button, such as a model in a list, draws it to show which one is on.
 ///
 /// ```
@@ -51,11 +52,22 @@ impl Styled for RadioMark {
     }
 }
 
+/// The ring and the fill of an indicator: a chosen one is a disc of the
+/// control accent, the color a switch that is on takes for its track.
+fn colors(checked: bool, theme: &ThemeTokens) -> (Hsla, Option<Hsla>) {
+    if checked {
+        (theme.control_accent, Some(theme.control_accent))
+    } else {
+        (theme.radio_border, None)
+    }
+}
+
 impl RenderOnce for RadioMark {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (size, dot) = (theme.metrics.radio_size, theme.metrics.radio_dot);
         let radius = theme.radius_full();
+        let (ring, fill) = colors(self.checked, theme);
         div()
             .flex()
             .flex_shrink_0()
@@ -64,13 +76,15 @@ impl RenderOnce for RadioMark {
             .size(size)
             .rounded(radius)
             .border_1()
-            .border_color(if self.checked {
-                theme.primary()
-            } else {
-                theme.radio_border
-            })
+            .border_color(ring)
+            .when_some(fill, |this, fill| this.bg(fill))
             .when(self.checked, |this| {
-                this.child(div().size(dot).rounded(radius).bg(theme.primary()))
+                this.child(
+                    div()
+                        .size(dot * 0.75)
+                        .rounded(radius)
+                        .bg(theme.switch_thumb),
+                )
             })
             .refine_style(&self.style)
     }
@@ -335,6 +349,23 @@ impl RenderOnce for RadioGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chosen_radio_fills_with_the_color_of_an_on_switch() {
+        use crate::theme::{ThemeConfig, to_hex};
+        use gpui_kit::base::ThemeAppearance;
+        for (config, appearance, hex) in [
+            (ThemeConfig::dark(), ThemeAppearance::Dark, "#539af8"),
+            (ThemeConfig::light(), ThemeAppearance::Light, "#339cff"),
+        ] {
+            let theme = crate::theme::test_tokens(&config, appearance);
+            let (ring, fill) = colors(true, &theme);
+            assert_eq!(fill.map(to_hex).as_deref(), Some(hex));
+            assert_eq!(to_hex(ring), hex);
+            assert_eq!(fill, Some(theme.control_accent), "the switch's track token");
+            assert_eq!(colors(false, &theme), (theme.radio_border, None));
+        }
+    }
 
     #[test]
     fn builders_read_back() {

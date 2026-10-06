@@ -370,6 +370,7 @@ impl RenderOnce for PermissionMenu {
                 let button = Button::new(ElementId::NamedChild(self.id.into(), "trigger".into()))
                     .ghost()
                     .size(ButtonSize::Sm)
+                    .text_size(cx.theme().text_composer.size)
                     .accessibility_label("Permission mode");
                 let button = match self.state.read(cx).selected_mode().cloned() {
                     Some(mode) => button

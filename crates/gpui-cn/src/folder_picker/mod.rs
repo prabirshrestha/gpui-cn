@@ -36,7 +36,7 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use path::{Match, directory_path, filter, join_dir, parent_text, resolve_descend, split_path};
+use path::{Match, filter, join_dir, parent_text, resolve_descend, split_path};
 pub use source::{FolderEntry, FolderPage, FolderSource, LocalFolders, PageToken};
 
 use crate::{ActiveTheme as _, Button, Dialog, Icon, ScrollArea, Spinner, Theme, menu::MenuLook};
@@ -239,6 +239,9 @@ pub struct FolderPickerState {
     filter: Option<Task<()>>,
     filter_id: u64,
     pending: Option<PendingDescend>,
+    /// Whether the caller named the start folder, which wins over the
+    /// source's home.
+    explicit_start: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -252,7 +255,8 @@ impl Focusable for FolderPickerState {
 }
 
 impl FolderPickerState {
-    /// A picker on the local file system, at the root. Seed it with
+    /// A picker on the local file system, at the user's home folder (the
+    /// root when there is none). Name another start with
     /// [`with_initial`](Self::with_initial).
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Path"));
@@ -294,33 +298,59 @@ impl FolderPickerState {
             filter: None,
             filter_id: 0,
             pending: None,
+            explicit_start: false,
             _subscriptions: vec![subscription],
         };
-        state.set_text("/", window, cx);
+        state.set_text(&state.default_start(), window, cx);
         state
     }
 
     /// Lists folders from `source` instead of the local file system. The
     /// listings cached so far are dropped and the current directory is
-    /// listed again. See [`FolderSource`] for how to write one.
-    pub fn with_source(mut self, source: impl FolderSource, cx: &mut Context<Self>) -> Self {
+    /// listed again. The picker starts at the new source's home, unless
+    /// [`with_initial`](Self::with_initial) named a start, and at the root
+    /// when the source has no home. A leading `~` in the path stands for
+    /// the source's home. See [`FolderSource`] for how to write one.
+    pub fn with_source(
+        mut self,
+        source: impl FolderSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         self.source = Rc::new(source);
         self.listings.clear();
         self.load = None;
         self.load_more = None;
         self.dir = PathBuf::new();
-        let text = self.input.read(cx).value().to_string();
-        self.apply_text(text, cx);
+        let text = if self.explicit_start {
+            self.input.read(cx).value().to_string()
+        } else {
+            self.default_start()
+        };
+        self.set_text(&text, window, cx);
         self
     }
 
-    /// Starts in `path`, which is listed at once.
+    /// The text a picker starts with when it was given no start: the
+    /// source's home, or the root.
+    fn default_start(&self) -> String {
+        if self.source.home().is_some() {
+            format!("~{}", path::separator(self.windows))
+        } else {
+            path::separator(self.windows).to_string()
+        }
+    }
+
+    /// Starts in `path`, which is listed at once. A path that starts with
+    /// `~` is in the source's home. This wins over the source's home as
+    /// the start.
     pub fn with_initial(
         mut self,
         path: impl AsRef<Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        self.explicit_start = true;
         let mut text = path.as_ref().to_string_lossy().into_owned();
         if !text.ends_with(|c| path::is_separator(c, self.windows)) {
             text.push(path::separator(self.windows));
@@ -374,7 +404,7 @@ impl FolderPickerState {
         let Listing::Ready(loaded) = self.listing()? else {
             return None;
         };
-        let dir = directory_path(&self.dir_text, self.windows);
+        let dir = self.dir.clone();
         if self.query.is_empty() {
             Some(dir)
         } else if loaded.names.contains(self.query.as_ref() as &str) {
@@ -399,13 +429,31 @@ impl FolderPickerState {
     /// Goes to the parent of the listed directory. The root is its own
     /// parent.
     pub fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = parent_text(&self.dir_text, self.windows);
+        let home = self.source.home();
+        let at_home = home.is_some()
+            && path::is_home_text(&self.dir_text, self.windows)
+            && self
+                .dir_text
+                .trim_end_matches(|c| path::is_separator(c, self.windows))
+                == "~";
+        let text = if at_home {
+            let home = home
+                .clone()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            parent_text(&home, self.windows)
+        } else {
+            parent_text(&self.dir_text, self.windows)
+        };
+        let text = path::collapse_home(&text, home.as_deref(), self.windows);
         self.set_text(&text, window, cx);
     }
 
     /// Goes inside the folder `name` of the listed directory.
     pub fn descend(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let text = join_dir(&self.dir_text, name, self.windows);
+        let text = path::collapse_home(&text, self.source.home().as_deref(), self.windows);
         self.set_text(&text, window, cx);
     }
 
@@ -505,8 +553,12 @@ impl FolderPickerState {
     /// Splits `text` into the directory and the query, lists the
     /// directory when it changed, and filters its folders.
     fn apply_text(&mut self, text: String, cx: &mut Context<Self>) {
-        let (dir_text, query) = split_path(&text, self.windows);
-        let dir = directory_path(&dir_text, self.windows);
+        let (dir_text, query) = if text == "~" && self.source.home().is_some() {
+            (format!("~{}", path::separator(self.windows)), String::new())
+        } else {
+            split_path(&text, self.windows)
+        };
+        let dir = path::resolve_dir(&dir_text, self.source.home().as_deref(), self.windows);
         self.dir_text = dir_text;
         self.query = query.into();
         if dir != self.dir {
@@ -899,20 +951,24 @@ impl RenderOnce for FolderPicker {
                     state.update(cx, |state, cx| state.go_up(window, cx));
                 })
         };
-        let current = (query_empty && has_entries).then(|| {
-            let state = state.clone();
-            h_flex()
-                .id(child("current"))
-                .test_support()
-                .role(Role::Button)
-                .h(look.row_height)
-                .px(look.row_padding)
-                .items_center()
-                .text_color(look.muted_foreground)
-                .when(pointer_cursors, |this| this.cursor_pointer())
-                .child("Select current folder")
-                .on_click(move |_, _, cx| state.update(cx, |state, cx| state.choose(cx)))
-        });
+        // The row's slot is always there, so the dialog is as tall while
+        // a folder loads or fails as when it is listed.
+        let current_slot = h_flex().h(look.row_height).flex_shrink_0().children(
+            (query_empty && has_entries).then(|| {
+                let state = state.clone();
+                h_flex()
+                    .id(child("current"))
+                    .test_support()
+                    .role(Role::Button)
+                    .size_full()
+                    .px(look.row_padding)
+                    .items_center()
+                    .text_color(look.muted_foreground)
+                    .when(pointer_cursors, |this| this.cursor_pointer())
+                    .child("Select current folder")
+                    .on_click(move |_, _, cx| state.update(cx, |state, cx| state.choose(cx)))
+            }),
+        );
         let (up_key, down_key, confirm_key) = (state.clone(), state.clone(), state.clone());
         let content = v_flex()
             .key_context(CONTEXT)
@@ -937,7 +993,7 @@ impl RenderOnce for FolderPicker {
                     .child(up)
                     .child(div().flex_1().child(crate::Input::new(&input))),
             )
-            .children(current)
+            .child(current_slot)
             .child(
                 div()
                     .id(child("list"))

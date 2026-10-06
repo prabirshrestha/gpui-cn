@@ -111,6 +111,13 @@ fn setup(cx: &mut TestAppContext, options: Options) -> Setup {
     }
 }
 
+fn card_top_gap(
+    tab: gpui_kit::Bounds<gpui_kit::Pixels>,
+    card: gpui_kit::Bounds<gpui_kit::Pixels>,
+) -> gpui_kit::Pixels {
+    card.top() - tab.top()
+}
+
 fn part(name: &'static str) -> ElementId {
     ElementId::NamedChild(ElementId::from("composer").into(), name.into())
 }
@@ -448,9 +455,14 @@ fn the_status_tab_sits_behind_the_top_of_the_card(cx: &mut TestAppContext) {
     cx.update_window(with.handle.into(), |_, window, _| {
         let tab = window.find("status").bounds();
         let card = window.find(part("card")).bounds();
-        assert_eq!(tab.size.height, px(34.));
+        assert_eq!(tab.size.height, px(34.), "the tab has no hidden height");
+        assert_eq!(
+            card_top_gap(tab, card),
+            px(33.),
+            "the card tucks over the tab by its hairline"
+        );
         assert!(card.top() < tab.bottom(), "the card covers the tab's foot");
-        assert_eq!(tab.bottom() - card.top(), px(12.), "by the overlap");
+        assert_eq!(tab.bottom() - card.top(), px(1.), "by the hairline");
         assert!(card.top() > tab.top());
         assert_eq!(card.size.width, px(560.));
         assert_eq!(tab.left() - card.left(), px(28.), "inset from the card");

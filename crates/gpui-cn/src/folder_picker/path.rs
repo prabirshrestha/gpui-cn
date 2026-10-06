@@ -3,7 +3,10 @@
 //! a typed separator goes into. It works on plain strings, so it needs no
 //! window and no file system.
 
-use std::{ops::Range, path::PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use gpui_kit::SharedString;
 use nucleo_matcher::{
@@ -86,6 +89,53 @@ pub(crate) fn directory_path(dir: &str, windows: bool) -> PathBuf {
         });
     }
     PathBuf::from(dir.trim_end_matches(|c| is_separator(c, windows)))
+}
+
+/// Whether the directory text starts at the home folder: `~` alone, or
+/// `~` and a separator.
+pub(crate) fn is_home_text(dir: &str, windows: bool) -> bool {
+    dir == "~"
+        || dir
+            .strip_prefix('~')
+            .is_some_and(|rest| rest.starts_with(|c| is_separator(c, windows)))
+}
+
+/// The path a directory's text names, with a leading `~` standing for
+/// `home` when there is one.
+pub(crate) fn resolve_dir(dir: &str, home: Option<&Path>, windows: bool) -> PathBuf {
+    match home {
+        Some(home) if is_home_text(dir, windows) => {
+            let rest = dir[1..].trim_matches(|c| is_separator(c, windows));
+            if rest.is_empty() {
+                home.to_path_buf()
+            } else {
+                home.join(rest)
+            }
+        }
+        _ => directory_path(dir, windows),
+    }
+}
+
+/// The text of a directory under `home` in the `~/...` form, with a
+/// trailing separator, and `text` itself when it is not under `home`.
+pub(crate) fn collapse_home(text: &str, home: Option<&Path>, windows: bool) -> String {
+    let Some(home) = home else {
+        return text.to_string();
+    };
+    let home = home.to_string_lossy();
+    let home = home.trim_end_matches(|c| is_separator(c, windows));
+    if home.is_empty() {
+        return text.to_string();
+    }
+    let sep = separator(windows);
+    let trimmed = text.trim_end_matches(|c| is_separator(c, windows));
+    if trimmed == home {
+        return format!("~{sep}");
+    }
+    match text.strip_prefix(home) {
+        Some(rest) if rest.starts_with(|c| is_separator(c, windows)) => format!("~{rest}"),
+        _ => text.to_string(),
+    }
 }
 
 /// Ranks `entries` by how well `query` matches their names: a subsequence
@@ -178,6 +228,29 @@ mod tests {
             .iter()
             .map(|found| entries[found.index].name().to_string())
             .collect()
+    }
+
+    #[test]
+    fn a_leading_tilde_names_the_home_when_there_is_one() {
+        let home = Some(Path::new("/Users/me"));
+        let at = |text: &str, home| resolve_dir(text, home, false);
+        assert_eq!(at("~/", home), PathBuf::from("/Users/me"));
+        assert_eq!(at("~", home), PathBuf::from("/Users/me"));
+        assert_eq!(at("~/code/", home), PathBuf::from("/Users/me/code"));
+        assert_eq!(at("~/", None), PathBuf::from("~"), "no home: a plain name");
+        assert_eq!(at("/~/", home), PathBuf::from("/~"), "only a leading tilde");
+        assert!(!is_home_text("~me/", false));
+    }
+
+    #[test]
+    fn a_directory_under_home_takes_the_tilde_form() {
+        let home = Some(Path::new("/Users/me"));
+        let at = |text: &str| collapse_home(text, home, false);
+        assert_eq!(at("/Users/me/"), "~/");
+        assert_eq!(at("/Users/me/code/"), "~/code/");
+        assert_eq!(at("/Users/"), "/Users/");
+        assert_eq!(at("/Users/meow/"), "/Users/meow/", "not a child of home");
+        assert_eq!(collapse_home("/Users/me/", None, false), "/Users/me/");
     }
 
     #[test]

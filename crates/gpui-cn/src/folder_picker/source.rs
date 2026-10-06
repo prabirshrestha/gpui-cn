@@ -143,6 +143,15 @@ pub trait FolderSource: 'static {
         page: Option<PageToken>,
         cx: &mut App,
     ) -> Task<io::Result<FolderPage>>;
+
+    /// The source's home folder, which a leading `~` in the typed path
+    /// stands for and where a picker with no start of its own begins. The
+    /// default is `None`: a source with no home does not expand `~`, so a
+    /// typed `~` is an ordinary name, and the picker starts at the root.
+    /// A remote or virtual source gives its own.
+    fn home(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// The local file system, in one page. It reads on a background task,
@@ -153,6 +162,11 @@ pub trait FolderSource: 'static {
 pub struct LocalFolders;
 
 impl FolderSource for LocalFolders {
+    /// The home directory of the user running the application.
+    fn home(&self) -> Option<PathBuf> {
+        std::env::home_dir()
+    }
+
     fn list(
         &self,
         dir: &Path,

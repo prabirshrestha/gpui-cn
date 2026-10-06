@@ -153,7 +153,7 @@ fn the_panel_is_the_spec_width_and_lists_the_first_providers_models(cx: &mut Tes
         );
         assert_eq!(
             window.find(model("acme-fast")).bounds().size.height,
-            px(36.)
+            px(40.)
         );
         for name in ["acme", "zed", "moon"] {
             assert!(window.try_find(provider(name)).is_some(), "{name} mark");
@@ -216,11 +216,13 @@ fn quick_search_filters_across_every_provider(cx: &mut TestAppContext) {
     let setup = setup(cx);
     open(&setup, cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        assert_eq!(
+        assert_ne!(
             window.find(named(id(), "search")).focused(),
             Some(true),
-            "the panel opens on the search field"
+            "the search field is not boxed until it is focused"
         );
+        window.press("/", cx);
+        window.render_frame(cx);
         window.input("alpha", cx);
         window.render_frame(cx);
         window.render_frame(cx);
@@ -251,8 +253,6 @@ fn a_slash_moves_focus_to_the_search_field(cx: &mut TestAppContext) {
     let setup = setup(cx);
     open(&setup, cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        window.press("tab", cx);
-        window.render_frame(cx);
         assert_ne!(window.find(named(id(), "search")).focused(), Some(true));
         window.press("/", cx);
         window.render_frame(cx);
@@ -371,4 +371,85 @@ fn a_model_without_effort_reports_none(cx: &mut TestAppContext) {
         setup.state.read_with(cx, |state, _| state.effort()),
         Some(1)
     );
+}
+
+fn panel_height(setup: &Setup, cx: &mut TestAppContext) -> gpui_kit::Pixels {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find(named(id(), "panel")).bounds().size.height
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn the_panel_keeps_one_height_in_every_state(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open(&setup, cx);
+    let height = panel_height(&setup, cx);
+    assert_eq!(
+        height,
+        px(34. + 240. + 8. + 2.),
+        "header, six rows, padding, hairline"
+    );
+    let same = |setup: &Setup, cx: &mut TestAppContext, state: &str| {
+        assert_eq!(panel_height(setup, cx), height, "{state}");
+    };
+    same(&setup, cx, "two models of the first provider");
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(provider("moon"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    same(&setup, cx, "one model of another provider");
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("/", cx);
+        window.input("alpha", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    same(&setup, cx, "three matches");
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("cmd-a", cx);
+        window.input("gamma", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    same(&setup, cx, "one match");
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("cmd-a", cx);
+        window.input("nothing like it", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let list = window.find(named(id(), "list")).bounds();
+        let empty = window.find(named(id(), "empty")).bounds();
+        assert_eq!(empty, list, "the message fills the list box");
+    })
+    .unwrap();
+    same(&setup, cx, "no match");
+
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("cmd-a", cx);
+        window.press("backspace", cx);
+        window.render_frame(cx);
+        window.click(provider("acme"), cx);
+        window.render_frame(cx);
+        window.click(model("acme-deep"), cx);
+    })
+    .unwrap();
+    open(&setup, cx);
+    same(&setup, cx, "a chosen model with an effort chip");
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(named(id(), "effort"), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find(named(id(), "effort-card")).is_some());
+    })
+    .unwrap();
+    same(&setup, cx, "the effort card open");
 }

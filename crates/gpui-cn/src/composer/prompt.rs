@@ -588,7 +588,6 @@ impl RenderOnce for Composer {
             theme.base.spacing.sm,
         );
         let (muted, disabled_opacity) = (theme.selected, theme.disabled_opacity);
-        let overlap = theme.metrics.status_tab_overlap;
         let has_status = self.status.is_some();
 
         let events = |state: &Entity<ComposerState>, event: ComposerEvent| {
@@ -699,7 +698,7 @@ impl RenderOnce for Composer {
             .border_1()
             .border_color(if focused { focus_border } else { border })
             .when(disabled, |this| this.opacity(disabled_opacity))
-            .when(has_status, |this| this.mt(-overlap).relative())
+            .when(has_status, |this| this.mt(-gpui_kit::px(1.)).relative())
             .refine_style(&self.style)
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(accent))
             .on_drop(move |paths: &ExternalPaths, _, cx| {

@@ -34,6 +34,10 @@ impl FolderPickerStory {
 struct Fixture;
 
 impl FolderSource for Fixture {
+    fn home(&self) -> Option<PathBuf> {
+        Some(PathBuf::from(FIXTURE_HOME))
+    }
+
     fn list(
         &self,
         dir: &Path,
@@ -72,18 +76,6 @@ impl FolderSource for Fixture {
     }
 }
 
-/// The folder the picker opens in: the fixture's in the snapshot build,
-/// the user's home otherwise.
-fn start_dir() -> PathBuf {
-    if cfg!(feature = "snapshot") {
-        return PathBuf::from(FIXTURE_HOME);
-    }
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
 impl Story for FolderPickerStory {
     fn title() -> &'static str {
         "Folder picker"
@@ -102,12 +94,11 @@ impl Story for FolderPickerStory {
         cx.new(|cx| {
             let state = cx.new(|cx| {
                 let state = FolderPickerState::new(window, cx);
-                let state = if cfg!(feature = "snapshot") {
-                    state.with_source(Fixture, cx)
+                if cfg!(feature = "snapshot") {
+                    state.with_source(Fixture, window, cx)
                 } else {
                     state
-                };
-                state.with_initial(start_dir(), window, cx)
+                }
             });
             cx.observe(&state, |_, _, cx| cx.notify()).detach();
             cx.subscribe(&state, |this: &mut Self, _, event, cx| {
@@ -139,7 +130,9 @@ impl Render for FolderPickerStory {
                 .flex_col()
                 .gap_3()
                 .child(note(
-                    "Type an absolute path: the text up to the last slash is the folder \
+                    "The picker opens in the source's home folder, and `~` in the path \
+                     stands for it: type `~/code/` to list the code folder under home. \
+                     Type a path: the text up to the last slash is the folder \
                      that is listed, and the text after it filters that folder's \
                      sub-folders. A slash after the filter goes inside the best match. \
                      Enter or a click on a row goes inside it, and the arrow button goes \
