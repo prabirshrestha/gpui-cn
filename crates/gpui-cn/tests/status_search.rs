@@ -306,3 +306,70 @@ fn a_select_can_be_forced_either_way(cx: &mut TestAppContext) {
     click(&list, trigger(), cx);
     assert!(present(&list, named(palette(), "search"), cx));
 }
+
+#[gpui_kit::test]
+fn the_menu_follows_options_that_change(cx: &mut TestAppContext) {
+    for searchable in [false, true] {
+        let first = if searchable {
+            refs()
+        } else {
+            vec![
+                StatusOption::new("a", "Local"),
+                StatusOption::new("b", "Cloud"),
+            ]
+        };
+        let setup = setup(cx, first, 100., Some(searchable));
+        click(&setup, trigger(), cx);
+        press(&setup, "escape", cx);
+        let events_before = setup.events.borrow().len();
+        cx.update_window(setup.handle.into(), |_, _, cx| {
+            setup.state.update(cx, |state, cx| {
+                state.set_options(
+                    [
+                        StatusOption::new("x", "Hosted"),
+                        StatusOption::new("y", "Remote"),
+                        StatusOption::new("z", "Edge"),
+                    ],
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        frames(&setup, cx);
+        assert_eq!(
+            setup.events.borrow().len(),
+            events_before + 1,
+            "the choice vanished, so it changed"
+        );
+        click(&setup, trigger(), cx);
+        for id in ["x", "y", "z"] {
+            assert!(
+                present(&setup, named(palette(), id), cx),
+                "searchable={searchable}: {id}"
+            );
+        }
+        assert!(
+            !present(&setup, named(palette(), "a"), cx),
+            "the old rows are gone"
+        );
+        press(&setup, "escape", cx);
+        let before = setup.events.borrow().len();
+        cx.update_window(setup.handle.into(), |_, _, cx| {
+            setup.state.update(cx, |state, cx| {
+                state.set_options(
+                    [
+                        StatusOption::new("x", "Hosted 2"),
+                        StatusOption::new("y", "Remote"),
+                    ],
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        assert_eq!(
+            setup.events.borrow().len(),
+            before,
+            "a kept choice reports nothing"
+        );
+    }
+}

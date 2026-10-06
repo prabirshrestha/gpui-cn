@@ -268,6 +268,7 @@ fn build_rows(
     query: &str,
     favorites: &[SharedString],
     legacy_shown: bool,
+    legacy_open: bool,
 ) -> Vec<Row> {
     let query = query.trim();
     let model = |provider, model| Row::Model {
@@ -350,7 +351,15 @@ fn build_rows(
     }
     let mut number = 0;
     for row in &mut rows {
-        if let Row::Model { number: slot, .. } = row {
+        if let Row::Model {
+            number: slot,
+            folded,
+            ..
+        } = row
+        {
+            if *folded && !legacy_open {
+                continue;
+            }
             number += 1;
             *slot = (number <= SHORTCUT_ROWS).then_some(number);
         }
@@ -639,7 +648,11 @@ impl ModelPickerState {
             model: id,
             favorite,
         });
-        self.rebuild(cx);
+        if self.view == ModelView::Favorites {
+            self.rebuild_in_place(cx);
+        } else {
+            cx.notify();
+        }
     }
 
     /// Stars the model if it is not a favorite and unstars it if it is.
@@ -724,8 +737,9 @@ impl ModelPickerState {
         self.legacy_open = open;
         if open {
             self.legacy_shown = true;
-            self.rebuild(cx);
+            self.rebuild_in_place(cx);
         } else {
+            self.refresh_numbers();
             cx.notify();
         }
         if on_header {
@@ -760,7 +774,7 @@ impl ModelPickerState {
             let on_header = self.header_highlighted();
             self.legacy_shown = false;
             self.legacy_progress = 0.;
-            self.rebuild(cx);
+            self.rebuild_in_place(cx);
             if on_header {
                 self.highlight_header();
             }
@@ -841,6 +855,77 @@ impl ModelPickerState {
         cx.notify();
     }
 
+    /// Recomputes the rows and keeps what the user is looking at: the
+    /// highlighted row by identity and the scroll place. Nothing moves when
+    /// the rows did not change.
+    fn rebuild_in_place(&mut self, cx: &mut Context<Self>) {
+        let query = self.query(cx);
+        let old_rows = self.rows.clone();
+        let top = self.list.logical_scroll_top();
+        let key = self
+            .highlighted
+            .and_then(|row| old_rows.get(row))
+            .map(|row| match row {
+                Row::Legacy(_) => None,
+                Row::Model {
+                    provider, model, ..
+                } => Some(self.providers[*provider].models[*model].id.clone()),
+            });
+        let rows = build_rows(
+            &self.providers,
+            &self.view,
+            &query,
+            &self.favorites,
+            self.legacy_shown,
+            self.legacy_open,
+        );
+        if rows != old_rows {
+            self.rows = rows;
+            self.list.reset(self.rows.len());
+            self.list.scroll_to(top);
+            self.highlighted = key.and_then(|key| {
+                self.rows.iter().position(|row| match (row, &key) {
+                    (Row::Legacy(_), None) => true,
+                    (
+                        Row::Model {
+                            provider, model, ..
+                        },
+                        Some(id),
+                    ) => &self.providers[*provider].models[*model].id == id,
+                    _ => false,
+                })
+            });
+            if self.highlighted.is_none() {
+                self.highlighted = self
+                    .rows
+                    .iter()
+                    .position(|row| matches!(row, Row::Model { .. }));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Numbers the rows again for the legacy group folding away, which
+    /// changes no row but the shortcuts.
+    fn refresh_numbers(&mut self) {
+        let mut number = 0;
+        for row in &mut self.rows {
+            if let Row::Model {
+                number: slot,
+                folded,
+                ..
+            } = row
+            {
+                if *folded {
+                    *slot = None;
+                    continue;
+                }
+                number += 1;
+                *slot = (number <= SHORTCUT_ROWS).then_some(number);
+            }
+        }
+    }
+
     fn refresh_rows(&mut self, query: &str) {
         self.rows = build_rows(
             &self.providers,
@@ -848,6 +933,7 @@ impl ModelPickerState {
             query,
             &self.favorites,
             self.legacy_shown,
+            self.legacy_open,
         );
         self.list.reset(self.rows.len());
         let chosen = self.selected.as_ref().and_then(|id| {
@@ -1745,7 +1831,7 @@ mod tests {
         let providers = catalog();
         let favorites: Vec<SharedString> = favorites.iter().map(|id| (*id).into()).collect();
         ids(
-            &build_rows(&providers, &view, query, &favorites, open),
+            &build_rows(&providers, &view, query, &favorites, open, open),
             &providers,
         )
     }
@@ -1806,7 +1892,14 @@ mod tests {
             ModelProvider::new("p", "P")
                 .models((0..12).map(|n| ModelEntry::new(format!("m{n}"), format!("Model {n}")))),
         ];
-        let rows = build_rows(&providers, &ModelView::Provider("p".into()), "", &[], false);
+        let rows = build_rows(
+            &providers,
+            &ModelView::Provider("p".into()),
+            "",
+            &[],
+            false,
+            false,
+        );
         let numbers: Vec<_> = rows
             .iter()
             .map(|row| match row {

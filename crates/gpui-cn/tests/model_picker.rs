@@ -952,3 +952,116 @@ fn each_rail_entry_is_named_and_shows_its_name_as_a_tooltip(cx: &mut TestAppCont
         assert!(!tooltip_visible(&setup, cx), "leaving {name} hides it");
     }
 }
+
+fn visible_model(
+    setup: &Setup,
+    prefix: &str,
+    cx: &mut TestAppContext,
+) -> Option<(String, gpui_kit::Pixels)> {
+    let top = bounds(setup, named(id(), "list"), cx).top();
+    (0..60).find_map(|n| {
+        let name = format!("{prefix}{n:02}");
+        let target = model(Box::leak(name.clone().into_boxed_str()));
+        present(setup, target.clone(), cx)
+            .then(|| (name, bounds(setup, target, cx).top()))
+            .filter(|(_, y)| *y >= top)
+    })
+}
+
+#[gpui_kit::test]
+fn starring_a_model_keeps_the_scroll_place_and_the_highlight(cx: &mut TestAppContext) {
+    let setup = start(cx, big_catalog(), |state| state);
+    open(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.scroll(
+            named(id(), "models"),
+            gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            cx,
+        );
+    })
+    .unwrap();
+    frames(&setup, cx);
+    let (name, top) = visible_model(&setup, "m", cx).expect("a row is on screen");
+    assert_ne!(name, "m00", "the list scrolled");
+    let target: &'static str = Box::leak(name.clone().into_boxed_str());
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.hover(model(target), cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    let highlighted = setup.state.read_with(cx, |state, _| state.highlighted());
+    assert_eq!(highlighted.as_deref(), Some(target));
+    click(&setup, star(target), cx);
+    assert!(
+        setup
+            .state
+            .read_with(cx, |state, _| state.is_favorite(&name)),
+        "starred"
+    );
+    assert_eq!(
+        bounds(&setup, model(target), cx).top(),
+        top,
+        "the row did not move"
+    );
+    assert_eq!(
+        setup.state.read_with(cx, |state, _| state.highlighted()),
+        highlighted,
+        "the highlight stayed"
+    );
+}
+
+fn legacy_catalog() -> Vec<ModelProvider> {
+    vec![
+        ModelProvider::new("acme", "Acme").models(
+            (0..12)
+                .map(|n| ModelEntry::new(format!("old{n:02}"), format!("Old {n:02}")).legacy(true))
+                .chain((0..5).map(|n| ModelEntry::new(format!("new{n}"), format!("New {n}")))),
+        ),
+    ]
+}
+
+#[gpui_kit::test]
+fn opening_the_legacy_group_keeps_the_header_in_place_and_highlighted(cx: &mut TestAppContext) {
+    let setup = start(cx, legacy_catalog(), |state| state);
+    open(&setup, cx);
+    let before = bounds(&setup, named(id(), "legacy"), cx).top();
+    click(&setup, named(id(), "legacy"), cx);
+    assert!(setup.state.read_with(cx, |state, _| state.is_legacy_open()));
+    assert_eq!(
+        bounds(&setup, named(id(), "legacy"), cx).top(),
+        before,
+        "the header stays"
+    );
+    press(&setup, "enter", cx);
+    assert!(
+        !setup.state.read_with(cx, |state, _| state.is_legacy_open()),
+        "the header was still highlighted, so Enter closed the group"
+    );
+}
+
+#[gpui_kit::test]
+fn number_shortcuts_skip_rows_that_are_folding_away(cx: &mut TestAppContext) {
+    let setup = start_with_motion(cx, catalog(), |state| state, ReduceMotion::Off);
+    open(&setup, cx);
+    click(&setup, named(id(), "legacy"), cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    frames(&setup, cx);
+    click(&setup, named(id(), "legacy"), cx);
+    assert!(
+        present(&setup, model("acme-old"), cx),
+        "the rows are still folding"
+    );
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press(&format!("{SECONDARY}-1"), cx)
+    })
+    .unwrap();
+    frames(&setup, cx);
+    assert!(
+        setup
+            .events
+            .borrow()
+            .contains(&ModelPickerEvent::Selected("acme-fast".into())),
+        "Cmd+1 chose the first row that is not folding away"
+    );
+}

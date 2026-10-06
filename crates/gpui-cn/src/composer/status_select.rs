@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
@@ -149,6 +149,27 @@ impl StatusSelectState {
             .iter()
             .find(|option| option.id == self.selected)
             .map(|option| &option.label)
+    }
+
+    /// Replaces the options. The choice stays when its id is still there,
+    /// and reports nothing. When it is gone the first option is chosen and
+    /// `Changed` is emitted. The menu follows the new options. Whether the
+    /// list has a search field is decided when the item is first shown.
+    pub fn set_options(
+        &mut self,
+        options: impl IntoIterator<Item = StatusOption>,
+        cx: &mut Context<Self>,
+    ) {
+        self.options = options.into_iter().collect();
+        if !self.options.iter().any(|option| option.id == self.selected) {
+            self.selected = self
+                .options
+                .first()
+                .map(|option| option.id.clone())
+                .unwrap_or_default();
+            cx.emit(StatusSelectEvent::Changed(self.selected.clone()));
+        }
+        cx.notify();
     }
 
     /// Chooses the option with `id` and emits `Changed`. An unknown id, or
@@ -310,6 +331,10 @@ struct Inner {
     /// The state's choice the select last agreed with, so a choice made in
     /// the select is not undone before the state hears of it.
     synced: SharedString,
+    /// The options the search answers from, shared so it follows changes.
+    options: Rc<RefCell<Vec<StatusOption>>>,
+    /// The ids and labels the select was last given.
+    shown: Vec<(SharedString, SharedString)>,
     _subscription: Subscription,
 }
 
@@ -339,6 +364,11 @@ impl RenderOnce for StatusSelect {
                 self.placeholder.clone(),
             );
             move |window, cx| {
+                let shared = Rc::new(RefCell::new(options.clone()));
+                let shown: Vec<_> = options
+                    .iter()
+                    .map(|option| (option.id.clone(), option.label.clone()))
+                    .collect();
                 let selected_for_inner = selected.clone();
                 let entries: Vec<SelectEntry<SharedString>> = options
                     .iter()
@@ -347,10 +377,10 @@ impl RenderOnce for StatusSelect {
                 let select = cx.new(|cx| {
                     let select = SelectState::new(entries, cx).with_selected([selected]);
                     if searchable {
-                        let options = Rc::new(options);
+                        let options = shared.clone();
                         select.with_search_handler(
                             placeholder,
-                            move |query, _| Task::ready(ranked(&options, &query)),
+                            move |query, _| Task::ready(ranked(&options.borrow(), &query)),
                             window,
                             cx,
                         )
@@ -373,11 +403,26 @@ impl RenderOnce for StatusSelect {
                 Inner {
                     select,
                     synced: selected_for_inner,
+                    options: shared,
+                    shown,
                     _subscription: subscription,
                 }
             }
         });
         let select_state = inner.read(cx).select.clone();
+        let now: Vec<_> = options
+            .iter()
+            .map(|option| (option.id.clone(), option.label.clone()))
+            .collect();
+        if inner.read(cx).shown != now {
+            let entries: Vec<SelectEntry<SharedString>> = options
+                .iter()
+                .map(|option| SelectItem::new(option.id.clone(), option.label.clone()).into())
+                .collect();
+            *inner.read(cx).options.borrow_mut() = options.clone();
+            inner.update(cx, |inner, _| inner.shown = now);
+            select_state.update(cx, |state, cx| state.set_entries(entries, cx));
+        }
         if inner.read(cx).synced != selected {
             inner.update(cx, |inner, _| inner.synced = selected.clone());
             select_state.update(cx, |state, cx| state.set_selected([selected.clone()], cx));
