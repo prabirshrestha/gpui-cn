@@ -40,8 +40,10 @@ mod avatar;
 mod badge;
 mod button;
 mod command;
+mod command_dialog;
 mod composer;
 mod dialog;
+mod file_picker;
 mod folder_picker;
 mod icon;
 mod input;
@@ -49,6 +51,7 @@ mod label;
 mod looping;
 mod menu;
 mod nav;
+mod path_browser;
 mod popover;
 mod progress;
 mod progress_ring;
@@ -77,6 +80,7 @@ pub use command::{
     Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
     CommandSearchHandler, CommandState,
 };
+pub use command_dialog::CommandDialog;
 pub use composer::{
     Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
     ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
@@ -85,6 +89,10 @@ pub use composer::{
     StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
+pub use file_picker::{
+    FileEntry, FileFilter, FileKind, FileListing, FileLoaded, FilePage, FilePicker,
+    FilePickerEvent, FilePickerState, FileSource, LocalFiles, MemoryFiles,
+};
 pub use folder_picker::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
     Listing, Loaded, LocalFolders, MoreState, PageToken,
@@ -137,16 +145,16 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
-        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, Dialog,
-        DropdownMenu, Field, FolderPicker, FolderPickerState, Icon, Input, InputState, Label,
-        MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu,
-        NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, Popover, Progress,
-        ProgressRing, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea, Select, SelectEntry,
-        SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
-        SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide, SidebarState,
-        SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner, Switch, Tab, Tabs,
-        TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme, ThemeMode,
-        ThemeModePicker, TitleBar, TooltipExt,
+        Command, CommandDialog, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu,
+        Dialog, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker, FolderPickerState,
+        Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
+        MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
+        Popover, Progress, ProgressRing, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea,
+        Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
+        SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
+        SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
+        Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,
+        ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -188,6 +196,7 @@ pub fn init(cx: &mut App) {
     menu::init(cx);
     command::init(cx);
     folder_picker::init(cx);
+    file_picker::init(cx);
     cx.set_global(Initialized);
 }
 

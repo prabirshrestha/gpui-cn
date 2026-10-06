@@ -8,10 +8,10 @@ pub mod settings;
 pub mod stories;
 
 use gpui_cn::{
-    ActiveTheme as _, Button, ButtonSize, Icon, Input, InputEvent, InputState, NavButtons,
-    NavMotion, NavStack, NavStackState, ScrollArea, Sidebar, SidebarCollapsible, SidebarGroup,
-    SidebarLayout, SidebarMenuButton, SidebarState, SidebarTrigger, TitleBar,
-    gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ButtonSize, CommandDialog, CommandEntry, CommandEvent, CommandGroup,
+    CommandItem, CommandState, Icon, Input, InputEvent, InputState, NavButtons, NavMotion,
+    NavStack, NavStackState, ScrollArea, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+    SidebarMenuButton, SidebarState, SidebarTrigger, TitleBar, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId,
@@ -44,6 +44,8 @@ actions!(
         NavigateBack,
         /// Goes forward one page.
         NavigateForward,
+        /// Opens the palette that lists every story.
+        OpenCommandPalette,
         /// Shows or hides the performance HUD (with the `fps` feature).
         TogglePerformanceHud,
     ]
@@ -177,6 +179,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::CommandStory>(StorySection::Actions),
         StoryEntry::of::<stories::PopoverStory>(StorySection::Overlays),
         StoryEntry::of::<stories::DialogStory>(StorySection::Overlays),
+        StoryEntry::of::<stories::FilePickerStory>(StorySection::Overlays),
         StoryEntry::of::<stories::FolderPickerStory>(StorySection::Overlays),
         StoryEntry::of::<stories::ComposerStory>(StorySection::Ai),
         StoryEntry::of::<stories::AvatarStory>(StorySection::FeedbackAndDisplay),
@@ -196,6 +199,25 @@ pub fn stories() -> Vec<StoryEntry> {
     entries
 }
 
+/// The commands of the story palette: a group per section, in section
+/// order, with the stories of each in display order.
+fn palette_entries(entries: &[StoryEntry]) -> Vec<CommandEntry> {
+    StorySection::ALL
+        .iter()
+        .map(|section| {
+            CommandGroup::new()
+                .heading(section.title())
+                .items(
+                    entries
+                        .iter()
+                        .filter(|entry| entry.section == *section)
+                        .map(|entry| CommandItem::new(entry.title, entry.title).icon(entry.icon)),
+                )
+                .into()
+        })
+        .collect()
+}
+
 /// The gallery window content: a navigation stack of pages, one per story
 /// shown plus settings, so back and forward walk the stories visited the
 /// way the reference app walks its chats.
@@ -209,6 +231,10 @@ pub struct Gallery {
     settings: Entity<SettingsPage>,
     /// The text that filters the story list in the sidebar.
     filter: Entity<InputState>,
+    /// The palette that lists every story, opened with the keyboard or
+    /// the menu.
+    palette: Entity<CommandState>,
+    palette_open: bool,
     show_hud: bool,
 }
 
@@ -249,6 +275,23 @@ impl Gallery {
             },
         )
         .detach();
+        let palette = cx.new(|cx| {
+            CommandState::new("Search components...", window, cx)
+                .with_entries(palette_entries(&entries))
+        });
+        cx.observe(&palette, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(
+            &palette,
+            window,
+            |this, _, event: &CommandEvent, window, cx| {
+                if let CommandEvent::Confirmed(title) = event {
+                    this.palette_open = false;
+                    this.select_story(title, window, cx);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
         cx.observe(&stack, |_, _, cx| cx.notify()).detach();
         cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
@@ -281,6 +324,12 @@ impl Gallery {
                 let _ = gallery.update(cx, |gallery, cx| gallery.go_forward(cx));
             }
         });
+        App::on_action(cx, {
+            let gallery = gallery.clone();
+            move |_: &OpenCommandPalette, cx| {
+                let _ = gallery.update(cx, |gallery, cx| gallery.open_palette(cx));
+            }
+        });
         App::on_action(cx, move |_: &TogglePerformanceHud, cx| {
             let _ = gallery.update(cx, |gallery, cx| {
                 gallery.show_hud = !gallery.show_hud;
@@ -294,6 +343,8 @@ impl Gallery {
             entries,
             settings,
             filter,
+            palette,
+            palette_open: false,
             show_hud: false,
         };
         gallery.open_story(0, NavMotion::Immediate, window, cx);
@@ -331,6 +382,22 @@ impl Gallery {
                 sidebar.set_open(false, cx);
             }
         });
+    }
+
+    /// Opens the palette that lists every story.
+    pub fn open_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette_open = true;
+        cx.notify();
+    }
+
+    /// Whether the story palette is open.
+    pub fn palette_open(&self) -> bool {
+        self.palette_open
+    }
+
+    /// The state of the story palette.
+    pub fn palette(&self) -> &Entity<CommandState> {
+        &self.palette
     }
 
     /// Pushes the story with `title`. Unknown titles change nothing.
@@ -483,6 +550,18 @@ impl Render for Gallery {
                     .child(NavStack::new(&self.stack).flex_1().min_h_0()),
             )
             .child(shell_controls(&self.sidebar, &self.stack, window, cx))
+            .child({
+                let gallery = cx.entity().downgrade();
+                CommandDialog::new("gallery-palette", &self.palette)
+                    .open(self.palette_open)
+                    .empty("No components found.")
+                    .on_open_change(move |open, _, cx| {
+                        let _ = gallery.update(cx, |gallery, cx| {
+                            gallery.palette_open = open;
+                            cx.notify();
+                        });
+                    })
+            })
             .when(self.show_hud, |this| {
                 #[cfg(feature = "fps")]
                 {
@@ -891,7 +970,7 @@ mod tests {
         let count = titles.len();
         titles.dedup();
         assert_eq!(titles.len(), count, "a title is registered twice");
-        assert_eq!(count, 27, "a story was dropped or added without this count");
+        assert_eq!(count, 28, "a story was dropped or added without this count");
         for section in super::StorySection::ALL {
             assert!(
                 entries.iter().any(|e| e.section() == section),

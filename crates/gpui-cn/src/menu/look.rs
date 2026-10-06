@@ -100,6 +100,13 @@ impl MenuLook {
         self.max_height - self.padding * 2. - border - search
     }
 
+    /// The height of a palette that fills a frame of its own, with the
+    /// search field and the list at their tallest: a menu's maximum height
+    /// less the padding and hairline a bordered palette would add.
+    pub(crate) fn palette_height(&self) -> Pixels {
+        self.max_height - self.padding * 2. - px(2.)
+    }
+
     /// The panel's shadow at `strength` of its ink.
     pub(crate) fn shadow(&self, strength: f32) -> Vec<BoxShadow> {
         self.shadow

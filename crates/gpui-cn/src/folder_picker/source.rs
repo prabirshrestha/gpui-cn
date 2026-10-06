@@ -2,9 +2,11 @@
 //! remote machine, or API can implement, and the local disk as the
 //! default.
 
-use std::{io, path::Path, path::PathBuf, sync::Arc};
+use std::{io, path::Path, path::PathBuf, rc::Rc};
 
 use gpui_kit::{App, AppContext as _, SharedString, Task};
+
+use crate::path_browser::{Entry, Page, PageToken, Source};
 use smol::stream::StreamExt as _;
 
 /// A folder in a listing.
@@ -37,24 +39,6 @@ impl FolderEntry {
     /// Whether the folder is hidden.
     pub fn hidden(&self) -> bool {
         self.hidden
-    }
-}
-
-/// Where the next page of a listing starts. The source makes it and reads
-/// it back, so it can hold anything: an offset, a cursor, a continuation
-/// token. The picker only stores it and hands it back.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PageToken(Arc<str>);
-
-impl PageToken {
-    /// A token that holds `value`.
-    pub fn new(value: impl Into<Arc<str>>) -> Self {
-        Self(value.into())
-    }
-
-    /// The value the source put in the token.
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
@@ -202,4 +186,43 @@ async fn list_local(dir: PathBuf) -> io::Result<FolderPage> {
             .then_with(|| a.name().cmp(b.name()))
     });
     Ok(FolderPage::new(folders))
+}
+
+impl Entry for FolderEntry {
+    fn name(&self) -> &SharedString {
+        &self.name
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn is_folder(&self) -> bool {
+        true
+    }
+}
+
+/// A folder source seen as the browser's source.
+pub(super) struct Adapter(pub(super) Rc<dyn FolderSource>);
+
+impl Source<FolderEntry> for Adapter {
+    fn list(
+        &self,
+        dir: &Path,
+        page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<io::Result<Page<FolderEntry>>> {
+        let task = self.0.list(dir, page, cx);
+        cx.spawn(async move |_| {
+            let page = task.await?;
+            Ok(Page {
+                entries: page.entries,
+                next: page.next,
+            })
+        })
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        self.0.home()
+    }
 }

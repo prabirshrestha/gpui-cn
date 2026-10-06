@@ -87,6 +87,18 @@ mod macos {
         for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
             cx.update(|cx| Theme::change(mode, cx));
             capture(&mut cx, &format!("gallery-{name}"));
+            cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_palette(cx)));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the palette");
+            capture(&mut cx, &format!("gallery-{name}-palette"));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.press("escape", cx);
+                window.render_frame(cx);
+            })
+            .expect("close the palette");
             for (query, label) in [("sel", "filtered"), ("zzzz", "unmatched")] {
                 cx.update_window(handle.into(), |_, window, cx| {
                     window.render_frame(cx);
@@ -153,6 +165,7 @@ mod macos {
                 "Command",
                 "Popover",
                 "Dialog",
+                "File picker",
                 "Folder picker",
                 "Composer",
                 "Avatar",
@@ -380,13 +393,13 @@ mod macos {
                 if story == "Command" {
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
-                        gpui_cn_story::reveal("command-popover-trigger", window, cx);
-                        window.click("command-popover-trigger", cx);
+                        gpui_cn_story::reveal("command-dialog-trigger", window, cx);
+                        window.click("command-dialog-trigger", cx);
                         window.render_frame(cx);
                         window.render_frame(cx);
                     })
                     .expect("open the palette");
-                    capture(&mut cx, &format!("story-{slug}-popover-{name}"));
+                    capture(&mut cx, &format!("story-{slug}-dialog-{name}"));
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.press("escape", cx);
                     })
@@ -406,6 +419,86 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the dialog");
+                }
+                if story == "File picker" {
+                    for (trigger, suffix, steps) in [
+                        (
+                            gpui_cn_story::stories::FilePickerStory::TRIGGER_ONE,
+                            "one",
+                            &[("", None), ("-selected", Some("main.rs"))][..],
+                        ),
+                        (
+                            gpui_cn_story::stories::FilePickerStory::TRIGGER_MANY,
+                            "many",
+                            &[("", None), ("-selected", Some("notes.txt"))][..],
+                        ),
+                    ] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.click(trigger, cx);
+                        })
+                        .expect("open the picker");
+                        for (extra, click) in steps {
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                                if let Some(file) = click {
+                                    let id = gpui_kit::ElementId::NamedChild(
+                                        gpui_kit::ElementId::NamedChild(
+                                            gpui_kit::ElementId::Name(
+                                                format!("file-picker-{suffix}").into(),
+                                            )
+                                            .into(),
+                                            "entry".into(),
+                                        )
+                                        .into(),
+                                        (*file).into(),
+                                    );
+                                    window.click(id, cx);
+                                    window.render_frame(cx);
+                                }
+                            })
+                            .expect("draw the picker");
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("draw the picker");
+                            capture(&mut cx, &format!("story-{slug}-{suffix}{extra}-{name}"));
+                        }
+                        if suffix == "one" {
+                            cx.update(|cx| {
+                                let story = gallery
+                                    .read(cx)
+                                    .current_story::<gpui_cn_story::stories::FilePickerStory>(cx)
+                                    .expect("the file picker story");
+                                let one = story.read(cx).one().clone();
+                                one.update(cx, |state, cx| state.set_active_filter(1, cx));
+                            });
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("draw the filtered picker");
+                            capture(&mut cx, &format!("story-{slug}-one-filtered-{name}"));
+                            cx.update(|cx| {
+                                let story = gallery
+                                    .read(cx)
+                                    .current_story::<gpui_cn_story::stories::FilePickerStory>(cx)
+                                    .expect("the file picker story");
+                                let one = story.read(cx).one().clone();
+                                one.update(cx, |state, cx| state.set_active_filter(0, cx));
+                            });
+                        }
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("escape", cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("close the picker");
+                    }
                 }
                 if story == "Folder picker" {
                     cx.update_window(handle.into(), |_, window, cx| {

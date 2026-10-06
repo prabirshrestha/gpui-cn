@@ -1,4 +1,4 @@
-//! The folder picker's pure logic: how the path text splits into a
+//! The pure logic the folder and file pickers share: how the path text splits into a
 //! directory and a query, how a query ranks the folders, and which folder
 //! a typed separator goes into. It works on plain strings, so it needs no
 //! window and no file system.
@@ -14,7 +14,7 @@ use nucleo_matcher::{
     pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 
-use super::source::FolderEntry;
+use super::Entry;
 
 /// A folder that matches the query, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,7 +142,32 @@ pub(crate) fn collapse_home(text: &str, home: Option<&Path>, windows: bool) -> S
 /// of the name, ignoring case, scored so that runs and word starts rank
 /// first. Ties go to the shorter name, then keep the listing's order. The folders that do not match
 /// are left out.
-pub(crate) fn filter(entries: &[FolderEntry], query: &str) -> Vec<Match> {
+#[cfg(test)]
+pub(crate) fn filter<E: Entry>(entries: &[E], query: &str) -> Vec<Match> {
+    rank(entries, &|_| true, query)
+}
+
+/// Every visible entry in the listing's order, with no matched ranges: what
+/// an empty query shows.
+pub(crate) fn all_visible<E: Entry>(entries: &[E], visible: &dyn Fn(&E) -> bool) -> Vec<Match> {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| visible(entry))
+        .map(|(index, _)| Match {
+            index,
+            score: 0,
+            ranges: Vec::new(),
+        })
+        .collect()
+}
+
+/// [`filter`] over the entries `visible` lets through.
+pub(crate) fn rank<E: Entry>(
+    entries: &[E],
+    visible: &dyn Fn(&E) -> bool,
+    query: &str,
+) -> Vec<Match> {
     let atom = Atom::new(
         query,
         CaseMatching::Ignore,
@@ -156,6 +181,7 @@ pub(crate) fn filter(entries: &[FolderEntry], query: &str) -> Vec<Match> {
     let mut matches: Vec<Match> = entries
         .iter()
         .enumerate()
+        .filter(|(_, entry)| visible(entry))
         .filter_map(|(index, entry)| {
             indices.clear();
             let haystack = Utf32Str::new(entry.name(), &mut buffer);
@@ -200,8 +226,8 @@ fn byte_ranges(text: &str, indices: &[u32]) -> Vec<Range<usize>> {
 /// The folder a typed separator goes into: the one named exactly like the
 /// query, or else the best match. `None` when the query is empty or
 /// nothing matches.
-pub(crate) fn resolve_descend(
-    entries: &[FolderEntry],
+pub(crate) fn resolve_descend<E: Entry>(
+    entries: &[E],
     matches: &[Match],
     query: &str,
 ) -> Option<SharedString> {
@@ -210,8 +236,13 @@ pub(crate) fn resolve_descend(
     }
     entries
         .iter()
-        .find(|entry| entry.name().as_ref() == query)
-        .or_else(|| matches.first().and_then(|found| entries.get(found.index)))
+        .find(|entry| entry.is_folder() && entry.name().as_ref() == query)
+        .or_else(|| {
+            matches
+                .iter()
+                .filter_map(|found| entries.get(found.index))
+                .find(|entry| entry.is_folder())
+        })
         .map(|entry| entry.name().clone())
 }
 
@@ -219,11 +250,31 @@ pub(crate) fn resolve_descend(
 mod tests {
     use super::*;
 
-    fn entries(names: &[&str]) -> Vec<FolderEntry> {
-        names.iter().map(|name| FolderEntry::new(*name)).collect()
+    #[derive(Clone)]
+    struct TestEntry(SharedString);
+
+    impl Entry for TestEntry {
+        fn name(&self) -> &SharedString {
+            &self.0
+        }
+
+        fn hidden(&self) -> bool {
+            self.0.starts_with('.')
+        }
+
+        fn is_folder(&self) -> bool {
+            true
+        }
     }
 
-    fn names(entries: &[FolderEntry], matches: &[Match]) -> Vec<String> {
+    fn entries(names: &[&str]) -> Vec<TestEntry> {
+        names
+            .iter()
+            .map(|name| TestEntry(SharedString::from(name.to_string())))
+            .collect()
+    }
+
+    fn names(entries: &[TestEntry], matches: &[Match]) -> Vec<String> {
         matches
             .iter()
             .map(|found| entries[found.index].name().to_string())

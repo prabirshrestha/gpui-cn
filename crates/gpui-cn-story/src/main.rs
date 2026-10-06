@@ -6,8 +6,8 @@
 
 use gpui_cn::TitleBar;
 use gpui_cn_story::{
-    Gallery, NavigateBack, NavigateForward, OpenSettings, TogglePerformanceHud, ToggleSidebar,
-    WINDOW_SIZE,
+    Gallery, NavigateBack, NavigateForward, OpenCommandPalette, OpenSettings, TogglePerformanceHud,
+    ToggleSidebar, WINDOW_SIZE,
 };
 use gpui_kit::*;
 
@@ -48,6 +48,10 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
             #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-k", OpenCommandPalette, None),
+            #[cfg(not(target_os = "macos"))]
+            KeyBinding::new("ctrl-k", OpenCommandPalette, None),
+            #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-b", ToggleSidebar, None),
             #[cfg(not(target_os = "macos"))]
             KeyBinding::new("ctrl-b", ToggleSidebar, None),
@@ -78,6 +82,8 @@ fn main() {
             Menu {
                 name: "View".into(),
                 items: vec![
+                    MenuItem::action("Search Components...", OpenCommandPalette),
+                    MenuItem::separator(),
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
                     MenuItem::separator(),
                     MenuItem::action("Back", NavigateBack),
