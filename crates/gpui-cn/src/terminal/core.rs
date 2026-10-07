@@ -814,11 +814,18 @@ fn hyperlink(terminal: &vt::Terminal, column: u16, row: usize) -> Option<Arc<str
     Some(Arc::from(String::from_utf8_lossy(&buf[..len]).as_ref()))
 }
 
-/// Decode an OSC 7 value into an absolute path.
+/// Decode an OSC 7 value into an absolute path. On Windows a file URI
+/// names a drive after its first slash, as in `file://host/C:/Users`, and
+/// the slash before the drive is dropped.
 pub(crate) fn reported_cwd(value: &str) -> Option<PathBuf> {
     let path = if let Some(uri) = value.strip_prefix("file://") {
         let slash = uri.find('/')?;
-        &uri[slash..]
+        let path = &uri[slash..];
+        if cfg!(windows) && path.as_bytes().get(2) == Some(&b':') {
+            &path[1..]
+        } else {
+            path
+        }
     } else {
         value
     };
@@ -1014,6 +1021,7 @@ mod tests {
         assert_eq!(frame.rows[0].text.trim_end(), "onetwo");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn reported_cwd_decodes_file_uris() {
         assert_eq!(
@@ -1021,6 +1029,21 @@ mod tests {
             Some(PathBuf::from("/tmp/a b"))
         );
         assert_eq!(reported_cwd("/var/tmp"), Some(PathBuf::from("/var/tmp")));
+        assert_eq!(reported_cwd("relative"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reported_cwd_decodes_file_uris_with_a_drive() {
+        assert_eq!(
+            reported_cwd("file://host/C:/Users/a%20b"),
+            Some(PathBuf::from("C:/Users/a b"))
+        );
+        assert_eq!(
+            reported_cwd("C:\\Windows"),
+            Some(PathBuf::from("C:\\Windows"))
+        );
+        assert_eq!(reported_cwd("/tmp"), None);
         assert_eq!(reported_cwd("relative"), None);
     }
 

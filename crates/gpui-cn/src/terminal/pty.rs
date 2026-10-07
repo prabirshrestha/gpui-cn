@@ -491,10 +491,8 @@ mod tests {
             .iter_extra_env_as_str()
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect();
-        assert_eq!(
-            env.get("ZDOTDIR").map(String::as_str),
-            Some("/res/shell-integration/zsh")
-        );
+        let zdotdir = Path::new("/res").join("shell-integration").join("zsh");
+        assert_eq!(env.get("ZDOTDIR").map(String::as_str), zdotdir.to_str());
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-ghostty"));
         assert_eq!(env.get("TERMINFO").map(String::as_str), Some("/ti"));
         assert!(
