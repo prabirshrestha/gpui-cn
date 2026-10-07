@@ -475,3 +475,17 @@ fn closing_a_tab_that_runs_a_program_asks_first(cx: &mut TestAppContext) {
     assert!(!shows(handle, cx, tab("shell-2")), "closed");
     assert!(shows(handle, cx, tab("shell-1")));
 }
+
+#[gpui_kit::test]
+fn the_shortcuts_button_opens_a_dialog_that_escape_closes(cx: &mut TestAppContext) {
+    let handle = setup(cx);
+    let popup =
+        || ElementId::NamedChild(Arc::new("terminal-shortcuts-dialog".into()), "popup".into());
+    assert!(!shows(handle, cx, popup()));
+
+    click(handle, cx, TerminalStory::SHORTCUTS);
+    assert!(shows(handle, cx, popup()), "the button opens the dialog");
+
+    press(handle, cx, &["escape"]);
+    assert!(!shows(handle, cx, popup()), "Escape closes it");
+}

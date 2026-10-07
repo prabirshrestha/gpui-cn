@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use std::path::PathBuf;
 
-use gpui_cn::prelude::Disableable as _;
+use gpui_cn::prelude::{Disableable as _, StyledExt as _};
 use gpui_cn::terminal::{
     FixtureSource, LocalTerminalOptions, Terminal, TerminalColors, TerminalConfig, TerminalEvent,
     TerminalState, WorkingDirectory, actions,
@@ -404,6 +404,8 @@ pub struct TerminalStory {
     tab_menu: Entity<MenuState>,
     /// A close that would end a running program, while the story asks.
     pending_close: Option<PendingClose>,
+    /// Whether the shortcuts dialog shows.
+    shortcuts_open: bool,
     /// The story itself, for menus built when they open.
     this: WeakEntity<Self>,
     next_pane: u64,
@@ -493,6 +495,7 @@ impl Story for TerminalStory {
                 pane_menu: cx.new(MenuState::new),
                 tab_menu: cx.new(MenuState::new),
                 pending_close: None,
+                shortcuts_open: false,
                 this: cx.weak_entity(),
                 next_pane: 0,
                 next_tab: 0,
@@ -1149,7 +1152,98 @@ impl TerminalStory {
     }
 }
 
+/// The story's shortcuts by group, as an action and its keys, for this
+/// platform's bindings.
+fn shortcut_groups() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    let mac = cfg!(target_os = "macos");
+    let pick = |mac_keys, other_keys| if mac { mac_keys } else { other_keys };
+    vec![
+        (
+            "Tabs",
+            vec![
+                ("New tab", pick("Ctrl-A c, Cmd-T", "Ctrl-A c")),
+                ("Next tab", pick("Ctrl-A n, Cmd-Shift-]", "Ctrl-A n")),
+                ("Previous tab", pick("Ctrl-A p, Cmd-Shift-[", "Ctrl-A p")),
+                ("Select a tab", pick("Ctrl-A 1-9, Cmd-1-9", "Ctrl-A 1-9")),
+            ],
+        ),
+        (
+            "Panes",
+            vec![
+                ("Split right", pick("Ctrl-A | or %, Cmd-D", "Ctrl-A | or %")),
+                (
+                    "Split down",
+                    pick("Ctrl-A - or \", Cmd-Shift-D", "Ctrl-A - or \""),
+                ),
+                (
+                    "Move between panes",
+                    pick("Ctrl-A h j k l, Cmd-Alt-Arrows", "Ctrl-A h j k l"),
+                ),
+                ("Next pane", "Ctrl-A o"),
+                ("Close pane", pick("Ctrl-A x, Cmd-W", "Ctrl-A x")),
+                ("Send Ctrl-A", "Ctrl-A Ctrl-A"),
+            ],
+        ),
+        (
+            "Zoom",
+            vec![
+                (
+                    "Zoom the pane",
+                    pick("Ctrl-A z, Cmd-Shift-Enter", "Ctrl-A z"),
+                ),
+                ("Larger font", pick("Cmd-+", "Ctrl-+")),
+                ("Smaller font", pick("Cmd--", "Ctrl--")),
+                ("Reset font", pick("Cmd-0", "Ctrl-0")),
+            ],
+        ),
+        (
+            "Copy and paste",
+            vec![
+                ("Copy", pick("Cmd-C", "Ctrl-Shift-C")),
+                ("Paste", pick("Cmd-V", "Ctrl-Shift-V")),
+                ("Select all", pick("Cmd-A", "Ctrl-Shift-A")),
+            ],
+        ),
+    ]
+}
+
 impl TerminalStory {
+    /// The id of the button that opens the shortcuts dialog.
+    pub const SHORTCUTS: &str = "terminal-shortcuts";
+
+    /// Lists the story's shortcuts in a table, a group per heading.
+    fn render_shortcuts_dialog(&self, cx: &mut Context<Self>) -> Dialog {
+        let muted = cx.theme().muted_foreground();
+        let groups = shortcut_groups().into_iter().map(|(group, rows)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().font_medium().text_color(muted).child(group))
+                .children(rows.into_iter().map(|(action, keys)| {
+                    div()
+                        .flex()
+                        .gap_4()
+                        .child(div().w_40().flex_shrink_0().child(action))
+                        .child(div().flex_1().text_color(muted).child(keys))
+                }))
+        });
+        Dialog::new("terminal-shortcuts-dialog")
+            .open(self.shortcuts_open)
+            .title("Shortcuts")
+            .description("Ctrl-A is the leader: press it, then the key.")
+            .on_open_change({
+                let this = self.this.clone();
+                move |open, _, cx| {
+                    let _ = this.update(cx, |this, cx| {
+                        this.shortcuts_open = open;
+                        cx.notify();
+                    });
+                }
+            })
+            .child(div().flex().flex_col().gap_4().children(groups))
+    }
+
     /// Asks before a close that would end a running program, in Ghostty's
     /// words.
     fn render_close_dialog(&self, cx: &mut Context<Self>) -> Dialog {
@@ -1231,14 +1325,6 @@ impl Render for TerminalStory {
                     self.render_node(&layout.root, layout.focused, split, cx)
                 }
             });
-        let leader = if cfg!(target_os = "macos") {
-            "Ctrl-A, then: c new tab; n, p, 1-9 select a tab; | or % split right; - or \" split \
-             down; h, j, k, l, o move between panes; x close the pane; Ctrl-A sends Ctrl-A. \
-             Cmd-T, Cmd-W, Cmd-D, Cmd-Shift-D, Cmd-1 to Cmd-9, and Cmd-Shift-[ and ] do the same."
-        } else {
-            "Ctrl-A, then: c new tab; n, p, 1-9 select a tab; | or % split right; - or \" split \
-             down; h, j, k, l, o move between panes; x close the pane; Ctrl-A sends Ctrl-A."
-        };
         page([section(
             "Shell",
             div()
@@ -1251,11 +1337,25 @@ impl Render for TerminalStory {
                      engine. Click a pane to type into it.",
                     cx,
                 ))
-                .child(note(leader, cx))
                 .child(
-                    Select::new("terminal-theme", &self.themes)
-                        .accessibility_label("Terminal theme")
-                        .w(px(280.)),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Select::new("terminal-theme", &self.themes)
+                                .accessibility_label("Terminal theme")
+                                .w(px(280.)),
+                        )
+                        .child(
+                            Button::new(Self::SHORTCUTS)
+                                .outline()
+                                .label("Shortcuts")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.shortcuts_open = true;
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .child(
                     frame(px(480.), cx)
@@ -1330,7 +1430,8 @@ impl Render for TerminalStory {
                         ))
                         .child(div().flex().flex_1().min_h_0().children(body)),
                 )
-                .child(self.render_close_dialog(cx)),
+                .child(self.render_close_dialog(cx))
+                .child(self.render_shortcuts_dialog(cx)),
         )])
     }
 }

@@ -208,6 +208,22 @@ mod macos {
                 }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                #[cfg(feature = "terminal")]
+                if story == "Terminal" {
+                    use gpui_cn_story::stories::TerminalStory;
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.click(TerminalStory::SHORTCUTS, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the shortcuts");
+                    capture(&mut cx, &format!("story-{slug}-shortcuts-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the shortcuts");
+                }
                 if story == "Menu" {
                     use gpui_cn_story::stories::MenuStory;
                     let named = |parent: &'static str, child: &'static str| {
