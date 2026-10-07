@@ -8,7 +8,7 @@
 # published tarball and `git archive`), bindings, terminfo (source plus
 # `tic -x` output), shell integration scripts.
 #
-# Needs: git, curl, shasum, tar, zig 0.16, tic, rsync, cargo, libclang
+# Needs: git, curl, shasum, tar, zig 0.16, tic, rsync, cargo, Homebrew llvm@22
 # (for bindgen). Run on macOS, where the bindings are generated.
 set -euo pipefail
 
@@ -70,7 +70,10 @@ root = $tarroot
 EOF
 
 echo "==> bindings"
-DOCS_RS=1 cargo run --quiet -p ghostty-vt-sys --features bindgen-tool --bin gen-bindings
+# The doc comments bindgen keeps depend on the libclang version; CI checks
+# the bindings with the same Homebrew LLVM.
+LIBCLANG_PATH="$(brew --prefix llvm@22)/lib" DOCS_RS=1 \
+  cargo run --quiet -p ghostty-vt-sys --features bindgen-tool --bin gen-bindings
 cargo fmt -p ghostty-vt-sys 2>/dev/null || true
 
 echo "==> terminfo"

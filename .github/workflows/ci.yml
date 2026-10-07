@@ -47,8 +47,14 @@ jobs:
         with:
           submodules: true
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # The doc comments bindgen keeps depend on the libclang version, so
+      # the bindings are generated with the same LLVM as scripts/sync.sh.
+      - run: brew install llvm@22
       - name: Regenerate the bindings from the pinned headers
-        run: cargo run -p ghostty-vt-sys --features bindgen-tool --bin gen-bindings --locked
+        run: |
+          export LIBCLANG_PATH="$(brew --prefix llvm@22)/lib"
+          cargo run -p ghostty-vt-sys --features bindgen-tool --bin gen-bindings --locked
+          cargo fmt -p ghostty-vt-sys
         env:
           DOCS_RS: "1"
       - run: git diff --exit-code -- crates/ghostty-vt-sys/src/bindings.rs
