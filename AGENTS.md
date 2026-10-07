@@ -160,7 +160,7 @@ cargo deny check licenses
 ```
 
 These need Zig 0.16 on `PATH` (see `mise.toml`) and, for a build without
-network, the `vendor/ghostty` submodule checked out.
+network, the `third_party/ghostty` submodule checked out.
 
 `deny.toml` lists the licenses this repository accepts. A crate that is
 only available under the GPL or the LGPL fails the check. Never add one.

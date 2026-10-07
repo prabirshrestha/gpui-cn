@@ -107,7 +107,7 @@ jobs:
         with:
           version: 0.16.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: test ! -f vendor/ghostty/build.zig
+      - run: test ! -f third_party/ghostty/build.zig
       - run: cargo test -p ghostty-vt-sys -p ghostty-vt --all-features --locked
 
   system-dir:
@@ -123,7 +123,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Fetch the Zig packages once and extract them for --system
         run: |
-          cd vendor/ghostty
+          cd third_party/ghostty
           zig build -Demit-lib-vt -Doptimize=ReleaseFast --global-cache-dir "$RUNNER_TEMP/zig-global" --prefix "$RUNNER_TEMP/zig-out" >/dev/null
           mkdir -p "$RUNNER_TEMP/zig-pkg"
           for pkg in "$RUNNER_TEMP"/zig-global/p/*.tar.gz; do tar xzf "$pkg" -C "$RUNNER_TEMP/zig-pkg"; done

@@ -3,7 +3,7 @@
 //! Run through `scripts/sync.sh`, or directly with
 //! `cargo run -p ghostty-vt-sys --features bindgen-tool --bin gen-bindings`.
 //! The headers come from `GHOSTTY_INCLUDE_DIR`, `GHOSTTY_SOURCE_DIR/include`,
-//! or the `vendor/ghostty` submodule, in that order.
+//! or the `third_party/ghostty` submodule, in that order.
 //!
 //! Adapted from libghostty-vt-sys 0.2.2 (MIT OR Apache-2.0).
 
@@ -27,12 +27,12 @@ fn main() {
         let submodule = manifest_dir
             .join("..")
             .join("..")
-            .join("vendor")
+            .join("third_party")
             .join("ghostty")
             .join("include");
         assert!(
             submodule.join("ghostty").join("vt.h").exists(),
-            "could not find ghostty headers; check out the vendor/ghostty submodule, \
+            "could not find ghostty headers; check out the third_party/ghostty submodule, \
              or set GHOSTTY_INCLUDE_DIR or GHOSTTY_SOURCE_DIR"
         );
         submodule

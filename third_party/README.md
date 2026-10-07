@@ -1,6 +1,6 @@
 # Third-party notices
 
-The crates in this repository are Apache-2.0 (see `LICENSE-APACHE`). The
+The crates in this repository are Apache-2.0 (see `../LICENSE-APACHE`). The
 terminal engine crates and the `ghostty` feature of gpui-cn ship material
 derived from, and link native code built from, the projects below.
 `cargo deny check licenses` covers the Rust dependencies; the native code

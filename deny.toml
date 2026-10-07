@@ -30,7 +30,7 @@ allow = [
 confidence-threshold = 0.8
 
 # The native code compiled into libghostty-vt by `ghostty-vt-sys` is
-# invisible to cargo deny. THIRD_PARTY_NOTICES.md lists it.
+# invisible to cargo deny. third_party/README.md lists it.
 #
 # ureq's rustls backend (used on Linux build hosts to download the Ghostty
 # tarball) ships Mozilla's root certificates, which are data under CDLA.

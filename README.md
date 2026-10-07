@@ -215,7 +215,7 @@ must follow.
 The workspace also holds the terminal engine that gpui-cn's `ghostty`
 feature uses: `ghostty-vt-sys` builds libghostty-vt from Ghostty's source
 with Zig and links it statically, and `ghostty-vt` is its safe API. The
-Ghostty pin is in `GHOSTTY.lock` and the `vendor/ghostty` submodule. To
+Ghostty pin is in `GHOSTTY.lock` and the `third_party/ghostty` submodule. To
 move it, which also regenerates the bindings, the terminfo database, and
 the shell integration scripts:
 
@@ -250,6 +250,6 @@ Apache-2.0. Third-party assets:
   `damascene-fonts-jetbrains-mono` crate under the SIL Open Font License
   1.1.
 - The terminal engine ships Ghostty's terminfo database and shell
-  integration scripts under Ghostty's MIT license (`LICENSE-GHOSTTY`).
-  `THIRD_PARTY_NOTICES.md` lists the code the terminal is adapted from
+  integration scripts under Ghostty's MIT license (`third_party/LICENSE-GHOSTTY`).
+  `third_party/README.md` lists the code the terminal is adapted from
   and the native libraries linked into libghostty-vt.

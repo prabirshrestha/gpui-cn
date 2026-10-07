@@ -3,7 +3,7 @@
 //! Source lookup order:
 //!
 //! 1. `GHOSTTY_SOURCE_DIR`: a Ghostty checkout or extracted source tarball.
-//! 2. The `vendor/ghostty` git submodule at the repository root.
+//! 2. The `third_party/ghostty` git submodule at the repository root.
 //! 3. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
 //!    verified against the sha256 in `GHOSTTY.lock`.
 //! 4. With the `pkg-config` feature, an installed `libghostty-vt-static`.
@@ -67,7 +67,7 @@ fn main() {
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.join("..").join("..");
-    let submodule = repo_root.join("vendor").join("ghostty");
+    let submodule = repo_root.join("third_party").join("ghostty");
     // The gitlink file changes when the submodule moves to another commit.
     // Never watch the source files themselves: a checkout touches mtimes.
     let gitlink = submodule.join(".git");

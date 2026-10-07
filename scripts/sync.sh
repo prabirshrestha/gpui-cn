@@ -29,10 +29,10 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-echo "==> submodule vendor/ghostty at $commit"
-git submodule update --init vendor/ghostty
-git -C vendor/ghostty fetch --quiet origin "$commit"
-git -C vendor/ghostty checkout --quiet --detach "$commit"
+echo "==> submodule third_party/ghostty at $commit"
+git submodule update --init third_party/ghostty
+git -C third_party/ghostty fetch --quiet origin "$commit"
+git -C third_party/ghostty checkout --quiet --detach "$commit"
 
 echo "==> tarball"
 url="https://tip.files.ghostty.org/$commit/libghostty-vt-source.tar.gz"
@@ -49,8 +49,8 @@ excludes=()
 while IFS= read -r line; do
   excludes+=(":(exclude)$line")
 done < <(awk '/^const lib_vt_excludes/{p=1;next} p&&/^};/{exit} p' \
-  vendor/ghostty/src/build/GhosttyDist.zig | sed -n 's/^[[:space:]]*"\([^"]*\)",.*/\1/p')
-git -C vendor/ghostty archive --format=tgz "--prefix=$tarroot/" \
+  third_party/ghostty/src/build/GhosttyDist.zig | sed -n 's/^[[:space:]]*"\([^"]*\)",.*/\1/p')
+git -C third_party/ghostty archive --format=tgz "--prefix=$tarroot/" \
   "--add-file=$work/VERSION" "--prefix=$tarroot/" \
   -o "$work/repro.tar.gz" "$commit" "${excludes[@]}"
 repro=$(shasum -a 256 "$work/repro.tar.gz" | cut -d' ' -f1)
@@ -76,7 +76,7 @@ cargo fmt -p ghostty-vt-sys 2>/dev/null || true
 echo "==> terminfo"
 ti="$work/terminfo"
 mkdir -p "$ti"
-cp vendor/ghostty/src/terminfo/Source.zig vendor/ghostty/src/terminfo/ghostty.zig "$ti/"
+cp third_party/ghostty/src/terminfo/Source.zig third_party/ghostty/src/terminfo/ghostty.zig "$ti/"
 cat > "$ti/main.zig" <<'EOF'
 const std = @import("std");
 const ghostty = @import("ghostty.zig").ghostty;
@@ -103,7 +103,7 @@ test -f "$res/terminfo/67/ghostty"
 echo "==> shell integration"
 rm -rf "$res/shell-integration"
 mkdir -p "$res/shell-integration"
-rsync -a --exclude README.md vendor/ghostty/src/shell-integration/ "$res/shell-integration/"
+rsync -a --exclude README.md third_party/ghostty/src/shell-integration/ "$res/shell-integration/"
 
 echo "==> verify"
 cargo build -p ghostty-vt-sys
