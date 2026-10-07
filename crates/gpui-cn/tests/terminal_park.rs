@@ -49,6 +49,13 @@ impl Counting {
 
 const IDLE: Duration = Duration::from_millis(100);
 
+/// The idle period of the tests that keep a terminal busy, long against
+/// [`TICK`] so a slow machine never misses a tick by a whole period.
+const LONG_IDLE: Duration = Duration::from_millis(500);
+
+/// How often those tests write or paint.
+const TICK: Duration = Duration::from_millis(20);
+
 struct Running {
     peer: StreamPeer,
     sink: FrameSink,
@@ -73,9 +80,13 @@ fn start(park: ParkOptions) -> Running {
 }
 
 fn counting() -> (Arc<Counting>, ParkOptions) {
+    counting_after(IDLE)
+}
+
+fn counting_after(idle: Duration) -> (Arc<Counting>, ParkOptions) {
     let store = Arc::new(Counting::default());
     let options = ParkOptions::default()
-        .with_idle(IDLE)
+        .with_idle(idle)
         .with_shared_store(store.clone());
     (store, options)
 }
@@ -198,23 +209,23 @@ fn a_paint_input_or_resize_restores_a_parked_terminal() {
 
 #[test]
 fn a_busy_or_painted_terminal_never_parks() {
-    let (store, options) = counting();
+    let (store, options) = counting_after(LONG_IDLE);
     let terminal = start(options);
     // Output faster than the idle period.
-    let until = Instant::now() + IDLE * 4;
+    let until = Instant::now() + LONG_IDLE * 2;
     while Instant::now() < until {
         terminal.peer.output(b"tick\r\n");
         let _ = terminal.sink.take();
         terminal.handle.request_frame();
-        std::thread::sleep(IDLE / 3);
+        std::thread::sleep(TICK);
     }
     assert_eq!(store.saves(), 0, "busy");
     // Painted faster than the idle period, as a blinking cursor is.
-    let until = Instant::now() + IDLE * 4;
+    let until = Instant::now() + LONG_IDLE * 2;
     while Instant::now() < until {
         let _ = terminal.sink.take();
         terminal.handle.request_frame();
-        std::thread::sleep(IDLE / 3);
+        std::thread::sleep(TICK);
     }
     assert_eq!(store.saves(), 0, "painted");
     terminal.handle.close();
@@ -268,19 +279,26 @@ fn closing_a_parked_terminal_forgets_its_snapshot() {
 
 #[test]
 fn terminals_that_share_a_store_park_and_restore_on_their_own() {
-    let (store, options) = counting();
+    let (store, options) = counting_after(LONG_IDLE);
     let idle = start(options.clone());
     let busy = start(options);
     idle.fill();
     busy.fill();
     let idle_screen = idle.screen();
-    // Keep one painted while the other goes idle.
-    let until = Instant::now() + IDLE * 4;
-    while Instant::now() < until {
-        let _ = busy.sink.take();
-        busy.handle.request_frame();
-        std::thread::sleep(IDLE / 3);
+    // Keep one painted while the other goes idle, and a period more.
+    let paint = |until: Instant| {
+        while Instant::now() < until {
+            let _ = busy.sink.take();
+            busy.handle.request_frame();
+            std::thread::sleep(TICK);
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while store.saves() == 0 {
+        assert!(Instant::now() < deadline, "timed out: the idle one parks");
+        paint(Instant::now() + TICK);
     }
+    paint(Instant::now() + LONG_IDLE * 2);
     assert_eq!(store.saves(), 1, "only the idle one parked");
 
     busy.peer.output(b"more");
