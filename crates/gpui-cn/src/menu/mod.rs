@@ -12,6 +12,7 @@ mod dropdown;
 mod entry;
 mod look;
 mod panel;
+mod slot;
 mod state;
 mod text;
 
@@ -29,9 +30,11 @@ pub use entry::{MenuEntry, MenuItem, MenuRowState, MenuSubmenu};
 pub use state::{MenuAnchor, MenuEvent, MenuState};
 
 pub(crate) use look::{
-    MenuLook, MenuMotion, label_block, line_slot, row_line, search_row, search_style, separator,
+    MenuLook, MenuMotion, check_slot, label_block, line_slot, matched_text, row_frame, row_line,
+    search_row, search_style, separator,
 };
 pub(crate) use panel::{MenuPanels, corner, measure, placement, shortcut};
+pub(crate) use slot::OpenSlot;
 pub(crate) use text::{TextMenuBuilder, open_text_menu};
 
 /// The key context of an open menu's root panel, which holds the

@@ -154,7 +154,7 @@ impl<V: SelectValue> SelectState<V> {
 
     /// Adds a search field at the top of the menu, with `placeholder` in it
     /// while it is empty. Typing narrows the rows to those whose label or
-    /// keywords contain the query, ignoring case.
+    /// keywords the query matches as a fuzzy subsequence, ignoring case.
     pub fn with_search(
         self,
         placeholder: impl Into<SharedString>,

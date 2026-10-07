@@ -2,6 +2,7 @@
 //! dropdown menu, and a context menu draw from the same look, so their
 //! panels and rows cannot drift apart.
 
+use std::ops::Range;
 use std::time::Duration;
 
 use gpui_kit::{
@@ -100,6 +101,13 @@ impl MenuLook {
         self.max_height - self.padding * 2. - border - search
     }
 
+    /// The height of a palette that fills a frame of its own, with the
+    /// search field and the list at their tallest: a menu's maximum height
+    /// less the padding and hairline a bordered palette would add.
+    pub(crate) fn palette_height(&self) -> Pixels {
+        self.max_height - self.padding * 2. - px(2.)
+    }
+
     /// The panel's shadow at `strength` of its ink.
     pub(crate) fn shadow(&self, strength: f32) -> Vec<BoxShadow> {
         self.shadow
@@ -170,9 +178,12 @@ impl MenuMotion {
 
 /// A row's label over its description, as the reference app draws a
 /// select row: the label on one line, cut off with an ellipsis, and the
-/// description under it in the menu's description color.
+/// description under it in the menu's description color. The byte
+/// `matched` ranges of the label, the characters a search matched, are
+/// drawn in the text color at medium weight.
 pub(crate) fn label_block(
     label: SharedString,
+    matched: &[Range<usize>],
     description: Option<SharedString>,
     look: &MenuLook,
 ) -> AnyElement {
@@ -180,11 +191,60 @@ pub(crate) fn label_block(
         .flex_1()
         .min_w_0()
         .gap_1p5()
-        .child(div().overflow_hidden().text_ellipsis().child(label))
+        .child(
+            div()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(matched_text(label, matched, look)),
+        )
         .when_some(description, |this, text| {
             this.child(div().text_color(look.description).child(text))
         })
         .into_any_element()
+}
+
+/// A row's text with the byte `matched` ranges marked: the text color at
+/// medium weight. No range gives the text as it is.
+pub(crate) fn matched_text(
+    text: SharedString,
+    matched: &[Range<usize>],
+    look: &MenuLook,
+) -> AnyElement {
+    if matched.is_empty() {
+        text.into_any_element()
+    } else {
+        crate::fuzzy::highlighted(text, matched, look.foreground).into_any_element()
+    }
+}
+
+/// The frame of one row, the same in a select, a menu, a palette, and the
+/// pickers' lists: a full-width row at least a row tall, padded by the row
+/// padding, with the row radius, and the highlight fill when `highlighted`.
+/// The fill is painted on this element, so it takes the radius. Callers
+/// add their id, content, and handlers.
+pub(crate) fn row_frame(look: &MenuLook, highlighted: bool) -> gpui_kit::Div {
+    h_flex()
+        .w_full()
+        .min_h(look.row_height)
+        .py_1p5()
+        .flex_shrink_0()
+        .items_center()
+        .gap_2()
+        .px(look.row_padding)
+        .rounded(look.row_radius)
+        .when(highlighted, |this| this.bg(look.accent))
+}
+
+/// The check column at the right of a row: a row-line tall slot that holds
+/// the check while `shown`, and keeps its width otherwise so labels line up.
+pub(crate) fn check_slot(look: &MenuLook, shown: bool, muted: bool) -> gpui_kit::Div {
+    line_slot(look).child(div().size_4().when(shown, |this| {
+        this.child(Icon::from(IconName::Check).size_4().text_color(if muted {
+            look.muted_foreground
+        } else {
+            look.indicator
+        }))
+    }))
 }
 
 /// A box one text line tall that centers its child on that line, for a

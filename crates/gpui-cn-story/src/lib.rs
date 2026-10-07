@@ -3,19 +3,22 @@
 //! navigation stack pushes over it. Built from gpui-cn components only, so
 //! the gallery is also the first consumer of the library.
 
+pub mod agents;
+pub mod remote;
 pub mod settings;
 pub mod stories;
 
 use gpui_cn::{
-    ActiveTheme as _, Button, ButtonSize, NavButtons, NavMotion, NavStack, NavStackState,
-    ScrollArea, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton,
-    SidebarState, SidebarTrigger, TitleBar, gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ButtonSize, CommandDialog, CommandEntry, CommandEvent, CommandGroup,
+    CommandItem, CommandState, Icon, Input, InputEvent, InputState, NavButtons, NavMotion,
+    NavStack, NavStackState, ScrollArea, Sidebar, SidebarCollapsible, SidebarGroup, SidebarLayout,
+    SidebarMenuButton, SidebarState, SidebarTrigger, TitleBar, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId,
     Entity, InteractiveElement as _, IntoElement, ParentElement as _, PlatformInput, Render,
     ScrollDelta, ScrollWheelEvent, SharedString, Styled as _, Window, actions,
-    base::{Selectable as _, StyledExt as _},
+    base::{Selectable as _, StyledExt as _, TestSupportExt as _},
     div,
     prelude::FluentBuilder as _,
     px,
@@ -42,6 +45,8 @@ actions!(
         NavigateBack,
         /// Goes forward one page.
         NavigateForward,
+        /// Opens the palette that lists every story.
+        OpenCommandPalette,
         /// Shows or hides the performance HUD (with the `fps` feature).
         TogglePerformanceHud,
     ]
@@ -60,19 +65,86 @@ pub trait Story: 'static {
     fn view(window: &mut Window, cx: &mut App) -> AnyView;
 }
 
+/// The section of the sidebar a story is listed under. Every story is in
+/// exactly one, named where it is registered in [`stories`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorySection {
+    /// Buttons, commands, and menus.
+    Actions,
+    /// The composer and the pickers for AI chat surfaces.
+    Ai,
+    /// Avatars, badges, progress, and the like.
+    FeedbackAndDisplay,
+    /// Spacing, typography, theme, and scrolling.
+    Foundations,
+    /// Fields and controls that take a value.
+    Inputs,
+    /// Moving between pages and panels.
+    Navigation,
+    /// Dialogs and popovers.
+    Overlays,
+}
+
+impl StorySection {
+    /// Every section, in the order the sidebar lists them: Foundations
+    /// first, then the others alphabetically by title. A section's rank is
+    /// its place here, so a new section is placed by adding it to this table.
+    pub const ALL: [StorySection; 7] = [
+        Self::Foundations,
+        Self::Actions,
+        Self::Ai,
+        Self::FeedbackAndDisplay,
+        Self::Inputs,
+        Self::Navigation,
+        Self::Overlays,
+    ];
+
+    /// Where the section is listed: its place in [`ALL`](Self::ALL).
+    pub fn rank(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|section| *section == self)
+            .unwrap_or(Self::ALL.len())
+    }
+
+    /// The label of the section's group in the sidebar.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Actions => "Actions",
+            Self::Ai => "AI",
+            Self::FeedbackAndDisplay => "Feedback and display",
+            Self::Foundations => "Foundations",
+            Self::Inputs => "Inputs",
+            Self::Navigation => "Navigation",
+            Self::Overlays => "Overlays",
+        }
+    }
+}
+
+/// The id of a story's row in the sidebar. It comes from the title, so a
+/// row keeps its id when stories are added or sections change.
+pub fn story_row(title: &str) -> ElementId {
+    ElementId::NamedChild(
+        ElementId::from("story").into(),
+        SharedString::from(title.to_string()),
+    )
+}
+
 /// A registered story.
 #[derive(Clone)]
 pub struct StoryEntry {
     title: &'static str,
+    section: StorySection,
     icon: IconName,
     description: &'static str,
     build: fn(&mut Window, &mut App) -> AnyView,
 }
 
 impl StoryEntry {
-    fn of<S: Story>() -> Self {
+    fn of<S: Story>(section: StorySection) -> Self {
         Self {
             title: S::title(),
+            section,
             icon: S::icon(),
             description: S::description(),
             build: S::view,
@@ -83,40 +155,73 @@ impl StoryEntry {
     pub fn title(&self) -> &'static str {
         self.title
     }
+
+    /// The section the story is listed under.
+    pub fn section(&self) -> StorySection {
+        self.section
+    }
 }
 
-/// Every story, in display order.
+/// Every story, in display order: by section rank, then by story title,
+/// without regard to case. The order is computed here, so a new story
+/// lands in the right place and only needs its section.
 pub fn stories() -> Vec<StoryEntry> {
-    #[allow(unused_mut)]
-    let mut stories = vec![
-        StoryEntry::of::<stories::TypographyStory>(),
-        StoryEntry::of::<stories::SpacingStory>(),
-        StoryEntry::of::<stories::ButtonStory>(),
-        StoryEntry::of::<stories::SwitchStory>(),
-        StoryEntry::of::<stories::InputStory>(),
-        StoryEntry::of::<stories::TextareaStory>(),
-        StoryEntry::of::<stories::SelectStory>(),
-        StoryEntry::of::<stories::MenuStory>(),
-        StoryEntry::of::<stories::CommandStory>(),
-        StoryEntry::of::<stories::PopoverStory>(),
-        StoryEntry::of::<stories::DialogStory>(),
-        StoryEntry::of::<stories::FolderPickerStory>(),
-        StoryEntry::of::<stories::AvatarStory>(),
-        StoryEntry::of::<stories::BadgeStory>(),
-        StoryEntry::of::<stories::TagStory>(),
-        StoryEntry::of::<stories::SkeletonStory>(),
-        StoryEntry::of::<stories::SpinnerStory>(),
-        StoryEntry::of::<stories::ProgressStory>(),
-        StoryEntry::of::<stories::ThemeModePickerStory>(),
-        StoryEntry::of::<stories::SidebarStory>(),
-        StoryEntry::of::<stories::NavStackStory>(),
-        StoryEntry::of::<stories::ScrollAreaStory>(),
-        StoryEntry::of::<stories::TitleBarStory>(),
-        StoryEntry::of::<stories::TabsStory>(),
+    let mut entries = vec![
+        StoryEntry::of::<stories::ColorStory>(StorySection::Foundations),
+        StoryEntry::of::<stories::TypographyStory>(StorySection::Foundations),
+        StoryEntry::of::<stories::SpacingStory>(StorySection::Foundations),
+        StoryEntry::of::<stories::ButtonStory>(StorySection::Actions),
+        StoryEntry::of::<stories::SwitchStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::SliderStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::RadioStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::InputStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::TextareaStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::SelectStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::MenuStory>(StorySection::Actions),
+        StoryEntry::of::<stories::CommandStory>(StorySection::Actions),
+        StoryEntry::of::<stories::PopoverStory>(StorySection::Overlays),
+        StoryEntry::of::<stories::DialogStory>(StorySection::Overlays),
+        StoryEntry::of::<stories::FilePickerStory>(StorySection::Overlays),
+        StoryEntry::of::<stories::FolderPickerStory>(StorySection::Overlays),
+        StoryEntry::of::<stories::ComposerStory>(StorySection::Ai),
+        StoryEntry::of::<stories::ModelPickerStory>(StorySection::Ai),
+        StoryEntry::of::<stories::AvatarStory>(StorySection::FeedbackAndDisplay),
+        StoryEntry::of::<stories::BadgeStory>(StorySection::FeedbackAndDisplay),
+        StoryEntry::of::<stories::TagStory>(StorySection::FeedbackAndDisplay),
+        StoryEntry::of::<stories::SkeletonStory>(StorySection::FeedbackAndDisplay),
+        StoryEntry::of::<stories::ProgressStory>(StorySection::FeedbackAndDisplay),
+        StoryEntry::of::<stories::ThemeModePickerStory>(StorySection::Foundations),
+        StoryEntry::of::<stories::SidebarStory>(StorySection::Navigation),
+        StoryEntry::of::<stories::NavStackStory>(StorySection::Navigation),
+        StoryEntry::of::<stories::ScrollAreaStory>(StorySection::Navigation),
+        StoryEntry::of::<stories::TitleBarStory>(StorySection::Navigation),
+        StoryEntry::of::<stories::TabsStory>(StorySection::Navigation),
     ];
     #[cfg(feature = "terminal")]
-    stories.push(StoryEntry::of::<stories::TerminalStory>());
-    stories
+    entries.push(StoryEntry::of::<stories::TerminalStory>(
+        StorySection::FeedbackAndDisplay,
+    ));
+    entries.sort_by_key(|entry| (entry.section.rank(), entry.title.to_lowercase()));
+    entries
+}
+
+/// The commands of the story palette: a group per section, in section
+/// order, with the stories of each in display order.
+fn palette_entries(entries: &[StoryEntry]) -> Vec<CommandEntry> {
+    StorySection::ALL
+        .iter()
+        .map(|section| {
+            CommandGroup::new()
+                .heading(section.title())
+                .items(
+                    entries
+                        .iter()
+                        .filter(|entry| entry.section == *section)
+                        .map(|entry| CommandItem::new(entry.title, entry.title).icon(entry.icon)),
+                )
+                .into()
+        })
+        .collect()
 }
 
 /// The gallery window content: a navigation stack of pages, one per story
@@ -130,6 +235,12 @@ pub struct Gallery {
     /// its state survives leaving and coming back.
     story_views: Vec<Option<AnyView>>,
     settings: Entity<SettingsPage>,
+    /// The text that filters the story list in the sidebar.
+    filter: Entity<InputState>,
+    /// The palette that lists every story, opened with the keyboard or
+    /// the menu.
+    palette: Entity<CommandState>,
+    palette_open: bool,
     show_hud: bool,
 }
 
@@ -151,6 +262,38 @@ impl Gallery {
         let stack = cx.new(|_| NavStackState::new());
         let settings = cx.new(|cx| SettingsPage::new(&sidebar, &stack, cx));
         let entries = stories();
+        let filter = search_state("Search components", window, cx);
+        cx.subscribe_in(
+            &filter,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
+                    if let Some(&first) = this.visible_stories(cx).first() {
+                        this.open_story(first, NavMotion::Animated, window, cx);
+                    }
+                }
+                _ => {}
+            },
+        )
+        .detach();
+        let palette = cx.new(|cx| {
+            CommandState::new("Search components...", window, cx)
+                .with_entries(palette_entries(&entries))
+        });
+        cx.observe(&palette, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(
+            &palette,
+            window,
+            |this, _, event: &CommandEvent, window, cx| {
+                if let CommandEvent::Confirmed(title) = event {
+                    this.palette_open = false;
+                    this.select_story(title, window, cx);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
         cx.observe(&stack, |_, _, cx| cx.notify()).detach();
         cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
@@ -183,6 +326,12 @@ impl Gallery {
                 let _ = gallery.update(cx, |gallery, cx| gallery.go_forward(cx));
             }
         });
+        App::on_action(cx, {
+            let gallery = gallery.clone();
+            move |_: &OpenCommandPalette, cx| {
+                let _ = gallery.update(cx, |gallery, cx| gallery.open_palette(cx));
+            }
+        });
         App::on_action(cx, move |_: &TogglePerformanceHud, cx| {
             let _ = gallery.update(cx, |gallery, cx| {
                 gallery.show_hud = !gallery.show_hud;
@@ -195,6 +344,9 @@ impl Gallery {
             story_views: vec![None; entries.len()],
             entries,
             settings,
+            filter,
+            palette,
+            palette_open: false,
             show_hud: false,
         };
         gallery.open_story(0, NavMotion::Immediate, window, cx);
@@ -232,6 +384,22 @@ impl Gallery {
                 sidebar.set_open(false, cx);
             }
         });
+    }
+
+    /// Opens the palette that lists every story.
+    pub fn open_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette_open = true;
+        cx.notify();
+    }
+
+    /// Whether the story palette is open.
+    pub fn palette_open(&self) -> bool {
+        self.palette_open
+    }
+
+    /// The state of the story palette.
+    pub fn palette(&self) -> &Entity<CommandState> {
+        &self.palette
     }
 
     /// Pushes the story with `title`. Unknown titles change nothing.
@@ -283,6 +451,14 @@ impl Gallery {
             stack.push(settings, NavMotion::Animated, cx);
         });
         self.close_sheet(cx);
+    }
+
+    /// The indexes of the stories whose titles the sidebar's filter text
+    /// matches fuzzily, in display order. With no text every
+    /// story matches.
+    pub fn visible_stories(&self, cx: &App) -> Vec<usize> {
+        let query = self.filter.read(cx).value();
+        matching(self.entries.iter().map(|entry| entry.title), &query)
     }
 
     /// The settings page.
@@ -358,7 +534,6 @@ impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The HUD reads GPUI's own frame trace, so its numbers are what a
         // frame of this window cost, not an estimate from outside.
-        let _ = (&window, &cx);
         // One sidebar for every page, so paging keeps its scroll position.
         // Settings shows its own sections in it.
         let sidebar = if self.settings_showing(cx) {
@@ -376,6 +551,18 @@ impl Render for Gallery {
                     .child(NavStack::new(&self.stack).flex_1().min_h_0()),
             )
             .child(shell_controls(&self.sidebar, &self.stack, window, cx))
+            .child({
+                let gallery = cx.entity().downgrade();
+                CommandDialog::new("gallery-palette", &self.palette)
+                    .open(self.palette_open)
+                    .empty("No components found.")
+                    .on_open_change(move |open, _, cx| {
+                        let _ = gallery.update(cx, |gallery, cx| {
+                            gallery.palette_open = open;
+                            cx.notify();
+                        });
+                    })
+            })
             .when(self.show_hud, |this| {
                 #[cfg(feature = "fps")]
                 {
@@ -417,18 +604,70 @@ impl ComponentsPage {
     }
 }
 
+/// The indexes of the titles that `query` matches fuzzily, in the order of
+/// the titles. An empty query matches every title.
+fn matching<'a>(titles: impl Iterator<Item = &'a str>, query: &str) -> Vec<usize> {
+    let titles: Vec<&str> = titles.collect();
+    let mut found: Vec<usize> = gpui_cn::fuzzy::rank(query, &titles, |title| title)
+        .into_iter()
+        .map(|found| found.index)
+        .collect();
+    found.sort_unstable();
+    found
+}
+
+/// The state of a search field in a story: the placeholder, and Escape
+/// clears the text. The sidebar's box and the Color page's share it.
+pub fn search_state(
+    placeholder: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(placeholder)
+            .clean_on_escape()
+    })
+}
+
+/// A search field over `state`: a search icon before the text and a clear
+/// button after it.
+pub fn search_input(
+    state: &Entity<InputState>,
+    id: impl Into<ElementId>,
+    label: &'static str,
+) -> Input {
+    Input::new(state)
+        .id(id)
+        .accessibility_label(label)
+        .prefix(Icon::from(IconName::Search).size_4())
+        .cleanable(true)
+}
+
 impl Gallery {
     /// The components sidebar: the story list, with the showing story
     /// selected.
     fn render_sidebar(&self, cx: &mut Context<Self>) -> Sidebar {
         let current = self.current_story_index(cx);
         let heading = cx.theme().text_heading;
+        let muted = cx.theme().muted_foreground();
         let open = self.sidebar.read(cx).is_open();
+        let visible = self.visible_stories(cx);
+        let mut sections: Vec<(StorySection, Vec<usize>)> = Vec::new();
+        for &ix in &visible {
+            let section = self.entries[ix].section;
+            match sections.last_mut() {
+                Some((last, rows)) if *last == section => rows.push(ix),
+                _ => sections.push((section, vec![ix])),
+            }
+        }
         Sidebar::new()
             .header(sidebar_title_bar())
             .when(open, |this| {
                 this.header(
                     div()
+                        .id("story-title")
+                        .test_support()
                         .flex()
                         .items_center()
                         .h(heading.line_height * 1.6)
@@ -438,17 +677,45 @@ impl Gallery {
                         .child("gpui-cn"),
                 )
             })
-            .child(SidebarGroup::new().label("Components").children(
-                self.entries.iter().enumerate().map(|(ix, entry)| {
-                    SidebarMenuButton::new(ElementId::from(("story", ix)))
-                        .icon(entry.icon)
-                        .label(entry.title)
-                        .selected(current == Some(ix))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_story(ix, NavMotion::Animated, window, cx)
-                        }))
-                }),
-            ))
+            .when(open, |this| {
+                this.header(div().px_2().py_2().child(search_input(
+                    &self.filter,
+                    "story-filter",
+                    "Search components",
+                )))
+            })
+            .when(visible.is_empty(), |this| {
+                this.child(
+                    div()
+                        .id("story-empty")
+                        .test_support()
+                        .px_4()
+                        .py_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("No components match."),
+                )
+            })
+            .children(
+                sections
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, (section, rows))| {
+                        SidebarGroup::new()
+                            .label(section.title())
+                            .when(n == 0, |group| group.pt_0())
+                            .children(rows.into_iter().map(|ix| {
+                                let entry = &self.entries[ix];
+                                SidebarMenuButton::new(story_row(entry.title))
+                                    .icon(entry.icon)
+                                    .label(entry.title)
+                                    .selected(current == Some(ix))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_story(ix, NavMotion::Animated, window, cx)
+                                    }))
+                            }))
+                    }),
+            )
             .footer(
                 SidebarMenuButton::new("open-settings")
                     .icon(IconName::Settings)
@@ -642,6 +909,17 @@ pub fn frame(height: gpui_kit::Pixels, cx: &App) -> gpui_kit::Stateful<gpui_kit:
         .overflow_hidden()
 }
 
+/// The button that opens a picker in a story: one variant, one size, and
+/// the icon of what it picks at the left, so the picker stories cannot
+/// drift apart. The label is sentence case, such as "Choose a folder".
+pub fn picker_trigger(id: impl Into<ElementId>, label: &'static str, icon: IconName) -> Button {
+    Button::new(id)
+        .outline()
+        .size(ButtonSize::Default)
+        .icon(Icon::from(icon))
+        .label(label)
+}
+
 /// A short explanation under a section title.
 pub fn note(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
@@ -668,5 +946,92 @@ pub fn reveal(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) {
             cx,
         );
         window.render_frame(cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matching;
+
+    #[test]
+    fn stories_are_sorted_by_section_rank_then_title_without_regard_to_case() {
+        let entries = super::stories();
+        let keys: Vec<_> = entries
+            .iter()
+            .map(|e| (e.section().rank(), e.title().to_lowercase()))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn foundations_comes_first_and_the_other_sections_follow_alphabetically() {
+        use super::StorySection;
+        assert_eq!(StorySection::ALL[0], StorySection::Foundations);
+        let rest: Vec<_> = StorySection::ALL[1..]
+            .iter()
+            .map(|s| s.title().to_lowercase())
+            .collect();
+        let mut sorted = rest.clone();
+        sorted.sort();
+        assert_eq!(rest, sorted);
+        let titles: Vec<_> = StorySection::ALL.iter().map(|s| s.title()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Foundations",
+                "Actions",
+                "AI",
+                "Feedback and display",
+                "Inputs",
+                "Navigation",
+                "Overlays"
+            ]
+        );
+    }
+
+    #[test]
+    fn foundations_holds_only_spacing_theme_and_typography() {
+        let foundations: Vec<_> = super::stories()
+            .iter()
+            .filter(|e| e.section() == super::StorySection::Foundations)
+            .map(|e| e.title())
+            .collect();
+        assert_eq!(foundations, ["Color", "Spacing", "Theme", "Typography"]);
+    }
+
+    #[test]
+    fn every_story_is_registered_once_in_one_section_and_no_section_is_empty() {
+        let entries = super::stories();
+        let mut titles: Vec<_> = entries.iter().map(|e| e.title()).collect();
+        titles.sort();
+        let count = titles.len();
+        titles.dedup();
+        assert_eq!(titles.len(), count, "a title is registered twice");
+        let terminal = usize::from(cfg!(feature = "terminal"));
+        assert_eq!(
+            count,
+            29 + terminal,
+            "a story was dropped or added without this count"
+        );
+        for section in super::StorySection::ALL {
+            assert!(
+                entries.iter().any(|e| e.section() == section),
+                "{section:?} has no story"
+            );
+        }
+    }
+
+    #[test]
+    fn the_filter_matches_titles_fuzzily_without_regard_to_case() {
+        let titles = ["Switch", "Select", "Scroll area", "Title bar"];
+        assert_eq!(matching(titles.into_iter(), "scrla"), [2]);
+        assert_eq!(matching(titles.into_iter(), ""), [0, 1, 2, 3]);
+        assert_eq!(matching(titles.into_iter(), "  "), [0, 1, 2, 3]);
+        assert_eq!(matching(titles.into_iter(), "S"), [0, 1, 2]);
+        assert_eq!(matching(titles.into_iter(), "sel"), [1]);
+        assert_eq!(matching(titles.into_iter(), " AREA "), [2]);
+        assert!(matching(titles.into_iter(), "zzz").is_empty());
     }
 }

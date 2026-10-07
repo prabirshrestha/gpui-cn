@@ -491,3 +491,22 @@ fn set_entries_drops_an_answer_still_on_its_way(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_palette_matches_a_subsequence_of_a_label_or_a_keyword(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    open_and_type(&setup, "trml", cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        assert!(window.try_find(child("terminal")).is_some(), "label");
+        assert!(window.try_find(child("project")).is_none());
+        assert_eq!(setup.command.read(cx).matched_count(), 1);
+    })
+    .unwrap();
+    let setup = self::setup(cx);
+    open_and_type(&setup, "shl", cx);
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        assert!(window.try_find(child("terminal")).is_some(), "keyword");
+        assert!(window.try_find(child("browser")).is_none());
+    })
+    .unwrap();
+}

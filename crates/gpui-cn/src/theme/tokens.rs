@@ -83,8 +83,10 @@ pub struct ThemeTokens {
     /// 55%, chosen so the glyph under the cursor stays
     /// readable without a second color.
     pub terminal_cursor_opacity: f32,
-    /// The track of a switch that is on: the accent, as the reference
-    /// app paints it (#539af8 on dark).
+    /// The color of a switch that is on and a radio that is chosen: the
+    /// accent, as the reference app paints a switch that is on (#539af8 on
+    /// dark). Only the switch and the radio read it, as macOS paints both
+    /// in `controlAccentColor`; no other component paints in the accent.
     pub switch_track_on: Hsla,
     /// The track of a switch that is off.
     pub switch_track_off: Hsla,
@@ -151,13 +153,15 @@ pub struct ThemeTokens {
     /// trigger: #cacaca on dark, sampled from the reference app, the ink
     /// a step toward the surface.
     pub select_indicator: Hsla,
-    /// The fill of a select trigger: #2a2a2a on dark, sampled from the
+    /// The fill of a select trigger: #2a2a2a on dark as sampled from the
     /// reference app on the window surface (it is #343434 on a #232323
-    /// card, the same step). The window surface on light, as shadcn's
+    /// card, the same step). The derivation gives #292929, one step off
+    /// the sample, and the test asserts the derived value. The window surface on light, as shadcn's
     /// `bg-transparent` trigger.
     pub select_trigger: Hsla,
-    /// The hairline around a select trigger: #3b3b3b on dark, sampled from
-    /// the reference app. The `input` token on light, as shadcn's
+    /// The hairline around a select trigger: #3b3b3b on dark as sampled
+    /// from the reference app. The derivation gives #3a3a3a, one step off
+    /// the sample, and the test asserts the derived value. The `input` token on light, as shadcn's
     /// `border-input`.
     pub select_trigger_border: Hsla,
     /// The hairline between two unselected tabs: the muted text at 60%,
@@ -280,6 +284,56 @@ pub struct MetricTokens {
     /// The gap between the thumb and the track's edge: 2px on both. On
     /// touch it is fixed with the track, so the thumb always fits.
     pub switch_thumb_inset: Pixels,
+    /// The height of a slider's track: 4px, the thin rail of a macOS slider.
+    pub slider_track: Pixels,
+    /// The diameter of a slider's thumb: 16px, shadcn's `size-4`.
+    pub slider_thumb: Pixels,
+    /// The diameter of a tick on a slider with stops: 4px, as thick as the
+    /// track, so a dot on the rail reads as a stop and not a bump.
+    pub slider_tick: Pixels,
+    /// The diameter of a radio's ring: 16px, shadcn's `size-4`.
+    pub radio_size: Pixels,
+    /// The diameter of a radio's dot: 6px, three quarters of shadcn's
+    /// `size-2`, which sits better in the filled disc this radio paints.
+    pub radio_dot: Pixels,
+    /// The diameter of a progress ring: 16px, the context meter of the
+    /// composer's status tab. Not measured from the reference app.
+    pub ring_size: Pixels,
+    /// The stroke of a progress ring: 2px, the same source.
+    pub ring_stroke: Pixels,
+    /// The side of an attachment tile: 56px (composer design spec; not
+    /// measured from the reference app).
+    pub attachment_tile: Pixels,
+    /// The width of the model picker's panel: 361px, measured from the
+    /// reference app's picker at 2x (722px from edge to edge).
+    pub model_picker_width: Pixels,
+    /// The height of the model picker's panel: 346px, the same screenshot
+    /// (693px). The panel never changes height: a short result leaves room,
+    /// an empty one centers its message in the list, and a long one scrolls
+    /// inside it.
+    pub model_picker_height: Pixels,
+    /// The width of the provider rail at the picker's left: 44px, the same
+    /// screenshot (89px).
+    pub model_picker_rail: Pixels,
+    /// The height of a two-line model row: 47px, the same screenshot, where
+    /// rows are 94px apart.
+    pub model_row: Pixels,
+    /// The height of the picker's search row, from the panel's top edge to
+    /// the underline: 42px, the same screenshot (83px).
+    pub model_header: Pixels,
+    /// The height of a composer's status tab: 38px, measured from the reference
+    /// composer screenshots at 2x (76px from the top of the tab to the top
+    /// of the card).
+    pub status_tab_height: Pixels,
+    /// The gap between the items of a status tab: 28px, the same
+    /// screenshots (56px between two items).
+    pub status_tab_gap: Pixels,
+    /// The gap between a status item's icon and its text: 8px, the same
+    /// screenshots (15px, rounded up to the step).
+    pub status_label_gap: Pixels,
+    /// How far the status tab is inset from each side of the card: 14px,
+    /// the same screenshots (27px).
+    pub status_tab_inset: Pixels,
     /// The gap between a select trigger and its menu: 2px, measured from
     /// the reference app at 2x.
     pub menu_gap: Pixels,
@@ -303,6 +357,15 @@ pub struct MetricTokens {
     /// The padding around a dialog's content: 20px. Measured from the same
     /// screenshot (about 18.5px), rounded to the 20px step.
     pub dialog_padding: Pixels,
+    /// The width of a command dialog: 512px, shadcn's `max-w-lg` (32rem).
+    /// This value comes from shadcn, not from the reference app.
+    pub command_dialog_width: Pixels,
+    /// How far a command dialog sits below the top of the window: 120px,
+    /// so it rests in the upper third as Spotlight does, and does not move
+    /// when its content changes height. This is gpui-cn's own choice: only
+    /// the width comes from shadcn, and neither comes from the reference
+    /// app.
+    pub command_dialog_top: Pixels,
     /// The height of the folder picker's list: 6.5 rows, so the last row
     /// peeks over the edge and shows that the list scrolls. Measured from
     /// the reference app's folder dialog: the list is 181px tall at 2.2x
@@ -442,6 +505,23 @@ impl MetricTokens {
             switch_track_height: if touch { px(31.) } else { scaled(20.) },
             switch_thumb_size: if touch { px(27.) } else { scaled(16.) },
             switch_thumb_inset: if touch { px(2.) } else { scaled(2.) },
+            slider_track: scaled(4.),
+            slider_thumb: scaled(16.),
+            slider_tick: scaled(4.),
+            radio_size: scaled(16.),
+            radio_dot: scaled(6.),
+            ring_size: scaled(16.),
+            ring_stroke: scaled(2.),
+            attachment_tile: scaled(56.),
+            model_picker_width: scaled(361.),
+            model_picker_height: scaled(346.),
+            model_picker_rail: scaled(44.),
+            model_row: scaled(47.),
+            model_header: scaled(42.),
+            status_tab_height: scaled(38.),
+            status_tab_inset: scaled(14.),
+            status_tab_gap: scaled(28.),
+            status_label_gap: scaled(8.),
             menu_gap: scaled(2.),
             menu_min_width: scaled(128.),
             menu_search_min_width: scaled(240.),
@@ -449,6 +529,8 @@ impl MetricTokens {
             menu_max_height: scaled(390.),
             dialog_width: scaled(480.),
             dialog_padding: scaled(20.),
+            command_dialog_width: scaled(512.),
+            command_dialog_top: scaled(120.),
             folder_list_height: row_sm * 6.5,
             tab_surface_inset: px(if touch { 0. } else { 4. }),
             tab_width: px(160.),
@@ -1174,6 +1256,8 @@ mod tests {
         let default = light();
         assert_eq!(default.metrics.dialog_width, px(480.));
         assert_eq!(default.metrics.dialog_padding, px(20.));
+        assert_eq!(default.metrics.command_dialog_width, px(512.));
+        assert_eq!(default.metrics.command_dialog_top, px(120.));
         assert_eq!(default.metrics.folder_list_height, px(182.));
     }
 
@@ -1372,5 +1456,86 @@ mod tests {
         assert_eq!(defaults.font_family(), &TypographyTokens::default().sans);
         assert_eq!(defaults.base.typography.md.size, px(16.));
         assert_eq!(defaults.base.typography.mono_md.size, px(13.));
+    }
+
+    #[test]
+    fn slider_metrics_are_the_shadcn_values_and_scale_with_the_font_size() {
+        let default = light();
+        assert_eq!(default.metrics.slider_track, px(4.), "a thin rail");
+        assert_eq!(default.metrics.slider_thumb, px(16.), "shadcn size-4");
+        assert_eq!(default.metrics.slider_tick, px(4.));
+        let large = ThemeTokens::derive(
+            &ThemeConfig::light(),
+            ThemeAppearance::Light,
+            Metrics {
+                ui_font_size: px(20.),
+                ..metrics()
+            },
+        );
+        assert_eq!(large.metrics.slider_thumb, px(20.));
+    }
+
+    #[test]
+    fn a_chosen_radio_and_an_on_switch_share_the_accent() {
+        for (tokens, hex) in [(dark(), "#539af8"), (light(), "#339cff")] {
+            assert_eq!(to_hex(tokens.switch_track_on), hex);
+            assert_eq!(tokens.switch_track_on, tokens.ring());
+        }
+    }
+
+    #[test]
+    fn radio_metrics_are_the_shadcn_values() {
+        let default = light();
+        assert_eq!(default.metrics.radio_size, px(16.), "shadcn size-4");
+        assert_eq!(
+            default.metrics.radio_dot,
+            px(6.),
+            "three quarters of size-2"
+        );
+    }
+
+    #[test]
+    fn ring_metrics_scale_with_the_font_size() {
+        let default = light();
+        assert_eq!(default.metrics.ring_size, px(16.));
+        assert_eq!(default.metrics.ring_stroke, px(2.));
+    }
+
+    #[test]
+    fn the_attachment_tile_metric_and_the_model_picker_metrics_are_set() {
+        let dark = dark();
+        assert_eq!(dark.metrics.attachment_tile, px(56.));
+        assert_eq!(dark.metrics.model_picker_width, px(361.));
+        assert_eq!(dark.metrics.model_picker_height, px(346.));
+        assert_eq!(dark.metrics.model_picker_rail, px(44.));
+        assert_eq!(dark.metrics.model_row, px(47.));
+        assert_eq!(dark.metrics.model_header, px(42.));
+    }
+
+    #[test]
+    fn the_status_tab_metrics_are_the_reference_samples() {
+        let m = &dark().metrics;
+        assert_eq!(m.status_tab_height, px(38.));
+        assert_eq!(m.status_tab_inset, px(14.));
+        assert_eq!(m.status_tab_gap, px(28.));
+        assert_eq!(m.status_label_gap, px(8.));
+    }
+
+    #[test]
+    fn the_composer_reads_text_at_least_4_5_to_1_on_the_surfaces_it_uses() {
+        use crate::theme::color::contrast_ratio;
+        for tokens in [dark(), light()] {
+            let muted = contrast_ratio(tokens.muted_foreground(), tokens.field);
+            assert!(muted >= 4.5, "muted text on the card: {muted}");
+            let warning = contrast_ratio(tokens.warning, tokens.field);
+            assert!(warning >= 4.5, "the risky mode on the card: {warning}");
+            let tab = contrast_ratio(tokens.foreground(), tokens.sidebar);
+            assert!(tab >= 4.5, "text on the status tab: {tab}");
+            let hairline = contrast_ratio(tokens.field_border, tokens.sidebar);
+            assert!(
+                hairline > 1.05,
+                "the card's hairline reads on the tab: {hairline}"
+            );
+        }
     }
 }

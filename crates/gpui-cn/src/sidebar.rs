@@ -31,15 +31,16 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Element, ElementId, Entity,
-    EventEmitter, GlobalElementId, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, Element, ElementId, Entity,
+    EventEmitter, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement as _,
+    IntoElement, LayoutId, MouseButton, ParentElement, Pixels, Render, RenderOnce, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, WeakFocusHandle,
+    Window,
     base::{
-        Collapsible, Disableable, Placement, Selectable, StyledExt as _, TestSupportExt as _,
-        Transition, h_flex, transition, v_flex,
+        Collapsible, Disableable, Placement, Selectable, Sheet, StyledExt as _,
+        TestSupportExt as _, Transition, h_flex, transition, v_flex,
     },
-    div,
+    canvas, div, point,
     prelude::FluentBuilder as _,
     px,
 };
@@ -465,6 +466,28 @@ impl RenderOnce for SidebarLayout {
             .overflow_hidden()
             .children(self.children);
 
+        let bounds_state = window.use_keyed_state(
+            ElementId::NamedInteger("sidebar-layout-bounds".into(), id),
+            cx,
+            |_, _| None::<Bounds<Pixels>>,
+        );
+        let layout_bounds = *bounds_state.read(cx);
+        let probe = {
+            let keyed = bounds_state;
+            canvas(
+                move |bounds, window, cx| {
+                    if *keyed.read(cx) != Some(bounds) {
+                        keyed.update(cx, |held, _| *held = Some(bounds));
+                        window.refresh();
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
         div()
             .id(ElementId::NamedInteger("sidebar-layout".into(), id))
             .flex()
@@ -473,6 +496,7 @@ impl RenderOnce for SidebarLayout {
             .relative()
             .overflow_hidden()
             .refine_style(&self.style)
+            .child(probe)
             .on_drag_move::<SidebarResize>(move |event, _, cx| {
                 if event.drag(cx).0 != state.entity_id() {
                     return;
@@ -491,37 +515,48 @@ impl RenderOnce for SidebarLayout {
             })
             .map(|this| {
                 if sheet {
-                    // The sheet floats over the content. A scrim behind it
-                    // dims the content and closes the sheet on a tap; it
-                    // fades with the sheet's motion.
                     let progress = f32::from(shown) / f32::from(sheet_width);
                     let scrim = cx.theme().scrim.opacity(progress);
-                    let state = self.state.clone();
+                    let close_state = self.state.clone();
+                    let focus = sheet_focus(&self.state, open, window, cx);
+                    let viewport = window.viewport_size();
+                    let area = layout_bounds.unwrap_or(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: viewport,
+                    });
                     this.child(inset).when(visible, |this| {
                         this.child(
-                            div()
-                                .id("sidebar-scrim")
-                                .test_support()
-                                .absolute()
-                                .inset_0()
-                                .bg(scrim)
-                                .on_click(move |_, _, cx| {
-                                    state.update(cx, |state, cx| state.set_open(false, cx));
-                                }),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                // A click in the sheet is the sheet's, not
-                                // the scrim's under it.
-                                .occlude()
-                                .map(|this| match side {
-                                    SidebarSide::Left => this.left_0(),
-                                    SidebarSide::Right => this.right_0(),
+                            Sheet::new(cx)
+                                .focus_handle(focus)
+                                .dismiss_before_y(area.origin.y)
+                                .request_close(move |_, cx| {
+                                    close_state.update(cx, |state, cx| state.set_open(false, cx));
                                 })
-                                .child(panel),
+                                .overlay(
+                                    div()
+                                        .id("sidebar-scrim")
+                                        .test_support()
+                                        .absolute()
+                                        .left(area.origin.x)
+                                        .top(area.origin.y)
+                                        .w(area.size.width)
+                                        .h(area.size.height)
+                                        .bg(scrim),
+                                )
+                                .surface(
+                                    div()
+                                        .absolute()
+                                        .top(area.origin.y)
+                                        .h(area.size.height)
+                                        .occlude()
+                                        .map(|this| match side {
+                                            SidebarSide::Left => this.left(area.origin.x),
+                                            SidebarSide::Right => {
+                                                this.right(viewport.width - area.right())
+                                            }
+                                        })
+                                        .child(panel),
+                                ),
                         )
                     })
                 } else {
@@ -532,6 +567,56 @@ impl RenderOnce for SidebarLayout {
                 }
             })
     }
+}
+
+/// What the sheet remembers while it is open: its focus handle, and the
+/// element that had focus before it opened.
+struct SheetFocus {
+    handle: FocusHandle,
+    previous: Option<WeakFocusHandle>,
+    open: bool,
+}
+
+/// The sheet's focus handle. Focus moves into the sheet when it opens and
+/// goes back to the element that had it when the sheet closes.
+fn sheet_focus(
+    state: &Entity<SidebarState>,
+    open: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> FocusHandle {
+    let keyed = window.use_keyed_state(
+        ElementId::NamedInteger("sidebar-sheet-focus".into(), state.entity_id().as_u64()),
+        cx,
+        |_, cx| SheetFocus {
+            handle: cx.focus_handle(),
+            previous: None,
+            open: false,
+        },
+    );
+    let handle = keyed.read(cx).handle.clone();
+    let (was_open, previous) = {
+        let focus = keyed.read(cx);
+        (focus.open, focus.previous.clone())
+    };
+    if open && !was_open {
+        let before = window.focused(cx).map(|focused| focused.downgrade());
+        keyed.update(cx, |focus, _| {
+            focus.previous = before;
+            focus.open = true;
+        });
+        let target = handle.clone();
+        window.defer(cx, move |window, cx| target.focus(window, cx));
+    } else if !open && was_open {
+        keyed.update(cx, |focus, _| {
+            focus.previous = None;
+            focus.open = false;
+        });
+        if let Some(before) = previous.and_then(|weak| weak.upgrade()) {
+            window.defer(cx, move |window, cx| before.focus(window, cx));
+        }
+    }
+    handle
 }
 
 /// The sidebar surface: a header that stays put, content that scrolls, and
@@ -608,7 +693,19 @@ impl ParentElement for Sidebar {
 }
 
 impl RenderOnce for Sidebar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let scroll = window
+            .use_keyed_state("sidebar-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let scrolled = scroll.offset().y < px(-0.5);
+        let edge = transition(
+            "sidebar-header-edge",
+            if scrolled { 1. } else { 0. },
+            Theme::global(cx).motion.fast_transition(),
+            window,
+            cx,
+        );
         let theme = cx.theme();
         let has_footer = !self.footer.is_empty();
         SidebarScoped::new(
@@ -623,9 +720,30 @@ impl RenderOnce for Sidebar {
                 })
                 .border_color(theme.sidebar_border)
                 .refine_style(&self.style)
-                .child(v_flex().flex_shrink_0().children(self.header))
+                .child(
+                    v_flex()
+                        .id("sidebar-header")
+                        .relative()
+                        .flex_shrink_0()
+                        .children(self.header)
+                        .when(edge > 0.001, |this| {
+                            this.child(
+                                div()
+                                    .id("sidebar-header-edge")
+                                    .test_support()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left_0()
+                                    .right_0()
+                                    .h_px()
+                                    .bg(theme.sidebar_border)
+                                    .opacity(edge),
+                            )
+                        }),
+                )
                 .child(
                     ScrollArea::new("sidebar-content")
+                        .track(&scroll)
                         .flex()
                         .flex_col()
                         .flex_1()

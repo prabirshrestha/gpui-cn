@@ -318,6 +318,12 @@ mod tests {
         assert_eq!(off.thumb_offset, px(0.));
         assert_eq!(on.thumb_offset, px(12.), "32 - 2 * 2 - 16");
         assert_eq!(to_hex(on.track), "#539af8", "the accent");
+        let light = crate::theme::test_tokens(&ThemeConfig::light(), ThemeAppearance::Light);
+        assert_eq!(
+            to_hex(Surface::of(true, false, &light).track),
+            "#339cff",
+            "the accent on light"
+        );
         assert_eq!(off.track, theme.switch_track_off);
         let mid = off.interpolate(&on, 0.5);
         assert_eq!(mid.thumb_offset, px(6.));

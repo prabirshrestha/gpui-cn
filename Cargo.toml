@@ -22,7 +22,7 @@ gpui-cn = { path = "crates/gpui-cn", version = "0.4.0" }
 # The terminal engine releases on its own `ghostty-vt-v*` tags.
 ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.1.0" }
 ghostty-vt = { path = "crates/ghostty-vt", version = "0.1.0" }
-gpui-kit = { version = "0.7.0", default-features = false }
+gpui-kit = { version = "0.7.1", default-features = false }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

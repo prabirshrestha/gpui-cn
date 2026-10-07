@@ -1,11 +1,11 @@
 use gpui_cn::{
-    Button, Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandState, Popover,
-    Tag, gpui_kit::assets::IconName,
+    Button, Command, CommandDialog, CommandEntry, CommandEvent, CommandGroup, CommandItem,
+    CommandState, Tag, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
-    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, Global,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
-    Styled as _, Window, actions, div, px,
+    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Global, InteractiveElement as _,
+    IntoElement, KeyBinding, ParentElement as _, Render, SharedString, Styled as _, Window,
+    actions, div, px,
 };
 
 use crate::{Story, note, page, section};
@@ -17,6 +17,8 @@ actions!(
         OpenProfile,
         /// Opens the settings.
         OpenSettings,
+        /// Opens the palette dialog.
+        OpenPalette,
     ]
 );
 
@@ -35,22 +37,23 @@ fn bind_keys(cx: &mut App) {
         return;
     }
     let keys = if cfg!(target_os = "macos") {
-        ["cmd-p", "cmd-,"]
+        ["cmd-p", "cmd-,", "cmd-k"]
     } else {
-        ["ctrl-p", "ctrl-,"]
+        ["ctrl-p", "ctrl-,", "ctrl-k"]
     };
     cx.bind_keys([
         KeyBinding::new(keys[0], OpenProfile, Some(CONTEXT)),
         KeyBinding::new(keys[1], OpenSettings, Some(CONTEXT)),
+        KeyBinding::new(keys[2], OpenPalette, Some(CONTEXT)),
     ]);
     cx.set_global(Bindings);
 }
 
-/// Command palettes: one inline, one in a popover under a button.
+/// Command palettes: one inline, one in a dialog.
 pub struct CommandStory {
     inline: Entity<CommandState>,
-    popover: Entity<CommandState>,
-    popover_open: bool,
+    dialog: Entity<CommandState>,
+    dialog_open: bool,
     focus: FocusHandle,
     status: SharedString,
 }
@@ -105,7 +108,7 @@ impl CommandStory {
             CommandEvent::Submitted(query) => format!("Searched for \"{query}\".").into(),
             CommandEvent::QueryChanged(_) => return,
         };
-        self.popover_open = false;
+        self.dialog_open = false;
         cx.notify();
     }
 }
@@ -132,11 +135,11 @@ impl Story for CommandStory {
                 CommandState::new("Type a command or search...", window, cx)
                     .with_entries(Self::entries(&focus))
             });
-            let popover = cx.new(|cx| {
+            let dialog = cx.new(|cx| {
                 CommandState::new("Type a command or search...", window, cx)
                     .with_entries(Self::entries(&focus))
             });
-            for state in [&inline, &popover] {
+            for state in [&inline, &dialog] {
                 cx.observe(state, |_, _, cx| cx.notify()).detach();
                 cx.subscribe(state, |this: &mut Self, _, event, cx| {
                     this.report(event, cx)
@@ -145,8 +148,8 @@ impl Story for CommandStory {
             }
             Self {
                 inline,
-                popover,
-                popover_open: false,
+                dialog,
+                dialog_open: false,
                 focus,
                 status: "Choose a command.".into(),
             }
@@ -155,11 +158,27 @@ impl Story for CommandStory {
     }
 }
 
+impl CommandStory {
+    /// The story's focus handle, which holds its key context.
+    pub fn focus(&self) -> &FocusHandle {
+        &self.focus
+    }
+
+    /// Whether the palette dialog is open.
+    pub fn dialog_open(&self) -> bool {
+        self.dialog_open
+    }
+
+    /// The state of the palette in the dialog.
+    pub fn dialog_state(&self) -> &Entity<CommandState> {
+        &self.dialog
+    }
+}
+
 impl Render for CommandStory {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let popover = self.popover.clone();
-        let popover_focus = popover.focus_handle(cx);
         let this = cx.entity().downgrade();
+        let opener = this.clone();
         div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -169,6 +188,10 @@ impl Render for CommandStory {
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
                 this.status = "Opened the settings.".into();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &OpenPalette, _, cx| {
+                this.dialog_open = true;
                 cx.notify();
             }))
             .child(page([
@@ -189,37 +212,42 @@ impl Render for CommandStory {
                 )
                 .into_any_element(),
                 section(
-                    "In a popover",
+                    "In a dialog",
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
                         .child(note(
-                            "The button opens the palette in a popover, with the search \
-                             field focused. Choosing a command closes it.",
+                            "The button, or Cmd+K (Ctrl+K elsewhere), opens the palette in a \
+                             dialog near the top of the window, with the search field \
+                             focused. Choosing a command, Escape, or a press on the backdrop \
+                             closes it.",
                             cx,
                         ))
                         .child(
                             div().flex().child(
-                                Popover::new("command-popover")
-                                    .trigger(
-                                        Button::new("command-popover-trigger")
-                                            .label("Open palette"),
-                                    )
-                                    .open(self.popover_open)
-                                    .on_open_change(move |open, _, cx| {
-                                        this.update(cx, |this, cx| {
-                                            this.popover_open = open;
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                    })
-                                    .track_focus(&popover_focus)
-                                    .content(move |_, _| {
-                                        Command::new("command-popover-palette", &popover)
-                                            .bordered(false)
+                                Button::new("command-dialog-trigger")
+                                    .label("Open palette")
+                                    .on_click(move |_, _, cx| {
+                                        opener
+                                            .update(cx, |this, cx| {
+                                                this.dialog_open = true;
+                                                cx.notify();
+                                            })
+                                            .ok();
                                     }),
                             ),
+                        )
+                        .child(
+                            CommandDialog::new("command-dialog", &self.dialog)
+                                .open(self.dialog_open)
+                                .on_open_change(move |open, _, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.dialog_open = open;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }),
                         ),
                 )
                 .into_any_element(),

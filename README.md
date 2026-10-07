@@ -18,7 +18,7 @@ This adds the two dependencies to `Cargo.toml`:
 
 ```toml
 [dependencies]
-gpui-kit = "0.6"
+gpui-kit = "0.7"
 gpui-cn = "0.1"
 ```
 
@@ -56,7 +56,9 @@ fn main() {
 ```
 
 `with_assets` registers the Lucide icons that gpui-kit bundles, which the
-components draw with. Call `gpui_kit::init` first. It sets up `gpui-base`.
+components draw with. The composer family (`Composer`, `PermissionMenu`,
+`AttachmentTile`, `EffortMenu`, `StatusSelect`) also draws icons the default
+set lacks, so register `gpui_cn::ComposerAssets` in its place. Call `gpui_kit::init` first. It sets up `gpui-base`.
 Then call `gpui_cn::init`, which installs the theme and adds gpui-cn to
 the `Root` that `gpui_kit::open_window` puts at the top of each window.
 gpui-base's root moves focus on Tab and Shift-Tab and copies the selected
@@ -159,10 +161,11 @@ phone.
 | --- | --- |
 | Cmd-, | Open Settings: appearance, reduced motion, pointer cursors, text size, code font, and the sidebar's collapse mode |
 | Cmd-B | Hide or show the sidebar |
+| Cmd-K | Open the component palette |
 | Cmd-[ | Go back |
 | Cmd-] | Go forward |
 
-On Windows and Linux, the same actions use Ctrl-, Ctrl-B, Alt-Left, and
+On Windows and Linux, the same actions use Ctrl-, Ctrl-B, Ctrl-K, Alt-Left, and
 Alt-Right.
 
 On macOS, the gallery can also render itself without a window and write

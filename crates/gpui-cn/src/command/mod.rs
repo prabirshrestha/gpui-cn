@@ -17,7 +17,6 @@ use gpui_kit::{
     base::{
         StyledExt as _, TestSupportExt as _,
         actions::{Cancel, Confirm, SelectDown, SelectUp},
-        h_flex,
         input::{InputEvent, InputState},
         v_flex,
     },
@@ -31,7 +30,8 @@ pub use item::{CommandEntry, CommandGroup, CommandItem, CommandRow};
 use crate::{
     ActiveTheme as _, ScrollArea, Theme,
     menu::{
-        MenuLook, label_block, line_slot, row_line, search_row, search_style, separator, shortcut,
+        MenuLook, label_block, line_slot, row_frame, row_line, search_row, search_style, separator,
+        shortcut,
     },
 };
 
@@ -76,8 +76,8 @@ pub enum CommandEvent {
 /// The commands of a [`Command`] palette, its query, and its highlight.
 ///
 /// Owned by the view that shows the palette, which observes it so a
-/// change renders. The query filters the commands by label and keywords,
-/// ignoring case, and puts the highlight on the first match; Up and Down
+/// change renders. The query filters the commands by label and keywords
+/// as a fuzzy subsequence, ignoring case, and puts the highlight on the first match; Up and Down
 /// move it, and Enter chooses it. Choosing a command, or submitting a
 /// query, clears the query for the next time.
 pub struct CommandState {
@@ -285,7 +285,7 @@ impl CommandState {
     fn refilter(&mut self, query: &str) {
         // A handler's commands are the answer to the query already.
         let query = if self.handler.is_none() {
-            query.trim().to_lowercase()
+            query.trim().to_string()
         } else {
             String::new()
         };
@@ -576,12 +576,12 @@ struct Rows {
 impl Rows {
     fn render(&self, row: usize, window: &mut Window, cx: &mut App) -> AnyElement {
         let look = &self.look;
-        let (entry, highlighted) = {
+        let (entry, highlighted, query) = {
             let state = self.state.read(cx);
             let Some(entry) = state.rows.get(row).cloned() else {
                 return div().into_any_element();
             };
-            (entry, state.highlighted == Some(row))
+            (entry, state.highlighted == Some(row), state.query(cx))
         };
         let context = &self.action_context;
         let item = match entry {
@@ -612,7 +612,7 @@ impl Rows {
         let hover = self.state.clone();
         let choose = self.state.clone();
         let touch = look.touch;
-        h_flex()
+        row_frame(look, highlighted && !disabled)
             .id(row_id)
             .test_support()
             .role(Role::ListBoxOption)
@@ -621,15 +621,8 @@ impl Rows {
                 this.aria_keyshortcuts(shortcut)
             })
             .when(highlighted && !disabled, |this| {
-                this.aria_active_descendant().bg(look.accent)
+                this.aria_active_descendant()
             })
-            .w_full()
-            .min_h(look.row_height)
-            .py_1p5()
-            .items_center()
-            .gap_2()
-            .px(look.row_padding)
-            .rounded(look.row_radius)
             .text_color(foreground)
             .map(|this| {
                 if !disabled && self.pointer_cursors {
@@ -657,6 +650,7 @@ impl Rows {
                         }))
                         .child(div().flex_1().min_w_0().child(label_block(
                             item.label().clone(),
+                            &crate::fuzzy::matched(&query, item.label()).unwrap_or_default(),
                             None,
                             look,
                         )))

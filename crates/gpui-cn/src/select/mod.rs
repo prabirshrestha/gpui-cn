@@ -7,7 +7,6 @@ mod item;
 mod menu;
 mod state;
 
-use crate::bounds::OnPaddingBounds as _;
 use std::rc::Rc;
 
 use gpui_kit::{
@@ -36,7 +35,7 @@ use menu::{ItemRenderer, LabelRenderer, Menu, PartRenderer, Rows};
 use crate::{
     ActiveTheme as _, ButtonSize, Icon, MenuEntry, Theme, ThemeTokens,
     button::ControlGeometry,
-    menu::{MenuLook, MenuMotion, TextMenuBuilder, corner},
+    menu::{MenuLook, MenuMotion, TextMenuBuilder, corner, measure},
     theme::mix,
 };
 
@@ -132,6 +131,8 @@ pub struct Select<V: SelectValue> {
     search_context_menu_enabled: bool,
     disabled: bool,
     tab_index: isize,
+    ghost: bool,
+    chevron: bool,
 }
 
 impl<V: SelectValue> Select<V> {
@@ -158,7 +159,25 @@ impl<V: SelectValue> Select<V> {
             search_context_menu_enabled: true,
             disabled: false,
             tab_index: 0,
+            ghost: false,
+            chevron: true,
         }
+    }
+
+    /// A quiet trigger for a toolbar: no fill and no hairline at rest, and
+    /// the surface of a ghost button while the pointer is on it or the menu
+    /// is open. The menu is the same.
+    pub fn ghost(mut self) -> Self {
+        self.ghost = true;
+        self
+    }
+
+    /// Whether the trigger shows its chevron. On by default. A trigger
+    /// that shows only an icon (see [`render_value`](Self::render_value))
+    /// turns it off.
+    pub fn chevron(mut self, chevron: bool) -> Self {
+        self.chevron = chevron;
+        self
     }
 
     /// The trigger's size tier, shared with [`Button`](crate::Button).
@@ -358,6 +377,8 @@ impl<V: SelectValue> Styled for Select<V> {
 struct TriggerLook {
     fill: Hsla,
     fill_hovered: Hsla,
+    ghost_hovered: Hsla,
+    ghost_open: Hsla,
     border: Hsla,
     foreground: Hsla,
     placeholder: Hsla,
@@ -374,6 +395,8 @@ impl TriggerLook {
         Self {
             fill: theme.select_trigger,
             fill_hovered: mix(theme.select_trigger, theme.popover_foreground, 0.05),
+            ghost_hovered: theme.secondary(),
+            ghost_open: theme.selected,
             border: theme.select_trigger_border,
             foreground: theme.popover_foreground,
             placeholder: theme.muted_foreground(),
@@ -445,12 +468,18 @@ impl<V: SelectValue> Select<V> {
         let is_hovered = *hovered.read(cx) && interactive && !look.touch;
         let focus_visible =
             state.read(cx).trigger_focus().is_focused(window) && window.last_input_was_keyboard();
-        let mut fill = if is_hovered || open {
-            look.fill_hovered
-        } else {
-            look.fill
+        let mut fill = match (self.ghost, open, is_hovered) {
+            (true, true, _) => look.ghost_open,
+            (true, false, true) => look.ghost_hovered,
+            (true, false, false) => gpui_kit::transparent_black(),
+            (false, false, false) => look.fill,
+            (false, _, _) => look.fill_hovered,
         };
-        let mut border = look.border;
+        let mut border = if self.ghost {
+            gpui_kit::transparent_black()
+        } else {
+            look.border
+        };
         let mut foreground = if value.is_placeholder {
             look.placeholder
         } else {
@@ -480,6 +509,7 @@ impl<V: SelectValue> Select<V> {
             .text_size(look.geometry.text_size)
             .text_color(foreground)
             .whitespace_nowrap()
+            .relative()
             .when(focus_visible, |this| {
                 this.shadow(vec![gpui_kit::BoxShadow {
                     color: look.ring,
@@ -513,18 +543,23 @@ impl<V: SelectValue> Select<V> {
                             .child(value.text),
                     ),
             })
-            // At the trailing edge when the trigger is wider than its
-            // value, as shadcn's `justify-between` trigger puts it.
-            .child(
-                div().ml_auto().flex_none().child(
-                    Icon::from(IconName::ChevronDown)
-                        .size_4()
-                        .text_color(look.indicator),
-                ),
-            )
-            // The canvas fills the padding box; the trigger's hairline border
-            // is outside it, and the menu lines up with the border's edges.
-            .on_padding_bounds(move |bounds, _, _| trigger_bounds.set(bounds.dilate(px(1.))))
+            .when(self.chevron, |this| {
+                // At the trailing edge when the trigger is wider than its
+                // value, as shadcn's `justify-between` trigger puts it.
+                this.child(
+                    div().ml_auto().flex_none().child(
+                        Icon::from(IconName::ChevronDown)
+                            .size_4()
+                            .text_color(look.indicator),
+                    ),
+                )
+            })
+            // The recorder spans the padding box, so the hairline around
+            // the trigger is added back; `on_prepaint` would leave the
+            // bounds shifted by the trigger's padding.
+            .child(measure(move |bounds| {
+                trigger_bounds.set(bounds.dilate(px(1.)))
+            }))
             .on_hover({
                 let hovered = hovered.clone();
                 move |is_hovered, _, cx| {

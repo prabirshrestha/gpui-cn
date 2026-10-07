@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, FocusHandle, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement, RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    IntoElement, ParentElement, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, Window,
     assets::IconName,
     base::{self, StyledExt as _, TestSupportExt as _, actions::Cancel, h_flex, v_flex},
     div,
@@ -69,6 +69,7 @@ pub struct Dialog {
     show_close_button: bool,
     on_open_change: Option<OpenChange>,
     focus: Option<FocusHandle>,
+    top: Option<Pixels>,
     style: StyleRefinement,
 }
 
@@ -85,6 +86,7 @@ impl Dialog {
             show_close_button: true,
             on_open_change: None,
             focus: None,
+            top: None,
             style: StyleRefinement::default(),
         }
     }
@@ -126,6 +128,13 @@ impl Dialog {
     /// Whether the close button shows in the top corner. On by default.
     pub fn show_close_button(mut self, show: bool) -> Self {
         self.show_close_button = show;
+        self
+    }
+
+    /// Places the surface this far below the top edge of the window, in
+    /// place of the vertical center.
+    pub(crate) fn top(mut self, offset: Pixels) -> Self {
+        self.top = Some(offset);
         self
     }
 
@@ -241,6 +250,9 @@ impl RenderOnce for Dialog {
             )
             .popup(popup)
             .p_4();
+        if let Some(offset) = self.top {
+            dialog = dialog.items_start().pt(offset);
+        }
         if let Some(handler) = on_open_change {
             dialog = dialog.on_open_change(move |open, _, window, cx| handler(open, window, cx));
         }
