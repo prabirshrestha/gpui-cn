@@ -273,7 +273,15 @@ mod tests {
             .spawn()
             .unwrap();
         let pid = child.id() as libc::pid_t;
-        let described = describe_group(pid).expect("described");
+        // Linux fills /proc/<pid>/cmdline a moment after exec returns.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let described = loop {
+            let described = describe_group(pid).expect("described");
+            if !described.argv.is_empty() || Instant::now() >= deadline {
+                break described;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert_eq!(described.pid, pid);
         assert_eq!(described.name, "sleep");
         assert_eq!(described.argv, ["/bin/sleep", "300"]);
@@ -320,8 +328,9 @@ mod tests {
     #[test]
     fn ending_a_session_ends_its_jobs_in_other_process_groups() {
         // A session leader, as a shell in a pty is, whose job runs in its
-        // own process group, as a shell with job control starts it.
-        let mut command = Command::new("/bin/sh");
+        // own process group, as a shell with job control starts it. Bash,
+        // because dash turns `set -m` off without a terminal.
+        let mut command = Command::new("/bin/bash");
         command
             .args(["-c", "set -m; sleep 300 & echo $!; exec sleep 300"])
             .stdout(Stdio::piped());
