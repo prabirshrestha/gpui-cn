@@ -17,6 +17,13 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 
+/// Select all in the path field: Cmd+A on macOS, Ctrl+A elsewhere.
+const SELECT_ALL: &str = if cfg!(target_os = "macos") {
+    "cmd-a"
+} else {
+    "ctrl-a"
+};
+
 type Reply = Result<FolderPage, ListError>;
 type Pending = Vec<(SourcePath, Option<String>, smol::channel::Sender<Reply>)>;
 
@@ -443,7 +450,7 @@ fn use_folder_needs_a_listed_directory_or_an_exact_folder(cx: &mut TestAppContex
     click(&setup, part("use"), cx);
     assert!(events(&setup).is_empty());
 
-    press(&setup, "cmd-a", cx);
+    press(&setup, SELECT_ALL, cx);
     type_text(&setup, "/home/me/docs", cx);
     click(&setup, part("use"), cx);
     assert_eq!(
@@ -629,7 +636,7 @@ fn the_submit_shortcut_chooses_like_use_folder_from_the_path_field(cx: &mut Test
     assert!(events(&setup).is_empty(), "a partial name is no folder");
     assert_eq!(text(&setup, cx), "/home/me/co", "it does not descend");
 
-    press(&setup, "cmd-a", cx);
+    press(&setup, SELECT_ALL, cx);
     type_text(&setup, "/home/me/docs", cx);
     press(&setup, SUBMIT, cx);
     assert_eq!(
@@ -960,7 +967,7 @@ fn a_typed_tilde_lists_the_home_and_a_tilde_path_its_child(cx: &mut TestAppConte
     let setup = start(cx, Some("/"), Some("/Users/me"));
     setup.fake.resolve("/", ready(&["Users"]));
     settle(&setup, cx);
-    press(&setup, "cmd-a", cx);
+    press(&setup, SELECT_ALL, cx);
     type_text(&setup, "~", cx);
     assert_eq!(text(&setup, cx), "~", "the user's own text stays");
     assert_eq!(dir(&setup, cx), sp("/Users/me"));
@@ -994,7 +1001,7 @@ fn a_source_without_a_home_does_not_expand_the_tilde(cx: &mut TestAppContext) {
     let setup = start(cx, Some("/"), None);
     setup.fake.resolve("/", ready(&["Users"]));
     settle(&setup, cx);
-    press(&setup, "cmd-a", cx);
+    press(&setup, SELECT_ALL, cx);
     type_text(&setup, "~/", cx);
     assert_eq!(dir(&setup, cx), sp("~"), "a plain name");
     setup

@@ -47,11 +47,18 @@ fn shown(handle: &WindowHandle<gpui_kit::base::Root>, cx: &mut TestAppContext) -
     .unwrap()
 }
 
+/// Select all in a field: Cmd+A on macOS, Ctrl+A elsewhere.
+const SELECT_ALL: &str = if cfg!(target_os = "macos") {
+    "cmd-a"
+} else {
+    "ctrl-a"
+};
+
 fn type_query(handle: &WindowHandle<gpui_kit::base::Root>, cx: &mut TestAppContext, text: &str) {
     cx.update_window((*handle).into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("story-filter", cx);
-        window.press("cmd-a", cx);
+        window.press(SELECT_ALL, cx);
         window.input(text, cx);
         window.render_frame(cx);
     })

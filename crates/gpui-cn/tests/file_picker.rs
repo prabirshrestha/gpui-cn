@@ -157,6 +157,7 @@ fn multiple() -> Configure {
 
 fn project() -> MemoryFiles {
     MemoryFiles::new()
+        .with_style(PathStyle::posix())
         .with_home("/home/me")
         .with_dir(
             "/home/me",
