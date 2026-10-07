@@ -23,11 +23,10 @@ fn main() {
 mod macos {
     use std::{path::PathBuf, sync::Arc};
 
-    use gpui_cn::{ReduceMotion, Theme, ThemeMode};
+    use gpui_cn::{ComposerAssets, ReduceMotion, Theme, ThemeMode};
     use gpui_cn_story::Gallery;
     use gpui_kit::{
-        AppContext as _, Entity, HeadlessAppContext, assets::Assets, px, size,
-        test::TestWindowExt as _,
+        AppContext as _, Entity, HeadlessAppContext, px, size, test::TestWindowExt as _,
     };
 
     pub fn run() {
@@ -44,7 +43,7 @@ mod macos {
             .unwrap_or_else(|| f32::from(gpui_cn_story::WINDOW_SIZE.height));
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
+            Arc::new(ComposerAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(|cx| {
@@ -68,6 +67,9 @@ mod macos {
         let gallery = gallery.expect("the gallery view");
 
         let capture = |cx: &mut HeadlessAppContext, name: &str| {
+            cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                .expect("render");
+            cx.run_until_parked();
             cx.update_window(handle.into(), |_, window, cx| {
                 window.render_frame(cx);
                 window.render_frame(cx);
@@ -81,9 +83,127 @@ mod macos {
             println!("{}", path.display());
         };
 
+        let snap_picker =
+            |cx: &mut HeadlessAppContext, parent: gpui_kit::ElementId, prefix: &str, name: &str| {
+                let part = |name: &'static str| {
+                    gpui_kit::ElementId::NamedChild(parent.clone().into(), name.into())
+                };
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.scroll(
+                        "page",
+                        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                            gpui_kit::px(0.),
+                            gpui_kit::px(100000.),
+                        )),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    gpui_cn_story::reveal(part("trigger"), window, cx);
+                    window.click(part("trigger"), cx);
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                })
+                .expect("open the model picker");
+                capture(cx, &format!("{prefix}-models-{name}"));
+                for (suffix, click, query) in [
+                    ("keyboard", None, None),
+                    ("favorites", Some("favorites"), None),
+                    ("legacy", Some("provider-codex"), None),
+                    ("search", None, Some("opus")),
+                    ("empty", None, Some("zzzz")),
+                ] {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        match (click, query) {
+                            (Some("favorites"), _) => window.click(part("favorites"), cx),
+                            (Some(_), _) => {
+                                window.click(
+                                    gpui_kit::ElementId::NamedChild(
+                                        part("provider").into(),
+                                        "codex".into(),
+                                    ),
+                                    cx,
+                                );
+                                window.render_frame(cx);
+                                window.click(part("legacy"), cx);
+                            }
+                            (None, Some(query)) => {
+                                window.press("cmd-a", cx);
+                                window.input(query, cx);
+                            }
+                            (None, None) => window.press("down", cx),
+                        }
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("show a model picker view");
+                    capture(cx, &format!("{prefix}-models-{suffix}-{name}"));
+                }
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.press("escape", cx);
+                    window.render_frame(cx);
+                })
+                .expect("close the model picker");
+            };
+
         for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
             cx.update(|cx| Theme::change(mode, cx));
             capture(&mut cx, &format!("gallery-{name}"));
+            cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.open_palette(cx)));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the palette");
+            capture(&mut cx, &format!("gallery-{name}-palette"));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.press("escape", cx);
+                window.render_frame(cx);
+            })
+            .expect("close the palette");
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.scroll(
+                    "sidebar-content",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(0.),
+                        gpui_kit::px(-300.),
+                    )),
+                    cx,
+                );
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("scroll the sidebar");
+            capture(&mut cx, &format!("gallery-{name}-scrolled"));
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.scroll(
+                    "sidebar-content",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(0.),
+                        gpui_kit::px(1000.),
+                    )),
+                    cx,
+                );
+                window.render_frame(cx);
+            })
+            .expect("scroll the sidebar back");
+            for (query, label) in [("sel", "filtered"), ("zzzz", "unmatched")] {
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click("story-filter", cx);
+                    window.press("cmd-a", cx);
+                    window.input(query, cx);
+                    window.render_frame(cx);
+                })
+                .expect("filter the story list");
+                capture(&mut cx, &format!("gallery-{name}-{label}"));
+            }
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.press("escape", cx);
+                window.render_frame(cx);
+            })
+            .expect("clear the filter");
             // Closed: off the canvas, the shell's default, then the rail.
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.toggle_sidebar(cx)));
             capture(&mut cx, &format!("gallery-{name}-collapsed"));
@@ -123,8 +243,11 @@ mod macos {
             cx.update(|cx| gallery.update(cx, |gallery, cx| gallery.go_back(cx)));
             for story in [
                 "Typography",
+                "Color",
                 "Spacing",
                 "Switch",
+                "Slider",
+                "Radio",
                 "Input",
                 "Textarea",
                 "Select",
@@ -132,14 +255,16 @@ mod macos {
                 "Command",
                 "Popover",
                 "Dialog",
+                "File picker",
                 "Folder picker",
+                "Composer",
+                "Model picker",
                 "Avatar",
                 "Badge",
                 "Tag",
                 "Skeleton",
-                "Spinner",
                 "Progress",
-                "Theme mode picker",
+                "Theme",
                 "Sidebar",
                 "Nav stack",
                 "Scroll area",
@@ -193,6 +318,132 @@ mod macos {
                 }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                if story == "Composer" {
+                    let named = |parent: &'static str, child: &'static str| {
+                        gpui_kit::ElementId::NamedChild(
+                            gpui_kit::ElementId::Name(parent.into()).into(),
+                            child.into(),
+                        )
+                    };
+                    let status_branch = gpui_kit::ElementId::NamedChild(
+                        gpui_kit::ElementId::NamedChild(
+                            named("composer-agent-status", "branch").into(),
+                            "select".into(),
+                        )
+                        .into(),
+                        "trigger".into(),
+                    );
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal(status_branch.clone(), window, cx);
+                        window.click(status_branch.clone(), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open a status dropdown");
+                    capture(&mut cx, &format!("story-{slug}-status-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the status dropdown");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.click(named("composer-basic", "text"), cx);
+                        window.press("cmd-a", cx);
+                        window.input("Summarize the attached forecast", cx);
+                        window.press("shift-enter", cx);
+                        window.input("and list the three biggest risks.", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("type a prompt");
+                    capture(&mut cx, &format!("story-{slug}-typed-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        gpui_cn_story::reveal(named("permission", "trigger"), window, cx);
+                        window.click(named("permission", "trigger"), cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.hover(named("permission", "manual"), cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the permission menu");
+                    capture(&mut cx, &format!("story-{slug}-permission-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the permission menu");
+                    snap_picker(
+                        &mut cx,
+                        named("composer-agent", "models"),
+                        &format!("story-{slug}"),
+                        name,
+                    );
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        let trigger = gpui_kit::ElementId::NamedChild(
+                            named("composer-agent", "effort").into(),
+                            "trigger".into(),
+                        );
+                        window.scroll(
+                            "page",
+                            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                gpui_kit::px(0.),
+                                gpui_kit::px(100000.),
+                            )),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.click(trigger, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the effort menu");
+                    capture(&mut cx, &format!("story-{slug}-effort-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the effort menu");
+                }
+                if story == "Color" {
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let search = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::ColorStory>(cx)
+                            .expect("the color story")
+                            .read(cx)
+                            .search()
+                            .clone();
+                        search.update(cx, |input, cx| input.set_value("focus", window, cx));
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("search the colors");
+                    capture(&mut cx, &format!("story-{slug}-search-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let search = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::ColorStory>(cx)
+                            .expect("the color story")
+                            .read(cx)
+                            .search()
+                            .clone();
+                        search.update(cx, |input, cx| input.set_value("", window, cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("clear the search");
+                }
+                if story == "Model picker" {
+                    snap_picker(
+                        &mut cx,
+                        gpui_kit::ElementId::Name("models".into()),
+                        &format!("story-{slug}"),
+                        name,
+                    );
+                }
                 if story == "Menu" {
                     use gpui_cn_story::stories::MenuStory;
                     let named = |parent: &'static str, child: &'static str| {
@@ -268,13 +519,13 @@ mod macos {
                 if story == "Command" {
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
-                        gpui_cn_story::reveal("command-popover-trigger", window, cx);
-                        window.click("command-popover-trigger", cx);
+                        gpui_cn_story::reveal("command-dialog-trigger", window, cx);
+                        window.click("command-dialog-trigger", cx);
                         window.render_frame(cx);
                         window.render_frame(cx);
                     })
                     .expect("open the palette");
-                    capture(&mut cx, &format!("story-{slug}-popover-{name}"));
+                    capture(&mut cx, &format!("story-{slug}-dialog-{name}"));
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.press("escape", cx);
                     })
@@ -295,6 +546,127 @@ mod macos {
                     })
                     .expect("close the dialog");
                 }
+                if story == "File picker" {
+                    for (trigger, suffix, steps) in [
+                        (
+                            gpui_cn_story::stories::FilePickerStory::TRIGGER_ONE,
+                            "one",
+                            &[("", None), ("-selected", Some("main.rs"))][..],
+                        ),
+                        (
+                            gpui_cn_story::stories::FilePickerStory::TRIGGER_MANY,
+                            "many",
+                            &[("", None), ("-selected", Some("notes.txt"))][..],
+                        ),
+                    ] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.click(trigger, cx);
+                        })
+                        .expect("open the picker");
+                        for (extra, click) in steps {
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                                if let Some(file) = click {
+                                    let id = gpui_kit::ElementId::NamedChild(
+                                        gpui_kit::ElementId::NamedChild(
+                                            gpui_kit::ElementId::Name(
+                                                format!("file-picker-{suffix}").into(),
+                                            )
+                                            .into(),
+                                            "entry".into(),
+                                        )
+                                        .into(),
+                                        (*file).into(),
+                                    );
+                                    window.click(id, cx);
+                                    window.render_frame(cx);
+                                }
+                            })
+                            .expect("draw the picker");
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("draw the picker");
+                            capture(&mut cx, &format!("story-{slug}-{suffix}{extra}-{name}"));
+                        }
+                        if suffix == "one" {
+                            for (extra, typed) in [
+                                ("-new-folder", None),
+                                ("-new-folder-error", Some("Documents")),
+                            ] {
+                                cx.update_window(handle.into(), |_, window, cx| {
+                                    window.render_frame(cx);
+                                    if let Some(typed) = typed {
+                                        window.input(typed, cx);
+                                    } else {
+                                        window.click(
+                                            gpui_kit::ElementId::NamedChild(
+                                                gpui_kit::ElementId::Name("file-picker-one".into())
+                                                    .into(),
+                                                "new-folder-button".into(),
+                                            ),
+                                            cx,
+                                        );
+                                    }
+                                    window.render_frame(cx);
+                                })
+                                .expect("name a folder");
+                                cx.run_until_parked();
+                                if typed.is_some() {
+                                    cx.update_window(handle.into(), |_, window, cx| {
+                                        window.press("enter", cx);
+                                    })
+                                    .expect("confirm the name");
+                                    cx.run_until_parked();
+                                }
+                                cx.update_window(handle.into(), |_, window, cx| {
+                                    window.render_frame(cx);
+                                    window.render_frame(cx);
+                                })
+                                .expect("draw the picker");
+                                capture(&mut cx, &format!("story-{slug}-one{extra}-{name}"));
+                            }
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.press("escape", cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("close the row");
+                            cx.update(|cx| {
+                                let story = gallery
+                                    .read(cx)
+                                    .current_story::<gpui_cn_story::stories::FilePickerStory>(cx)
+                                    .expect("the file picker story");
+                                let one = story.read(cx).one().clone();
+                                one.update(cx, |state, cx| state.set_active_filter(1, cx));
+                            });
+                            cx.run_until_parked();
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.render_frame(cx);
+                                window.render_frame(cx);
+                            })
+                            .expect("draw the filtered picker");
+                            capture(&mut cx, &format!("story-{slug}-one-filtered-{name}"));
+                            cx.update(|cx| {
+                                let story = gallery
+                                    .read(cx)
+                                    .current_story::<gpui_cn_story::stories::FilePickerStory>(cx)
+                                    .expect("the file picker story");
+                                let one = story.read(cx).one().clone();
+                                one.update(cx, |state, cx| state.set_active_filter(0, cx));
+                            });
+                        }
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("escape", cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("close the picker");
+                    }
+                }
                 if story == "Folder picker" {
                     cx.update_window(handle.into(), |_, window, cx| {
                         window.render_frame(cx);
@@ -303,6 +675,8 @@ mod macos {
                     .expect("open the picker");
                     for (suffix, text) in [
                         // The gallery is reused per appearance, so the path is set again.
+                        ("home", Some("~/")),
+                        ("tilde", Some("~/co")),
                         ("open", Some("/home/prabirshrestha/")),
                         ("filtered", Some("/home/prabirshrestha/co")),
                         ("error", Some("/home/prabirshrestha/code/psl/")),
@@ -325,6 +699,105 @@ mod macos {
                         capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
                     }
                     cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("cmd-a", cx);
+                        window.input("/home/prabirshrestha/", cx);
+                    })
+                    .expect("go home");
+                    cx.run_until_parked();
+                    for (suffix, typed) in
+                        [("new-folder", None), ("new-folder-error", Some("code"))]
+                    {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            if let Some(typed) = typed {
+                                window.input(typed, cx);
+                            } else {
+                                window.click(
+                                    gpui_kit::ElementId::NamedChild(
+                                        gpui_kit::ElementId::Name("folder-picker".into()).into(),
+                                        "new-folder-button".into(),
+                                    ),
+                                    cx,
+                                );
+                            }
+                            window.render_frame(cx);
+                        })
+                        .expect("name a folder");
+                        cx.run_until_parked();
+                        if typed.is_some() {
+                            cx.update_window(handle.into(), |_, window, cx| {
+                                window.press("enter", cx);
+                            })
+                            .expect("confirm the name");
+                            cx.run_until_parked();
+                        }
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("draw the picker");
+                        capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the row");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.read(cx).sim().reset();
+                        story.read(cx).sim().hold();
+                        story.update(cx, |story, cx| story.set_remote(true, window, cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("list a remote");
+                    cx.run_until_parked();
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("draw the picker");
+                    capture(&mut cx, &format!("story-{slug}-remote-loading-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.read(cx).sim().release();
+                        let state = story.read(cx).state().clone();
+                        state.update(cx, |state, cx| state.retry(cx));
+                        window.render_frame(cx);
+                    })
+                    .expect("release the remote");
+                    cx.run_until_parked();
+                    for (suffix, path) in [
+                        ("remote-error", "/srv/data/"),
+                        ("remote-auth", "/secure/"),
+                        ("remote-listed", "/home/deploy/"),
+                    ] {
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.press("cmd-a", cx);
+                            window.input(path, cx);
+                        })
+                        .expect("type a remote path");
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                        })
+                        .expect("draw the picker");
+                        capture(&mut cx, &format!("story-{slug}-{suffix}-{name}"));
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let story = gallery
+                            .read(cx)
+                            .current_story::<gpui_cn_story::stories::FolderPickerStory>(cx)
+                            .expect("the folder picker story");
+                        story.update(cx, |story, cx| story.set_remote(false, window, cx));
+                        story.read(cx).sim().reset();
                         window.press("escape", cx);
                         window.render_frame(cx);
                     })
@@ -395,6 +868,50 @@ mod macos {
                 gallery.update(cx, |gallery, cx| gallery.select_story("Button", window, cx));
             })
             .expect("select the story");
+        }
+
+        let mut narrow: Option<Entity<Gallery>> = None;
+        let narrow_handle = cx
+            .open_window(size(px(430.), px(900.)), |window, cx| {
+                let view = cx.new(|cx| Gallery::new(window, cx));
+                narrow = Some(view.clone());
+                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+            })
+            .expect("open the narrow window");
+        let narrow = narrow.expect("the narrow gallery");
+        for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            cx.update(|cx| Theme::change(mode, cx));
+            cx.update_window(narrow_handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the narrow gallery");
+            cx.update(|cx| {
+                narrow.update(cx, |gallery, cx| {
+                    gallery
+                        .sidebar()
+                        .update(cx, |state, cx| state.set_open(true, cx))
+                })
+            });
+            cx.run_until_parked();
+            cx.update_window(narrow_handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("draw the sheet");
+            let image = cx
+                .capture_screenshot(narrow_handle.into())
+                .expect("Metal rendering must be available");
+            let path = out.join(format!("gallery-{name}-sheet.png"));
+            image.save(&path).expect("write the PNG");
+            println!("{}", path.display());
+            cx.update(|cx| {
+                narrow.update(cx, |gallery, cx| {
+                    gallery
+                        .sidebar()
+                        .update(cx, |state, cx| state.set_open(false, cx))
+                })
+            });
         }
     }
 }

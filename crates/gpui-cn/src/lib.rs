@@ -39,22 +39,33 @@
 mod avatar;
 mod badge;
 mod button;
+mod collapse;
 mod command;
+mod command_dialog;
+mod composer;
 mod dialog;
+mod file_picker;
 mod folder_picker;
+pub mod fuzzy;
 mod icon;
 mod input;
 mod label;
 mod looping;
 mod menu;
+mod middle_text;
 mod nav;
+mod path_browser;
+mod plural;
 mod popover;
 mod progress;
+mod radio;
+pub mod remote;
 mod root;
 mod scroll_area;
 mod select;
 mod sidebar;
 mod skeleton;
+mod slider;
 mod spinner;
 mod switch;
 mod tabs;
@@ -73,13 +84,26 @@ pub use command::{
     Command, CommandEntry, CommandEvent, CommandGroup, CommandItem, CommandRow,
     CommandSearchHandler, CommandState,
 };
+pub use command_dialog::CommandDialog;
+pub use composer::{
+    Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
+    ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
+    EffortMenu, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,
+    ModelView, PermissionEvent, PermissionMenu, PermissionMode, PermissionState, PermissionTone,
+    SEARCH_MIN_OPTIONS, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
+};
 pub use dialog::Dialog;
+pub use file_picker::{
+    FileEntry, FileFilter, FileKind, FileListing, FileLoaded, FilePage, FilePicker,
+    FilePickerEvent, FilePickerState, FileSource, LocalFiles, MemoryFiles,
+};
 pub use folder_picker::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
-    Listing, Loaded, LocalFolders, MoreState, PageToken,
+    Listing, Loaded, LocalFolders, MemoryFolders, MoreState, PageToken,
 };
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
+pub use gpui_kit::base::slider::{SliderEvent, SliderState, SliderValue};
 pub use icon::{Icon, IconSource};
 pub use input::{Field, Input, Textarea};
 pub use label::Label;
@@ -91,8 +115,10 @@ pub use nav::{
     NavButtons, NavMotion, NavOperation, NavPage, NavStack, NavStackEvent, NavStackExt,
     NavStackState,
 };
+pub use path_browser::{CreateFolderError, ListError, PathStyle, SourcePath};
 pub use popover::Popover;
 pub use progress::Progress;
+pub use radio::{Radio, RadioGroup, RadioMark};
 pub use scroll_area::ScrollArea;
 pub use select::{
     SearchHandler, Select, SelectEntry, SelectEvent, SelectItem, SelectRow, SelectState,
@@ -104,6 +130,7 @@ pub use sidebar::{
     SidebarState, SidebarTrigger,
 };
 pub use skeleton::Skeleton;
+pub use slider::Slider;
 pub use spinner::Spinner;
 pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
@@ -122,15 +149,16 @@ use gpui_kit::{App, Global};
 pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
-        Command, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu, Dialog,
-        DropdownMenu, Field, FolderPicker, FolderPickerState, Icon, Input, InputState, Label,
-        MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem, MenuState, MenuSubmenu,
-        NavButtons, NavMotion, NavStack, NavStackExt, NavStackState, Popover, Progress,
-        ReduceMotion, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
-        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
-        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Spinner, Switch, Tab, Tabs,
-        TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme, ThemeMode,
-        ThemeModePicker, TitleBar, TooltipExt,
+        Command, CommandDialog, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu,
+        Dialog, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker, FolderPickerState,
+        Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
+        MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
+        Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea, Select,
+        SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
+        SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
+        SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
+        Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,
+        ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
@@ -171,7 +199,10 @@ pub fn init(cx: &mut App) {
     select::init(cx);
     menu::init(cx);
     command::init(cx);
+    composer::init_model_picker(cx);
+    path_browser::init(cx);
     folder_picker::init(cx);
+    file_picker::init(cx);
     cx.set_global(Initialized);
 }
 

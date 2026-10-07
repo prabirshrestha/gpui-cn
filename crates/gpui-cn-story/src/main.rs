@@ -6,8 +6,8 @@
 
 use gpui_cn::TitleBar;
 use gpui_cn_story::{
-    Gallery, NavigateBack, NavigateForward, OpenSettings, TogglePerformanceHud, ToggleSidebar,
-    WINDOW_SIZE,
+    Gallery, NavigateBack, NavigateForward, OpenCommandPalette, OpenSettings, TogglePerformanceHud,
+    ToggleSidebar, WINDOW_SIZE,
 };
 use gpui_kit::*;
 
@@ -30,7 +30,7 @@ fn main() {
             );
         }
     };
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_cn::ComposerAssets);
     mark("application built");
     app.run(move |cx| {
         mark("run callback");
@@ -47,6 +47,10 @@ fn main() {
             KeyBinding::new("cmd-,", OpenSettings, None),
             #[cfg(not(target_os = "macos"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-k", OpenCommandPalette, None),
+            #[cfg(not(target_os = "macos"))]
+            KeyBinding::new("ctrl-k", OpenCommandPalette, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-b", ToggleSidebar, None),
             #[cfg(not(target_os = "macos"))]
@@ -78,6 +82,8 @@ fn main() {
             Menu {
                 name: "View".into(),
                 items: vec![
+                    MenuItem::action("Search Components...", OpenCommandPalette),
+                    MenuItem::separator(),
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
                     MenuItem::separator(),
                     MenuItem::action("Back", NavigateBack),

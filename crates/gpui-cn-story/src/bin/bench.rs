@@ -25,11 +25,11 @@ fn main() {
 mod macos {
     use std::{sync::Arc, time::Instant};
 
-    use gpui_cn::{ReduceMotion, Theme};
+    use gpui_cn::{ComposerAssets, ReduceMotion, Theme};
     use gpui_cn_story::Gallery;
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, PlatformInput, ScrollDelta,
-        ScrollWheelEvent, assets::Assets, point, px, test::TestWindowExt as _,
+        ScrollWheelEvent, point, px, test::TestWindowExt as _,
     };
 
     /// Median and 95th percentile, in milliseconds.
@@ -95,7 +95,7 @@ mod macos {
             .unwrap_or(200);
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
+            Arc::new(ComposerAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         let start = Instant::now();

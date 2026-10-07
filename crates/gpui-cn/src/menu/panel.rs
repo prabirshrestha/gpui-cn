@@ -12,7 +12,7 @@ use gpui_kit::{
         actions::{
             Cancel, Confirm, SelectDown, SelectFirst, SelectLast, SelectLeft, SelectRight, SelectUp,
         },
-        h_flex, v_flex,
+        v_flex,
     },
     canvas, deferred, div, point,
     prelude::FluentBuilder as _,
@@ -22,7 +22,7 @@ use gpui_kit::{
 use super::{
     CONTEXT, MenuAnchor, MenuEntry, MenuState,
     entry::{Indicator, MenuRowState, RowRenderer},
-    look::{MenuLook, MenuMotion, label_block, line_slot, row_line, separator},
+    look::{MenuLook, MenuMotion, label_block, line_slot, row_frame, row_line, separator},
 };
 use crate::{ActiveTheme as _, Icon, ScrollArea, Theme};
 
@@ -512,7 +512,7 @@ impl Rows {
                         .test_support()
                         .flex_1()
                         .min_w_0()
-                        .child(label_block(label.clone(), description, look))
+                        .child(label_block(label.clone(), &[], description, look))
                         .into_any_element(),
                 );
                 if let Some(shortcut) = shortcut.clone() {
@@ -549,7 +549,7 @@ impl Rows {
                 vec![row_line().children(parts).into_any_element()]
             }
         };
-        h_flex()
+        row_frame(look, highlighted && !disabled)
             .id(row_id.clone())
             .test_support()
             .role(match indicator {
@@ -568,16 +568,8 @@ impl Rows {
             })
             .when(is_submenu, |this| this.aria_expanded(expanded))
             .when(highlighted && !disabled, |this| {
-                this.aria_active_descendant().bg(look.accent)
+                this.aria_active_descendant()
             })
-            .w_full()
-            .min_h(look.row_height)
-            .py_1p5()
-            .flex_shrink_0()
-            .items_center()
-            .gap_2()
-            .px(look.row_padding)
-            .rounded(look.row_radius)
             .text_color(foreground)
             .map(|this| {
                 if !disabled && self.pointer_cursors {

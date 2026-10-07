@@ -2,9 +2,13 @@
 //! remote machine, or API can implement, and the local disk as the
 //! default.
 
-use std::{io, path::Path, path::PathBuf, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui_kit::{App, AppContext as _, SharedString, Task};
+
+use crate::path_browser::{
+    CreateFolderError, Entry, ListError, Page, PageToken, PathStyle, Source, SourcePath,
+};
 use smol::stream::StreamExt as _;
 
 /// A folder in a listing.
@@ -37,24 +41,6 @@ impl FolderEntry {
     /// Whether the folder is hidden.
     pub fn hidden(&self) -> bool {
         self.hidden
-    }
-}
-
-/// Where the next page of a listing starts. The source makes it and reads
-/// it back, so it can hold anything: an offset, a cursor, a continuation
-/// token. The picker only stores it and hands it back.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PageToken(Arc<str>);
-
-impl PageToken {
-    /// A token that holds `value`.
-    pub fn new(value: impl Into<Arc<str>>) -> Self {
-        Self(value.into())
-    }
-
-    /// The value the source put in the token.
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
@@ -104,9 +90,7 @@ impl FolderPage {
 /// that repeat across pages, by name, show once.
 ///
 /// ```
-/// use std::{io, path::Path};
-///
-/// use gpui_cn::{FolderEntry, FolderPage, FolderSource, PageToken};
+/// use gpui_cn::{FolderEntry, FolderPage, FolderSource, ListError, PageToken, SourcePath};
 /// use gpui_kit::{App, AppContext as _, Task};
 ///
 /// /// A source over a list of names, ten to a page.
@@ -115,10 +99,10 @@ impl FolderPage {
 /// impl FolderSource for Names {
 ///     fn list(
 ///         &self,
-///         _dir: &Path,
+///         _dir: &SourcePath,
 ///         page: Option<PageToken>,
 ///         cx: &mut App,
-///     ) -> Task<io::Result<FolderPage>> {
+///     ) -> Task<Result<FolderPage, ListError>> {
 ///         let start = page.and_then(|t| t.as_str().parse().ok()).unwrap_or(0);
 ///         let end = (start + 10).min(self.0.len());
 ///         let names = self.0[start..end].to_vec();
@@ -136,13 +120,64 @@ impl FolderPage {
 /// ```
 pub trait FolderSource: 'static {
     /// Lists the folders of `dir`, from the start when `page` is `None`,
-    /// or else from the page `token` a previous page named.
+    /// or else from the page `token` a previous page named. A folder whose
+    /// name is empty, `.` or `..`, or has a separator of the source's style
+    /// or a control character is dropped by the picker.
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<FolderPage>>;
+    ) -> Task<Result<FolderPage, ListError>>;
+
+    /// The source's home folder, which a leading `~` in the typed path
+    /// stands for and where a picker with no start of its own begins. The
+    /// default is `None`: a source with no home does not expand `~`, so a
+    /// typed `~` is an ordinary name, and the picker starts at the root.
+    /// A remote or virtual source gives its own, made with
+    /// [`path_style`](Self::path_style).
+    fn home(&self) -> Option<SourcePath> {
+        None
+    }
+
+    /// How the source writes its paths. The default is the style of the
+    /// machine the application runs on. A source for another machine
+    /// names its own: a Linux server is [`PathStyle::posix`] whatever
+    /// the client is.
+    fn path_style(&self) -> PathStyle {
+        PathStyle::host()
+    }
+
+    /// The value of the variable `name`, for `%NAME%` in a Windows-style
+    /// path that is pasted. The default knows none: a remote source never
+    /// reads the host's environment.
+    fn env(&self, name: &str) -> Option<String> {
+        let _ = name;
+        None
+    }
+
+    /// Whether the source can make folders. The default is `false`, which
+    /// hides the picker's "New folder" button.
+    fn can_create_folders(&self) -> bool {
+        false
+    }
+
+    /// Makes the folder `name` inside `parent` and answers with its path.
+    /// The picker has checked `name` already: it is not empty, has no
+    /// separator, and is not `.` or `..`. Answer
+    /// [`CreateFolderError::Exists`] when something has that name. The
+    /// picker lists the directory again afterward, so the new folder
+    /// shows in the order the source lists. The default answers
+    /// [`CreateFolderError::Unsupported`].
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let _ = (parent, name, cx);
+        Task::ready(Err(CreateFolderError::Unsupported))
+    }
 }
 
 /// The local file system, in one page. It reads on a background task,
@@ -153,17 +188,45 @@ pub trait FolderSource: 'static {
 pub struct LocalFolders;
 
 impl FolderSource for LocalFolders {
+    /// The home directory of the user running the application.
+    fn home(&self) -> Option<SourcePath> {
+        std::env::home_dir().map(|home| PathStyle::host().path(home.to_string_lossy()))
+    }
+
+    fn env(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let path = parent.join(name);
+        let made = path.to_path_buf();
+        cx.background_spawn(async move {
+            smol::fs::create_dir(&made).await?;
+            Ok(path)
+        })
+    }
+
     fn list(
         &self,
-        dir: &Path,
+        dir: &SourcePath,
         _page: Option<PageToken>,
         cx: &mut App,
-    ) -> Task<io::Result<FolderPage>> {
-        cx.background_spawn(list_local(dir.to_path_buf()))
+    ) -> Task<Result<FolderPage, ListError>> {
+        let dir = dir.to_path_buf();
+        cx.background_spawn(async move { Ok(list_local(dir).await?) })
     }
 }
 
-async fn list_local(dir: PathBuf) -> io::Result<FolderPage> {
+async fn list_local(dir: std::path::PathBuf) -> std::io::Result<FolderPage> {
     let mut read = smol::fs::read_dir(&dir).await?;
     let mut folders = Vec::new();
     while let Some(entry) = read.next().await {
@@ -181,11 +244,182 @@ async fn list_local(dir: PathBuf) -> io::Result<FolderPage> {
             ));
         }
     }
+    let style = PathStyle::host();
     folders.sort_by(|a, b| {
         a.hidden()
             .cmp(&b.hidden())
-            .then_with(|| a.name().to_lowercase().cmp(&b.name().to_lowercase()))
-            .then_with(|| a.name().cmp(b.name()))
+            .then_with(|| style.compare_names(a.name(), b.name()))
     });
     Ok(FolderPage::new(folders))
+}
+
+impl Entry for FolderEntry {
+    fn name(&self) -> &SharedString {
+        &self.name
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn is_folder(&self) -> bool {
+        true
+    }
+}
+
+/// A folder source seen as the browser's source.
+pub(super) struct Adapter(pub(super) Rc<dyn FolderSource>);
+
+impl Source<FolderEntry> for Adapter {
+    fn list(
+        &self,
+        dir: &SourcePath,
+        page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<Result<Page<FolderEntry>, ListError>> {
+        let task = self.0.list(dir, page, cx);
+        cx.spawn(async move |_| {
+            let page = task.await?;
+            Ok(Page {
+                entries: page.entries,
+                next: page.next,
+            })
+        })
+    }
+
+    fn home(&self) -> Option<SourcePath> {
+        self.0.home()
+    }
+
+    fn style(&self) -> PathStyle {
+        self.0.path_style()
+    }
+
+    fn env(&self, name: &str) -> Option<String> {
+        self.0.env(name)
+    }
+
+    fn can_create_folders(&self) -> bool {
+        self.0.can_create_folders()
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        cx: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        self.0.create_folder(parent, name, cx)
+    }
+}
+
+/// Folders held in memory, for fixtures, demos, and tests. It lists a
+/// directory the application named, visible folders first and hidden ones
+/// after, fails with [`ListError::NotFound`] for any other, and makes
+/// folders: a new one shows in its parent's next listing and is an empty
+/// directory itself. Clones share the folders.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryFolders {
+    style: PathStyle,
+    home: Option<SourcePath>,
+    dirs: Rc<RefCell<HashMap<SourcePath, Vec<FolderEntry>>>>,
+}
+
+impl MemoryFolders {
+    /// A file system with no directories.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Writes the paths in `style`. Set it before the home and the
+    /// directories. The default is the host's style.
+    pub fn with_style(mut self, style: PathStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Sets the home folder, which `~` stands for.
+    pub fn with_home(mut self, home: impl AsRef<str>) -> Self {
+        self.home = Some(self.style.path(home));
+        self
+    }
+
+    /// Adds the directory `path` with the folders `names`.
+    pub fn with_dir<S: Into<SharedString>>(
+        self,
+        path: impl AsRef<str>,
+        names: impl IntoIterator<Item = S>,
+    ) -> Self {
+        let style = self.style;
+        let mut entries: Vec<FolderEntry> = names
+            .into_iter()
+            .map(|name| {
+                let name = name.into();
+                let hidden = style.is_hidden_name(&name);
+                FolderEntry::new(name).with_hidden(hidden)
+            })
+            .collect();
+        sort_folders(&mut entries, &style);
+        self.dirs.borrow_mut().insert(style.path(path), entries);
+        self
+    }
+}
+
+fn sort_folders(entries: &mut [FolderEntry], style: &PathStyle) {
+    entries.sort_by(|a, b| {
+        a.hidden()
+            .cmp(&b.hidden())
+            .then_with(|| style.compare_names(a.name(), b.name()))
+    });
+}
+
+impl FolderSource for MemoryFolders {
+    fn home(&self) -> Option<SourcePath> {
+        self.home.clone()
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.style
+    }
+
+    fn list(
+        &self,
+        dir: &SourcePath,
+        _page: Option<PageToken>,
+        cx: &mut App,
+    ) -> Task<Result<FolderPage, ListError>> {
+        let found = self.dirs.borrow().get(dir).cloned();
+        cx.background_spawn(async move { found.map(FolderPage::new).ok_or(ListError::NotFound) })
+    }
+
+    fn can_create_folders(&self) -> bool {
+        true
+    }
+
+    fn create_folder(
+        &self,
+        parent: &SourcePath,
+        name: &str,
+        _: &mut App,
+    ) -> Task<Result<SourcePath, CreateFolderError>> {
+        let mut dirs = self.dirs.borrow_mut();
+        let style = self.style;
+        let Some(entries) = dirs.get_mut(parent) else {
+            return Task::ready(Err(CreateFolderError::Other(
+                "That directory does not exist".into(),
+            )));
+        };
+        if entries
+            .iter()
+            .any(|entry| style.fold(entry.name()) == style.fold(name))
+        {
+            return Task::ready(Err(CreateFolderError::Exists));
+        }
+        let hidden = style.is_hidden_name(name);
+        entries.push(FolderEntry::new(name.to_string()).with_hidden(hidden));
+        sort_folders(entries, &style);
+        let path = parent.join(name);
+        dirs.insert(path.clone(), Vec::new());
+        Task::ready(Ok(path))
+    }
 }

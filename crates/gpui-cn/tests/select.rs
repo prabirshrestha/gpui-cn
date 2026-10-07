@@ -1375,3 +1375,144 @@ fn on_touch_a_pointer_over_a_row_leaves_the_highlight(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(highlighted(cx), Some("cloud"), "a mouse highlights the row");
 }
+
+#[gpui_kit::test]
+fn a_fuzzy_search_keeps_the_rows_it_matches_and_marks_the_characters(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    type Seen = std::rc::Rc<std::cell::RefCell<Vec<(String, Vec<std::ops::Range<usize>>)>>>;
+    struct Marked {
+        state: Entity<State>,
+        seen: Seen,
+    }
+    impl Render for Marked {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.seen.clone();
+            div()
+                .size_full()
+                .p_4()
+                .child(
+                    Select::new("pick", &self.state).render_item(move |item, row, _, _| {
+                        seen.borrow_mut()
+                            .push((item.label().to_string(), row.matched().to_vec()));
+                        div().h(px(30.)).child(item.label().clone())
+                    }),
+                )
+        }
+    }
+    let seen: Seen = Default::default();
+    let record = seen.clone();
+    let handle = cx.open_window(size(px(500.), px(600.)), |window, cx| {
+        let select = cx.new(|cx| SelectState::new(entries(), cx).with_search("Search", window, cx));
+        let marked = cx.new(|cx| {
+            cx.observe(&select, |_, _, cx| cx.notify()).detach();
+            Marked {
+                state: select,
+                seen: record,
+            }
+        });
+        Root::new(marked, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.input("dtsh", cx);
+    })
+    .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(child("de")).is_some(), "a subsequence");
+        assert!(window.try_find(child("all")).is_none());
+        seen.borrow_mut().clear();
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&("Deutsch".to_string(), vec![0..1, 3..5, 6..7])),
+        "d, t, s, h are marked in Deutsch"
+    );
+}
+
+#[gpui_kit::test]
+fn a_query_highlights_the_best_match_not_the_first_listed(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, |window, cx| {
+        SelectState::new(
+            [
+                SelectItem::new("de", "Deutsch").keywords(["German"]),
+                SelectItem::new("en", "English"),
+            ],
+            cx,
+        )
+        .with_search("Search", window, cx)
+    });
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.input("en", cx);
+    })
+    .unwrap();
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let en = window.find(child("en")).bounds();
+        let de = window.find(child("de")).bounds();
+        assert!(en.top() < de.top(), "English is listed first");
+        assert_eq!(
+            setup
+                .state
+                .read(cx)
+                .highlighted()
+                .map(|item| item.value().to_string()),
+            Some("en".into()),
+            "and takes the highlight"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_row_height_below_the_default_row_applies(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+        Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+    });
+    struct Fixed {
+        state: Entity<State>,
+    }
+    impl Render for Fixed {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                Select::new("pick", &self.state)
+                    .render_item(|item, _, _, _| div().child(item.label().clone())),
+            )
+        }
+    }
+    let handle = cx.open_window(size(px(500.), px(600.)), |window, cx| {
+        let select = cx.new(|cx| {
+            SelectState::new(
+                (1..=50).map(|n| SelectItem::new(number(n), format!("Person {n}"))),
+                cx,
+            )
+            .with_row_height(px(20.))
+        });
+        let fixed = cx.new(|cx| {
+            cx.observe(&select, |_, _, cx| cx.notify()).detach();
+            Fixed { state: select }
+        });
+        Root::new(fixed, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(child("trigger"), cx);
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(child("3")).bounds().size.height, px(20.));
+    })
+    .unwrap();
+}

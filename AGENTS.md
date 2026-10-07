@@ -102,8 +102,10 @@ Icons come from the Lucide set in the gpui-kit-assets crate, as
 `IconName` values. The application registers `gpui_kit::assets::Assets`,
 which holds the names listed in `default-icons.txt` in that crate. Other
 names render nothing unless the application registers
-`gpui_kit::assets::AllAssets`. Never copy an icon file into the
-repository.
+`gpui_kit::assets::AllAssets`. The composer family draws a few names the
+default set lacks, so an application that uses it registers
+`gpui_cn::ComposerAssets`, which adds them. Never copy an icon file into
+the repository.
 
 ## Check a change
 
@@ -180,8 +182,8 @@ and its tests assert them.
 | Menu text | #ffffff | derived |
 | Menu description | #b5b5b5 | derived |
 | Menu check, trigger chevron | #cacaca | derived |
-| Select trigger | #2a2a2a | derived |
-| Select trigger hairline | #3b3b3b | derived |
+| Select trigger | #2a2a2a (derives #292929) | derived |
+| Select trigger hairline | #3b3b3b (derives #3a3a3a) | derived |
 | Field | #2c2c2c | #ffffff |
 | Field border | #3b3b3b | #e5e5e6 |
 | Field border, focused | #799cca (derived) | #339cff |
