@@ -7,14 +7,27 @@ tells users what the library does. This file tells you how to build it.
 
 gpui-cn is a shadcn-style component library for GPUI. It is built on
 `gpui-base` only, and its look is measured from a reference desktop app
-that this repository does not name. The workspace has three crates:
+that this repository does not name. The workspace has four crates:
 
 - `crates/gpui-cn` is the library. Never add `gpui-component` or use a
-  `gpui-component` type.
+  `gpui-component` type. Its `ghostty` feature adds the terminal in
+  `src/terminal`: a local shell in a pty on desktop targets, any other
+  byte source, and parking of idle terminals (`src/terminal/park.rs`),
+  which are runtime choices, not features.
 - `crates/gpui-cn-story` is the gallery. It uses gpui-cn components only,
   which makes it the first application that uses the library. Its
   `snapshot` binary renders the gallery to PNG files without a window, on
-  macOS. `cargo run` at the root opens it.
+  macOS. `cargo run` at the root opens it. Its default `terminal` feature
+  adds the Terminal story.
+- `crates/ghostty-vt-sys` builds libghostty-vt from the pinned Ghostty
+  source with Zig 0.16 and holds its raw bindings, which are generated and
+  committed. `crates/ghostty-vt` is the safe API on it. They have no GPUI
+  in them and have their own version. One `v*` release tag publishes
+  the workspace in dependency order and skips versions already on
+  crates.io.
+  Never patch the Ghostty source. Move the pin with `scripts/sync.sh`,
+  which keeps the submodule, `GHOSTTY.lock`, the bindings, the terminfo
+  database, and the shell integration scripts in step.
 
 ## Rules
 
@@ -31,7 +44,10 @@ that this repository does not name. The workspace has three crates:
    The rem helpers such as `px_2`, `gap_1`, and `size_4` are the spacing
    scale, and a 1px hairline is fine. Any other value is a token. Add it to
    `crates/gpui-cn/src/theme/tokens.rs` with a doc comment that says where
-   the value comes from.
+   the value comes from. A part of a window drawn on its own surface, such
+   as the chrome around a terminal in the terminal's colors, registers a
+   config with `Theme::set_scope` and wraps that subtree in `ThemeScope`,
+   so the components inside read the scope through `cx.theme()`.
 3. Measure the reference app. Do not guess. To make a visual decision,
    capture its window with `screencapture -l <window id>`, sample the
    pixels, and record the value in the token's doc comment and in a test
@@ -47,9 +63,15 @@ that this repository does not name. The workspace has three crates:
    under the pointer, so a bare region inside a page scrolls the page
    with it. `ScrollArea` keeps the step while it has room to scroll and
    passes it on when its content fits, and it bounces at its ends. A
-   region that shows or hides content animates with `transition` from
-   `gpui_base` and the theme's motion; nothing appears or vanishes in one
-   frame unless motion is reduced.
+   component that scrolls its own content without a `ScrollArea`, such
+   as the terminal's scrollback or a strip of tabs, must consume the
+   wheel steps it uses with `cx.stop_propagation()`, so the page or the
+   window under it does not scroll too. Every such component has a
+   headless test that puts it in a `ScrollArea` taller than the window,
+   sends a wheel step over it, and asserts that the component scrolled
+   and the page did not. A region that shows or hides content animates
+   with `transition` from `gpui_base` and the theme's motion; nothing
+   appears or vanishes in one frame unless motion is reduced.
 6. Every component works with touch. A tap is a mouse down and up at one
    point, so nothing may depend on a hover that came first, and a hover
    state paints as rest while `theme.touch` is set. Sizes come from
@@ -72,6 +94,12 @@ that this repository does not name. The workspace has three crates:
    `https://gpui-kit.com/docs/coding-guides.md` and
    `https://gpui-kit.com/docs/design-guides.md`, and run the design review
    checklist before you finish UI work.
+11. `init` binds only keys that a component needs to work, in its own key
+   context. Shortcuts that an application may want for something else,
+   such as the terminal's copy, paste, and font zoom, are public actions
+   with a `default_key_bindings()` that the application installs. The
+   terminal binds nothing: the focused one takes the keys a program needs
+   in its own key handling.
 
 ## Add a component
 
@@ -98,6 +126,18 @@ crates. `theme/fonts.rs` registers them. The theme names font families,
 never font files. Bundle a font only from a crate with a clear license.
 Never copy a font file into the repository.
 
+The terminal's engine runs on its own thread and publishes frames; the
+element paints the latest frame and never blocks on the engine. Keep a
+terminal that is not painted at zero work: it gets no frame credit, so it
+builds no frames, and its cursor blink stops. A
+terminal idle for its park period (60 seconds by default) is saved as a
+snapshot in its `ParkStore` and its state freed; anything that needs it
+restores it first. A test drives a terminal
+through `FixtureSource` or `StreamSource`, never a real shell, except the
+pty test in `tests/terminal_pty.rs`. A test that runs the engine thread
+reads frames from a `FrameSink`, as `tests/terminal_stream.rs` does: the
+engine's wake from another thread trips GPUI's test scheduler.
+
 Icons come from the Lucide set in the gpui-kit-assets crate, as
 `IconName` values. The application registers `gpui_kit::assets::Assets`,
 which holds the names listed in `default-icons.txt` in that crate. Other
@@ -115,9 +155,12 @@ Every change must pass these commands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features
 cargo deny check licenses
 ```
+
+These need Zig 0.16 on `PATH` (see `mise.toml`) and, for a build without
+network, the `third_party/ghostty` submodule checked out.
 
 `deny.toml` lists the licenses this repository accepts. A crate that is
 only available under the GPL or the LGPL fails the check. Never add one.

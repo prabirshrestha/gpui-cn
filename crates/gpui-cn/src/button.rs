@@ -1,13 +1,11 @@
+use crate::bounds::OnPaddingBounds as _;
 use std::rc::Rc;
 
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement, Interactivity,
     IntoElement, ParentElement, Pixels, RenderOnce, Role, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
-    base::{
-        self, Disableable, ElementExt as _, Interpolate, Placement, Selectable, StyledExt as _,
-        transition,
-    },
+    base::{self, Disableable, Interpolate, Placement, Selectable, StyledExt as _, transition},
     div,
     prelude::FluentBuilder as _,
     px, relative,
@@ -816,7 +814,7 @@ impl RenderOnce for Button {
             .tab_stop(self.tab_stop)
             .child(content)
             .when_some(managed_tooltip.as_ref(), |this, (trigger, _)| {
-                this.on_prepaint(trigger.track_bounds())
+                this.on_padding_bounds(trigger.track_bounds())
             })
             .when_some(native_tooltip, |this, trigger| {
                 this.tooltip(trigger.native())

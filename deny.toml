@@ -28,3 +28,16 @@ allow = [
     "bzip2-1.0.6",
 ]
 confidence-threshold = 0.8
+
+# The native code compiled into libghostty-vt by `ghostty-vt-sys` is
+# invisible to cargo deny. third_party/README.md lists it.
+#
+# ureq's rustls backend (used on Linux build hosts to download the Ghostty
+# tarball) ships Mozilla's root certificates, which are data under CDLA.
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+name = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]

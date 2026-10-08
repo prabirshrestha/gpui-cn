@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
+members = [
+    "crates/ghostty-vt-sys",
+    "crates/ghostty-vt",
+    "crates/gpui-cn",
+    "crates/gpui-cn-story",
+]
 # `cargo run` at the root opens the gallery.
 default-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
 resolver = "2"
@@ -14,6 +19,9 @@ homepage = "https://github.com/prabirshrestha/gpui-cn"
 
 [workspace.dependencies]
 gpui-cn = { path = "crates/gpui-cn", version = "0.5.0" }
+# The terminal engine releases on its own `ghostty-vt-v*` tags.
+ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.1.0" }
+ghostty-vt = { path = "crates/ghostty-vt", version = "0.1.0" }
 gpui-kit = { version = "0.7.1", default-features = false }
 
 [workspace.lints.clippy]
@@ -29,6 +37,11 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Skip dsymutil on macOS: it is slow and warns about incremental objects a
+# rebuild removed. Debug info stays in the object files for lldb.
+[profile.dev]
+split-debuginfo = "unpacked"
 
 [profile.dev.package]
 gpui-pre = { opt-level = 3 }

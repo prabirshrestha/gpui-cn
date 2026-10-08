@@ -197,6 +197,10 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::TitleBarStory>(StorySection::Navigation),
         StoryEntry::of::<stories::TabsStory>(StorySection::Navigation),
     ];
+    #[cfg(feature = "terminal")]
+    entries.push(StoryEntry::of::<stories::TerminalStory>(
+        StorySection::FeedbackAndDisplay,
+    ));
     entries.sort_by_key(|entry| (entry.section.rank(), entry.title.to_lowercase()));
     entries
 }
@@ -1005,7 +1009,12 @@ mod tests {
         let count = titles.len();
         titles.dedup();
         assert_eq!(titles.len(), count, "a title is registered twice");
-        assert_eq!(count, 29, "a story was dropped or added without this count");
+        let terminal = usize::from(cfg!(feature = "terminal"));
+        assert_eq!(
+            count,
+            29 + terminal,
+            "a story was dropped or added without this count"
+        );
         for section in super::StorySection::ALL {
             assert!(
                 entries.iter().any(|e| e.section() == section),

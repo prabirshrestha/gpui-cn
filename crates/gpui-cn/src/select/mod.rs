@@ -544,10 +544,14 @@ impl<V: SelectValue> Select<V> {
                     ),
             })
             .when(self.chevron, |this| {
+                // At the trailing edge when the trigger is wider than its
+                // value, as shadcn's `justify-between` trigger puts it.
                 this.child(
-                    Icon::from(IconName::ChevronDown)
-                        .size_4()
-                        .text_color(look.indicator),
+                    div().ml_auto().flex_none().child(
+                        Icon::from(IconName::ChevronDown)
+                            .size_4()
+                            .text_color(look.indicator),
+                    ),
                 )
             })
             // The recorder spans the padding box, so the hairline around

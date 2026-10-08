@@ -51,6 +51,9 @@ mod macos {
             gpui_cn::init(cx);
             // Snapshots want final states, not a frame mid-fade.
             Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
+            // Terminal panes draw canned output, not the user's shell.
+            #[cfg(feature = "terminal")]
+            gpui_cn_story::stories::TerminalStory::use_fixtures(cx);
         });
 
         let mut gallery: Option<Entity<Gallery>> = None;
@@ -270,6 +273,8 @@ mod macos {
                 "Scroll area",
                 "Title bar",
                 "Tabs",
+                #[cfg(feature = "terminal")]
+                "Terminal",
             ] {
                 cx.update_window(handle.into(), |_, window, cx| {
                     gallery.update(cx, |gallery, cx| gallery.select_story(story, window, cx));
@@ -316,8 +321,34 @@ mod macos {
                     })
                     .expect("hover a row");
                 }
+                if story == "Terminal" {
+                    // A pane's first frame arrives from its source a turn
+                    // after the pane opens, and the frame it paints asks
+                    // for the grid it measured.
+                    for _ in 0..3 {
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                            .expect("draw the panes");
+                    }
+                }
                 let slug = story.to_lowercase().replace(' ', "-");
                 capture(&mut cx, &format!("story-{slug}-{name}"));
+                #[cfg(feature = "terminal")]
+                if story == "Terminal" {
+                    use gpui_cn_story::stories::TerminalStory;
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.click(TerminalStory::SHORTCUTS, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("open the shortcuts");
+                    capture(&mut cx, &format!("story-{slug}-shortcuts-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("escape", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the shortcuts");
+                }
                 if story == "Composer" {
                     let named = |parent: &'static str, child: &'static str| {
                         gpui_kit::ElementId::NamedChild(

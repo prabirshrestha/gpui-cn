@@ -12,6 +12,10 @@ license.workspace = true
 workspace = true
 
 [features]
+default = ["terminal"]
+# The Terminal story: a shell in a pty through `gpui_cn::terminal`.
+# Building it needs Zig 0.16.
+terminal = ["gpui-cn/ghostty"]
 # `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
 snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image", "dep:libc"]
 # `fps`: the gpui-fps HUD, toggled with Cmd-Shift-P (Ctrl-Shift-P).

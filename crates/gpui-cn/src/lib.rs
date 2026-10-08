@@ -38,6 +38,7 @@
 
 mod avatar;
 mod badge;
+mod bounds;
 mod button;
 mod collapse;
 mod command;
@@ -63,6 +64,7 @@ pub mod remote;
 mod root;
 mod scroll_area;
 mod select;
+pub mod shell;
 mod sidebar;
 mod skeleton;
 mod slider;
@@ -70,6 +72,8 @@ mod spinner;
 mod switch;
 mod tabs;
 mod tag;
+#[cfg(feature = "ghostty")]
+pub mod terminal;
 pub mod theme;
 mod theme_mode_picker;
 mod title_bar;
@@ -136,7 +140,7 @@ pub use switch::Switch;
 pub use tabs::{Tab, Tabs, TabsEvent, TabsState};
 pub use tag::{Tag, TagVariant};
 pub use theme::{
-    ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeTokens,
+    ActiveTheme, MetricTokens, ReduceMotion, Theme, ThemeConfig, ThemeMode, ThemeScope, ThemeTokens,
 };
 pub use theme_mode_picker::ThemeModePicker;
 pub use title_bar::TitleBar;
@@ -147,6 +151,15 @@ use gpui_kit::{App, Global};
 
 /// Everything an application normally imports from gpui-cn.
 pub mod prelude {
+    #[cfg(all(
+        feature = "ghostty",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    pub use crate::terminal::LocalTerminalOptions;
+    #[cfg(feature = "ghostty")]
+    pub use crate::terminal::{
+        Terminal, TerminalAppearance, TerminalColors, TerminalConfig, TerminalEvent, TerminalState,
+    };
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
         Command, CommandDialog, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu,
@@ -158,7 +171,7 @@ pub mod prelude {
         SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
         SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
         Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,
-        ThemeMode, ThemeModePicker, TitleBar, TooltipExt,
+        ThemeMode, ThemeModePicker, ThemeScope, TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;

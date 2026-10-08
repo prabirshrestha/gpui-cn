@@ -25,6 +25,8 @@ mod spacing;
 mod switch;
 mod tabs;
 mod tag;
+#[cfg(feature = "terminal")]
+mod terminal;
 mod textarea;
 mod theme_mode_picker;
 mod title_bar;
@@ -57,6 +59,8 @@ pub use spacing::SpacingStory;
 pub use switch::SwitchStory;
 pub use tabs::TabsStory;
 pub use tag::TagStory;
+#[cfg(feature = "terminal")]
+pub use terminal::TerminalStory;
 pub use textarea::TextareaStory;
 pub use theme_mode_picker::ThemeModePickerStory;
 pub use title_bar::TitleBarStory;

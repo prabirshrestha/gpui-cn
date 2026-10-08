@@ -99,6 +99,39 @@ component. `theme.touch`, on by default on iOS and Android, grows controls
 and rows to the 44pt hit target of Apple's Human Interface Guidelines,
 sets text to its body size, and turns hover states off.
 
+## Using the terminal
+
+The `ghostty` feature adds `gpui_cn::terminal`, a terminal on Ghostty's
+libghostty-vt. It is off by default, so `cargo add gpui-cn` needs nothing
+new.
+
+```bash
+cargo add gpui-cn --features ghostty
+```
+
+Building it needs [Zig](https://ziglang.org/download/) 0.16 on `PATH` (or
+in `ZIG`). The first build downloads Ghostty's pinned source, about 4 MB,
+and the Zig packages it fetches, about 30 MB, into Zig's cache. For an
+offline build, set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout or the
+extracted tarball and `GHOSTTY_ZIG_SYSTEM_DIR` to the unpacked Zig
+packages; `ghostty-vt-sys` describes both.
+
+Everything else is decided at runtime: a local shell in a pty
+(`TerminalState::local`, on desktop targets), a remote session or any
+other byte stream (`StreamSource`), and parking of idle terminals, which
+is on at 60 seconds and set through `ParkOptions`. The `gpui_cn::terminal`
+documentation has a complete example, and the gallery's Terminal story
+adds tabs, splits, menus and a leader key on top.
+
+`gpui_cn::init` binds no terminal keys. A focused terminal sends every
+key a program needs, Tab and Ctrl-C included. Copy, paste, scrolling and
+font zoom are actions; install Ghostty's keys for them, or bind your own
+in `terminal::KEY_CONTEXT`:
+
+```rust
+cx.bind_keys(gpui_cn::terminal::default_key_bindings());
+```
+
 ## Gallery
 
 The gallery shows every component in every variant, size, and state. It
@@ -106,8 +139,16 @@ is built from gpui-cn components, so it is also the first application that
 uses the library.
 
 ```bash
+git submodule update --init
 cargo run
 ```
+
+The Terminal story runs your shell through Ghostty's terminal engine, so
+building the gallery needs [Zig](https://ziglang.org/download/) 0.16 on
+`PATH` (`mise install` picks it up from `mise.toml`). Without the
+submodule, the first build downloads the pinned Ghostty source instead.
+`cargo run --no-default-features` builds the gallery without the story
+and without Zig.
 
 Pick a story in the sidebar. Each story you pick is a page on the
 navigation stack, and the arrows in the title bar walk back and forward
@@ -164,17 +205,40 @@ Every change must pass these commands:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features
 cargo deny check licenses
 ```
 
 `AGENTS.md` describes how the library is built and the rules a change
 must follow.
 
-To release, set the version in `Cargo.toml`, commit, and push a tag with
-the same version (`v0.1.0`). The `Release` workflow checks that the tag
-matches and runs `cargo publish -p gpui-cn`. Only `gpui-cn` is published;
-the gallery crates are marked `publish = false`.
+The workspace also holds the terminal engine that gpui-cn's `ghostty`
+feature uses: `ghostty-vt-sys` builds libghostty-vt from Ghostty's source
+with Zig and links it statically, and `ghostty-vt` is its safe API. The
+Ghostty pin is in `GHOSTTY.lock` and the `third_party/ghostty` submodule. To
+move it, which also regenerates the bindings, the terminfo database, and
+the shell integration scripts:
+
+```bash
+scripts/sync.sh <ghostty-commit>
+```
+
+The engine has two examples that need no GPUI:
+
+```bash
+cargo run -p ghostty-vt --example shell
+cargo run -p ghostty-vt --example demo -- 'ls --color=always'
+```
+
+To release, set gpui-cn's version in `Cargo.toml`, commit, and push a tag
+with the same version (`v0.5.0`). The `Release` workflow checks that the
+tag matches, then publishes `ghostty-vt-sys`, `ghostty-vt` and `gpui-cn`
+in that order, skipping any crate whose version is already on crates.io.
+The engine crates keep their own versions, so they publish only when
+bumped. Publishing uses crates.io Trusted Publishing, which cannot create
+a crate: for the first release of a new crate, set a `CARGO_REGISTRY_TOKEN`
+repository secret, which the workflow then uses, and remove it after. The
+gallery crate is marked `publish = false`.
 
 ## License
 
@@ -185,3 +249,7 @@ Apache-2.0. Third-party assets:
 - JetBrains Mono, used with the `jetbrains-mono` feature, comes from the
   `damascene-fonts-jetbrains-mono` crate under the SIL Open Font License
   1.1.
+- The terminal engine ships Ghostty's terminfo database and shell
+  integration scripts under Ghostty's MIT license (`third_party/LICENSE-GHOSTTY`).
+  `third_party/README.md` lists the code the terminal is adapted from
+  and the native libraries linked into libghostty-vt.

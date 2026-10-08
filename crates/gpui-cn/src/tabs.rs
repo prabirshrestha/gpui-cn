@@ -18,16 +18,18 @@
 //! }
 //! ```
 
-use std::{fmt, sync::Arc};
+use crate::bounds::OnPaddingBounds as _;
+use std::{fmt, rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels, RenderOnce, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, EventEmitter, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+    Styled, Subscription, Window,
     assets::IconName,
     base::{
-        self, Disableable as _, ElementExt as _, Interpolate as _, Sequence, StyledExt as _,
-        TestSupportExt as _, h_flex, transition,
+        self, Disableable as _, Interpolate as _, Sequence, StyledExt as _, TestSupportExt as _,
+        h_flex, transition,
     },
     div, point,
     prelude::FluentBuilder as _,
@@ -35,7 +37,8 @@ use gpui_kit::{
 };
 
 use crate::{
-    ActiveTheme as _, Button, ButtonSize, Icon, Theme, ThemeTokens, TooltipHost,
+    ActiveTheme as _, Button, ButtonSize, Icon, Input, InputEvent, InputState, MenuAnchor,
+    MenuEntry, MenuState, Theme, ThemeTokens, TooltipHost, menu::MenuPanels,
     tooltip::TooltipTrigger,
 };
 /// One tab in the strip. The id is the application's key for the tab and
@@ -101,6 +104,14 @@ pub enum TabsEvent {
     /// The new-tab control was activated. The application decides what a
     /// new tab is and calls [`push`](TabsState::push).
     AddRequested,
+    /// A tab's label changed, by [`rename`](TabsState::rename) or by an
+    /// inline rename the user committed. The payload is its id.
+    Renamed(SharedString),
+    /// A tab's close control was activated on a strip built with
+    /// [`confirm_close`](Tabs::confirm_close). The tab stays until the
+    /// application calls [`remove`](TabsState::remove). The payload is its
+    /// id.
+    CloseRequested(SharedString),
 }
 
 /// The tabs, which one is selected, and the scroll position of the strip.
@@ -121,6 +132,15 @@ pub struct TabsState {
     /// Tabs removed but still shrinking out of the strip, at the index
     /// they held.
     leaving: Vec<Leaving>,
+    /// The tab whose label is a text field, while the user renames it.
+    renaming: Option<Renaming>,
+}
+
+/// An inline rename under way: the tab and the field its label became.
+struct Renaming {
+    id: SharedString,
+    input: Entity<InputState>,
+    _subscription: Subscription,
 }
 
 /// A removed tab on its way out. It is no longer in [`TabsState::tabs`]
@@ -158,6 +178,7 @@ impl TabsState {
             reveal: false,
             entering: Vec::new(),
             leaving: Vec::new(),
+            renaming: None,
         }
     }
 
@@ -259,9 +280,103 @@ impl TabsState {
         cx.notify();
     }
 
+    /// Sets or clears the icon of the tab with `id`, such as to mark a
+    /// state the tab is in. A no-op for an unknown id.
+    pub fn set_icon(
+        &mut self,
+        id: impl Into<SharedString>,
+        icon: Option<impl Into<Icon>>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = id.into();
+        if let Some(index) = self.index_of(&id) {
+            self.tabs[index].icon = icon.map(Into::into);
+            cx.notify();
+        }
+    }
+
     /// Asks the application for a new tab.
     pub fn request_add(&mut self, cx: &mut Context<Self>) {
         cx.emit(TabsEvent::AddRequested);
+    }
+
+    /// Sets the label of the tab with `id` and emits `Renamed`. A no-op
+    /// for an unknown id or an unchanged label.
+    pub fn rename(
+        &mut self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = id.into();
+        let label = label.into();
+        let Some(index) = self.index_of(&id) else {
+            return;
+        };
+        if self.tabs[index].label == label {
+            return;
+        }
+        self.tabs[index].label = label;
+        cx.emit(TabsEvent::Renamed(id));
+        cx.notify();
+    }
+
+    /// Turns the label of the tab with `id` into a text field holding the
+    /// label, selected and focused. Enter or leaving the field commits a
+    /// non-empty name; Escape cancels. A strip that is
+    /// [`renamable`](Tabs::renamable) starts one on a double click.
+    pub fn start_rename(
+        &mut self,
+        id: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = id.into();
+        let Some(index) = self.index_of(&id) else {
+            return;
+        };
+        let label = self.tabs[index].label.clone();
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(label));
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        let subscription = cx.subscribe_in(&input, window, |this, _, event, _, cx| {
+            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                this.commit_rename(cx);
+            }
+        });
+        self.renaming = Some(Renaming {
+            id,
+            input,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    /// Ends an inline rename and keeps the typed name, unless it is blank.
+    pub fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming.take() else {
+            return;
+        };
+        let value = renaming.input.read(cx).value();
+        let name = value.trim();
+        if !name.is_empty() {
+            self.rename(renaming.id, name.to_owned(), cx);
+        }
+        cx.notify();
+    }
+
+    /// Ends an inline rename and keeps the old label.
+    pub fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        if self.renaming.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The id of the tab being renamed inline, if any.
+    pub fn renaming(&self) -> Option<&SharedString> {
+        self.renaming.as_ref().map(|renaming| &renaming.id)
     }
 
     /// The strip reports that the tab's enter or exit motion ended: an
@@ -377,12 +492,18 @@ pub struct Tabs {
     state: Entity<TabsState>,
     style: StyleRefinement,
     closable: bool,
+    confirm_close: bool,
     addable: bool,
     add_trigger: Option<AddTrigger>,
     leading: Pixels,
+    renamable: bool,
+    context_menu: Option<(Entity<MenuState>, TabMenu)>,
 }
 
 type AddTrigger = Box<dyn FnOnce(Button) -> AnyElement>;
+
+/// Builds the rows of a tab's context menu, given the tab's id.
+type TabMenu = Rc<dyn Fn(&SharedString, &mut Window, &mut App) -> Vec<MenuEntry>>;
 
 impl Tabs {
     /// A strip for `state`, with close and new-tab controls.
@@ -392,10 +513,33 @@ impl Tabs {
             state: state.clone(),
             style: StyleRefinement::default(),
             closable: true,
+            confirm_close: false,
             addable: true,
             add_trigger: None,
             leading: px(0.),
+            renamable: false,
+            context_menu: None,
         }
+    }
+
+    /// Whether a double click on a tab turns its label into a text field
+    /// to rename it, as [`TabsState::start_rename`] does. Off by default.
+    pub fn renamable(mut self, renamable: bool) -> Self {
+        self.renamable = renamable;
+        self
+    }
+
+    /// Opens a menu at the pointer on a right click on a tab, with the rows
+    /// `items` builds for that tab's id, as a
+    /// [`ContextMenu`](crate::ContextMenu) does. A tab with no rows opens
+    /// nothing.
+    pub fn context_menu(
+        mut self,
+        state: &Entity<MenuState>,
+        items: impl Fn(&SharedString, &mut Window, &mut App) -> Vec<MenuEntry> + 'static,
+    ) -> Self {
+        self.context_menu = Some((state.clone(), Rc::new(items)));
+        self
     }
 
     /// Room at the strip's start, under controls that float over it such
@@ -409,6 +553,15 @@ impl Tabs {
     /// Whether each tab shows a close control. On by default.
     pub fn closable(mut self, closable: bool) -> Self {
         self.closable = closable;
+        self
+    }
+
+    /// Whether a tab's close control asks the application first: it emits
+    /// [`TabsEvent::CloseRequested`] and leaves the tab, so the
+    /// application can confirm and then [`remove`](TabsState::remove) it.
+    /// Off by default.
+    pub fn confirm_close(mut self, confirm: bool) -> Self {
+        self.confirm_close = confirm;
         self
     }
 
@@ -562,7 +715,7 @@ impl RenderOnce for Tabs {
         let strip: Arc<ElementId> = Arc::new(self.id.clone());
         let child = |name: &'static str| ElementId::NamedChild(strip.clone(), name.into());
         let state = self.state;
-        let (tabs, selected_index, scroll, glide, reveal, entering, leaving) = {
+        let (tabs, selected_index, scroll, glide, reveal, entering, leaving, renaming) = {
             let state = state.read(cx);
             (
                 state.tabs.clone(),
@@ -572,8 +725,14 @@ impl RenderOnce for Tabs {
                 state.reveal,
                 state.entering.clone(),
                 state.leaving.clone(),
+                state
+                    .renaming
+                    .as_ref()
+                    .map(|renaming| (renaming.id.clone(), renaming.input.clone())),
             )
         };
+        let renamable = self.renamable;
+        let context_menu = self.context_menu.clone();
         let len = tabs.len();
         let (motion, fast) = {
             let motion = &Theme::global(cx).motion;
@@ -731,6 +890,47 @@ impl RenderOnce for Tabs {
             let select_id = tab.id.clone();
             let close_state = state.clone();
             let close_id = tab.id.clone();
+            let confirm_close = self.confirm_close;
+            let editing = renaming
+                .as_ref()
+                .filter(|(id, _)| live && id == &tab.id)
+                .map(|(_, input)| input.clone());
+            let is_editing = editing.is_some();
+            let menu_id = tab.id.clone();
+            let menu = context_menu.clone();
+            let label = match editing {
+                Some(input) => {
+                    let cancel_state = state.clone();
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        // Escape cancels before the field sees it, which
+                        // would pass it on anyway.
+                        .capture_key_down(move |event: &KeyDownEvent, _, cx| {
+                            if event.keystroke.key == "escape" {
+                                cx.stop_propagation();
+                                cancel_state.update(cx, |state, cx| state.cancel_rename(cx));
+                            }
+                        })
+                        .child(
+                            Input::new(&input)
+                                .id(part("rename"))
+                                .accessibility_label("Tab name")
+                                .h(look.close)
+                                .px(look.control_gap)
+                                .text_size(look.text_size),
+                        )
+                        .into_any_element()
+                }
+                None => div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(look.text_size)
+                    .line_height(look.line_height)
+                    .child(tab.label.clone())
+                    .into_any_element(),
+            };
             base::Tab::new(tab_id.as_ref().clone())
                 .selected(selected)
                 .set_position(index + 1, len)
@@ -759,8 +959,27 @@ impl RenderOnce for Tabs {
                     })
                 })
                 .when(live, |this| {
-                    this.on_click(move |_, _, cx| {
-                        select_state.update(cx, |state, cx| state.select(select_id.clone(), cx))
+                    this.on_click(move |event, window, cx| {
+                        if is_editing {
+                            return;
+                        }
+                        select_state.update(cx, |state, cx| {
+                            state.select(select_id.clone(), cx);
+                            if renamable && event.click_count() >= 2 {
+                                state.start_rename(select_id.clone(), window, cx);
+                            }
+                        })
+                    })
+                })
+                .when_some(menu.filter(|_| live), |this, (menu, items)| {
+                    this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                        cx.stop_propagation();
+                        let entries = items(&menu_id, window, cx);
+                        if entries.is_empty() {
+                            return;
+                        }
+                        let anchor = MenuAnchor::Point(event.position);
+                        menu.update(cx, |menu, cx| menu.open(entries, anchor, window, cx));
                     })
                 })
                 .child(
@@ -804,7 +1023,7 @@ impl RenderOnce for Tabs {
                                 .text_color(text)
                                 .map(|this| {
                                     if has_overlay {
-                                        this.on_prepaint(tooltip.track_bounds())
+                                        this.on_padding_bounds(tooltip.track_bounds())
                                             .on_hover(move |hovered, window, cx| {
                                                 tooltip.hovered(*hovered, window, cx)
                                             })
@@ -818,16 +1037,8 @@ impl RenderOnce for Tabs {
                                 .when_some(tab.icon.clone(), |this, icon| {
                                     this.child(icon.size(look.icon).flex_none())
                                 })
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(look.text_size)
-                                        .line_height(look.line_height)
-                                        .child(tab.label.clone()),
-                                )
-                                .when(self.closable && live, |this| {
+                                .child(label)
+                                .when(self.closable && live && !is_editing, |this| {
                                     this.child(
                                         h_flex()
                                             .size(look.close)
@@ -849,7 +1060,13 @@ impl RenderOnce for Tabs {
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         close_state.update(cx, |state, cx| {
-                                                            state.remove(close_id.clone(), cx)
+                                                            if confirm_close {
+                                                                cx.emit(TabsEvent::CloseRequested(
+                                                                    close_id.clone(),
+                                                                ));
+                                                            } else {
+                                                                state.remove(close_id.clone(), cx);
+                                                            }
                                                         })
                                                     }),
                                             ),
@@ -929,7 +1146,8 @@ impl RenderOnce for Tabs {
             .track_focus(&focus)
             .tab_index(0)
             .on_key_down(move |event: &KeyDownEvent, _, cx| {
-                if event.keystroke.modifiers.modified() {
+                // While a label is a text field, the arrows move its caret.
+                if event.keystroke.modifiers.modified() || key_state.read(cx).renaming.is_some() {
                     return;
                 }
                 let step: isize = match event.keystroke.key.as_str() {
@@ -1006,13 +1224,16 @@ impl RenderOnce for Tabs {
                     })
                     .child(hairline(&look)),
             )
+            .when_some(self.context_menu, |this, (menu, _)| {
+                this.child(MenuPanels::new(child("menu"), &menu))
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{AppContext as _, TestAppContext};
+    use gpui_kit::TestAppContext;
 
     fn ids(state: &TabsState) -> Vec<&str> {
         state.tabs.iter().map(|tab| tab.id.as_ref()).collect()

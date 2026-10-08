@@ -1,0 +1,6 @@
+# Pinned Ghostty source for libghostty-vt. Written by scripts/sync.sh.
+commit = b40acce58dcf77df52231c3798ea58e924647c89
+version = 1.3.2-main+b40acce
+url = https://tip.files.ghostty.org/b40acce58dcf77df52231c3798ea58e924647c89/libghostty-vt-source.tar.gz
+sha256 = a623aa0b1267594d9a1bb76a5fef535f198004e78730894f494a5bdc522a4850
+root = libghostty-vt-1.3.2-main+b40acce

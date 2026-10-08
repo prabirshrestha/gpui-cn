@@ -1,6 +1,6 @@
 use gpui_cn::{
-    ActiveTheme as _, Command, CommandEvent, CommandItem, CommandState, Popover, Tab, Tabs,
-    TabsEvent, TabsState, gpui_kit::assets::IconName,
+    ActiveTheme as _, Command, CommandEvent, CommandItem, CommandState, MenuItem, MenuState,
+    Popover, Tab, Tabs, TabsEvent, TabsState, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, Global,
@@ -86,6 +86,8 @@ pub struct TabsStory {
     focus: FocusHandle,
     /// The number of tabs the new-tab controls have added, for their labels.
     added: usize,
+    /// The menu a right click on a default tab opens.
+    tab_menu: Entity<MenuState>,
 }
 
 /// Terminal tabs with generic working directories as their labels.
@@ -176,6 +178,7 @@ impl Story for TabsStory {
                 add_open: false,
                 focus,
                 added: 0,
+                tab_menu: cx.new(MenuState::new),
             }
         })
         .into()
@@ -246,11 +249,36 @@ impl Render for TabsStory {
                     .child(note(
                         "Click a tab to select it. The selected tab shows its close control; \
                          an unselected tab shows it on hover. The + control adds a tab. With \
-                         a tab focused, Left and Right select its neighbor.",
+                         a tab focused, Left and Right select its neighbor. A double click \
+                         renames a tab in place, and a right click opens its menu.",
                         cx,
                     ))
                     .child(bar_and_panel(
-                        Tabs::new("tabs-default", &self.default),
+                        {
+                            let state = self.default.clone();
+                            Tabs::new("tabs-default", &self.default)
+                                .renamable(true)
+                                .context_menu(&self.tab_menu, move |id, _, _| {
+                                    let rename = (state.clone(), id.clone());
+                                    let close = (state.clone(), id.clone());
+                                    vec![
+                                        MenuItem::new("rename", "Rename Tab...")
+                                            .on_select(move |window, cx| {
+                                                let (state, id) = rename.clone();
+                                                state.update(cx, |tabs, cx| {
+                                                    tabs.start_rename(id, window, cx)
+                                                });
+                                            })
+                                            .into(),
+                                        MenuItem::new("close", "Close Tab")
+                                            .on_select(move |_, cx| {
+                                                let (state, id) = close.clone();
+                                                state.update(cx, |tabs, cx| tabs.remove(id, cx));
+                                            })
+                                            .into(),
+                                    ]
+                                })
+                        },
                         None,
                     )),
             )
