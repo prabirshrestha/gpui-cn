@@ -14,14 +14,15 @@ description: Release a new version of gpui-cn by updating main, checking CI, app
   A dry run must not commit, push, create tags, or publish.
 - Inspect `git status --short --branch`. Stop if the working tree has changes.
 - Pull with `git pull --ff-only` when `main` tracks a remote.
-- Publish only `gpui-cn`. The gallery has `publish = false`.
+- Publish `ghostty-vt-sys`, `ghostty-vt`, and `gpui-cn`. The gallery has
+  `publish = false`.
 - Do not publish locally. A version tag starts the `Release` workflow in
   `.github/workflows/release.yml`.
 - That workflow uses crates.io Trusted Publishing through GitHub OIDC,
   with `rust-lang/crates-io-auth-action`. No repository token secret or
-  GitHub environment is required. The crates.io publisher must match
-  `prabirshrestha/gpui-cn` and workflow filename `release.yml`, with the
-  environment left blank.
+  GitHub environment is required. Each published crate has its own crates.io
+  publisher entry. Every entry must match `prabirshrestha/gpui-cn` and
+  workflow filename `release.yml`, with the environment left blank.
 - Never print or request a token in chat. If publication fails, diagnose
   the failure before retrying. Do not move or recreate a release tag.
 
@@ -45,7 +46,7 @@ Local checks do not replace successful CI for the release commit.
    ```sh
    git tag --sort=-version:refname | head
    git log --oneline <latest-tag>..HEAD
-   git diff <latest-tag>..HEAD -- crates/gpui-cn
+   git diff <latest-tag>..HEAD -- crates/gpui-cn crates/ghostty-vt crates/ghostty-vt-sys
    ```
 
 3. Use the version requested by the user. Otherwise, select a SemVer bump from
@@ -53,19 +54,30 @@ Local checks do not replace successful CI for the release commit.
    only because the major version is zero. Confirm that the new version is
    greater than the current version and that its local and remote tags do not
    exist.
-4. Update both `workspace.package.version` and the version of
-   `workspace.dependencies.gpui-cn` in the root `Cargo.toml`. All three crates
-   inherit the workspace version. Keep `version.workspace = true`.
-5. Refresh and verify `Cargo.lock`:
+4. Update `workspace.package.version` and the version of
+   `workspace.dependencies.gpui-cn` in the root `Cargo.toml`.
+5. Unless the user requests an independent engine version, set the SemVer core
+   of `ghostty-vt-sys` and `ghostty-vt` to the new gpui-cn version. Preserve
+   the build metadata derived from `crates/ghostty-vt-sys/GHOSTTY.lock`. For
+   example, gpui-cn `0.6.0` at Ghostty `1.3.2-main+b40acce` uses
+   `0.6.0+ghostty.1.3.2-main.b40acce` for both engine crates. Keep
+   `workspace.metadata.ghostty.version-mode` as `follow-gpui-cn`. An
+   independent engine release changes it to `independent`.
+6. Update `workspace.dependencies.ghostty-vt-sys` and
+   `workspace.dependencies.ghostty-vt` to the engine SemVer core without build
+   metadata. Run `scripts/check-ghostty-version.sh`. Never edit the metadata to
+   move the Ghostty pin. Use the `update-ghostty` skill and `scripts/sync.sh`.
+7. Refresh and verify `Cargo.lock`:
 
    ```sh
    cargo check --workspace --all-targets --all-features
    cargo check --workspace --all-targets --all-features --locked
    ```
 
-6. Inspect the diff. Only the two version fields in `Cargo.toml` and the package
-   versions for `gpui-cn` and `gpui-cn-story` in
-   `Cargo.lock` should change. Do not include unrelated dependency updates.
+8. Inspect the diff. Only the intended version fields in the three published
+   crate manifests and root `Cargo.toml`, plus the four workspace package
+   versions in `Cargo.lock`, should change. Do not include unrelated dependency
+   updates.
 
 ## Validate
 
@@ -75,8 +87,9 @@ Run the required repository checks before the release commit:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
-RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn --no-deps --all-features --locked
+RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features --locked
 cargo deny check licenses
+scripts/check-ghostty-version.sh
 ```
 
 Use the repository's Rust toolchain. Follow `AGENTS.md` for benchmark, and snapshot checks when the release includes the relevant changes.
@@ -84,7 +97,7 @@ Use the repository's Rust toolchain. Follow `AGENTS.md` for benchmark, and snaps
 For a dry run, validate the package without committing:
 
 ```sh
-cargo publish -p gpui-cn --dry-run --locked --allow-dirty
+cargo publish --workspace --dry-run --locked --allow-dirty
 ```
 
 Use `--allow-dirty` only after confirming that the diff contains just the
@@ -92,12 +105,12 @@ intended version changes. Leave those changes uncommitted and report them.
 
 ## Commit and publish
 
-1. Stage only `Cargo.toml` and `Cargo.lock`. Commit as
+1. Stage only the intended version files and `Cargo.lock`. Commit as
    `chore: release vX.Y.Z`, with a body that states what changed and why.
-2. Validate the committed package:
+2. Validate the committed packages:
 
    ```sh
-   cargo publish -p gpui-cn --dry-run --locked
+   cargo publish --workspace --dry-run --locked
    ```
 
 3. Push the commit with `git push origin HEAD`.

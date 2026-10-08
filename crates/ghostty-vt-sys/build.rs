@@ -77,8 +77,11 @@ fn main() {
     }
 
     let lock = Lock::read(&manifest_dir.join("GHOSTTY.lock"));
+    validate_package_version(&lock);
     println!("cargo:rustc-env=GHOSTTY_VT_COMMIT={}", lock.commit);
     println!("cargo:rustc-env=GHOSTTY_VT_VERSION={}", lock.version);
+    println!("cargo::metadata=COMMIT={}", lock.commit);
+    println!("cargo::metadata=VERSION={}", lock.version);
 
     // docs.rs has no Zig toolchain. The committed bindings are enough to
     // build the documentation.
@@ -113,6 +116,37 @@ fn main() {
     let src = out_dir.join("src");
     download_and_extract(&lock, &src);
     build_tree(&src, &lock, &target);
+}
+
+/// Check that the published crate version identifies the pinned Ghostty source.
+fn validate_package_version(lock: &Lock) {
+    let short_commit = lock
+        .commit
+        .get(..7)
+        .unwrap_or_else(|| panic!("GHOSTTY.lock has an invalid commit: {}", lock.commit));
+    let (ghostty_version, version_commit) = lock.version.rsplit_once('+').unwrap_or_else(|| {
+        panic!(
+            "GHOSTTY.lock version must end in the short commit: {}",
+            lock.version
+        )
+    });
+    assert_eq!(
+        version_commit, short_commit,
+        "GHOSTTY.lock version does not match its commit"
+    );
+
+    let package_version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+    let metadata = package_version.split_once('+').map(|(_, value)| value);
+    let expected = format!(
+        "ghostty.{}.{}",
+        ghostty_version.replace('+', "."),
+        short_commit
+    );
+    assert_eq!(
+        metadata,
+        Some(expected.as_str()),
+        "ghostty-vt-sys version must end in +{expected}"
+    );
 }
 
 /// Resolve the HEAD file of the submodule's git directory, if checked out.
@@ -294,8 +328,7 @@ fn download_failure(lock: &Lock, url: &str, error: &str) -> String {
 /// Run `zig build` in `src` and emit the link lines.
 fn build_tree(src: &Path, lock: &Lock, target: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let zig = env::var("ZIG").unwrap_or_else(|_| "zig".to_owned());
-    check_zig_version(&zig);
+    let zig = resolve_zig();
 
     let version = fs::read_to_string(src.join("VERSION"))
         .map(|v| v.trim().to_owned())
@@ -360,23 +393,68 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
     println!("cargo:include={}", include_dir.display());
 }
 
-fn check_zig_version(zig: &str) {
+fn resolve_zig() -> PathBuf {
+    if let Some(zig) = env::var_os("ZIG").map(PathBuf::from) {
+        check_zig_version(&zig);
+        return zig;
+    }
+
+    let path_zig = PathBuf::from("zig");
+    let path_result = zig_version(&path_zig);
+    if matches!(&path_result, Ok(version) if version.starts_with("0.16.")) {
+        return path_zig;
+    }
+
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    if let Ok(output) = Command::new("mise")
+        .args(["which", "zig"])
+        .current_dir(manifest_dir)
+        .output()
+        && output.status.success()
+    {
+        let zig = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if !zig.as_os_str().is_empty() {
+            check_zig_version(&zig);
+            return zig;
+        }
+    }
+
+    match path_result {
+        Ok(version) => panic!(
+            "ghostty-vt-sys needs Zig 0.16.x, found `{version}` at `zig`.\n\
+             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary."
+        ),
+        Err(error) => panic!(
+            "ghostty-vt-sys could not find Zig 0.16.x: {error}\n\
+             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary."
+        ),
+    }
+}
+
+fn check_zig_version(zig: &Path) {
+    let version = zig_version(zig).unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        version.starts_with("0.16."),
+        "ghostty-vt-sys needs Zig 0.16.x, found `{version}` at `{}`.\n\
+         Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary.",
+        zig.display()
+    );
+}
+
+fn zig_version(zig: &Path) -> Result<String, String> {
     let output = Command::new(zig)
         .arg("version")
         .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to run `{zig} version`: {error}\n\
-             ghostty-vt-sys needs Zig 0.16.x on PATH (or in ZIG) to build libghostty-vt.\n\
-             Install it from https://ziglang.org/download/ or with `mise install zig@0.16.0`."
-            )
-        });
+        .map_err(|error| format!("failed to run `{} version`: {error}", zig.display()))?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    assert!(
-        output.status.success() && version.starts_with("0.16."),
-        "ghostty-vt-sys needs Zig 0.16.x, found `{version}` at `{zig}`.\n\
-         Install it from https://ziglang.org/download/ or with `mise install zig@0.16.0`."
-    );
+    if !output.status.success() {
+        return Err(format!(
+            "`{} version` failed with status {}",
+            zig.display(),
+            output.status
+        ));
+    }
+    Ok(version)
 }
 
 fn run(mut command: Command, context: &str) {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Ghostty"
+  short_description: "Update the pinned Ghostty terminal engine"
+  default_prompt: "Use $update-ghostty to update the pinned Ghostty source and its two crate versions."

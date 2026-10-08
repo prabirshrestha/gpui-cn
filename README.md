@@ -144,9 +144,10 @@ cargo run
 ```
 
 The Terminal story runs your shell through Ghostty's terminal engine, so
-building the gallery needs [Zig](https://ziglang.org/download/) 0.16 on
-`PATH` (`mise install` picks it up from `mise.toml`). Without the
-submodule, the first build downloads the pinned Ghostty source instead.
+building the gallery needs [Zig](https://ziglang.org/download/) 0.16. Run
+`mise install`; the build finds the repository version through mise even
+when another `zig` is first on `PATH`. Without the submodule, the first
+build downloads the pinned Ghostty source instead.
 `cargo run --no-default-features` builds the gallery without the story
 and without Zig.
 

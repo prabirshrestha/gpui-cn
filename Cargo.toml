@@ -17,11 +17,17 @@ license = "Apache-2.0"
 repository = "https://github.com/prabirshrestha/gpui-cn"
 homepage = "https://github.com/prabirshrestha/gpui-cn"
 
+[workspace.metadata.ghostty]
+# `scripts/sync.sh <commit> <version>` changes this to `independent` when the
+# requested engine core differs from gpui-cn.
+version-mode = "follow-gpui-cn"
+
 [workspace.dependencies]
 gpui-cn = { path = "crates/gpui-cn", version = "0.5.0" }
-# The terminal engine releases on its own `ghostty-vt-v*` tags.
-ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.1.0" }
-ghostty-vt = { path = "crates/ghostty-vt", version = "0.1.0" }
+# The terminal crates normally follow gpui-cn's SemVer core. Their package
+# versions append the pinned Ghostty version and commit as build metadata.
+ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.5.0" }
+ghostty-vt = { path = "crates/ghostty-vt", version = "0.5.0" }
 gpui-kit = { version = "0.7.1", default-features = false }
 
 [workspace.lints.clippy]

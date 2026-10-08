@@ -22,9 +22,12 @@ that this repository does not name. The workspace has four crates:
 - `crates/ghostty-vt-sys` builds libghostty-vt from the pinned Ghostty
   source with Zig 0.16 and holds its raw bindings, which are generated and
   committed. `crates/ghostty-vt` is the safe API on it. They have no GPUI
-  in them and have their own version. One `v*` release tag publishes
-  the workspace in dependency order and skips versions already on
-  crates.io.
+  in them. Their SemVer core normally follows gpui-cn, and their build
+  metadata records the pinned Ghostty version and short commit. An
+  intentional independent engine bump may diverge and sets
+  `workspace.metadata.ghostty.version-mode` to `independent`. One `v*`
+  release tag publishes the workspace in dependency order and skips versions
+  already on crates.io.
   Never patch the Ghostty source. Move the pin with `scripts/sync.sh`,
   which keeps the submodule, `GHOSTTY.lock`, the bindings, the terminfo
   database, and the shell integration scripts in step.

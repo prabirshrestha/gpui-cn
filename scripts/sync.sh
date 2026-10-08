@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Move the Ghostty pin and regenerate everything derived from it.
 #
-#   scripts/sync.sh [<ghostty-commit>]
+#   scripts/sync.sh [<ghostty-commit> [<crate-version>]]
 #
 # Without an argument the current commit from GHOSTTY.lock is resynced.
+# A new commit requires the SemVer core for ghostty-vt and ghostty-vt-sys,
+# without build metadata. This normally matches gpui-cn. The script appends
+# the Ghostty version and short commit as SemVer build metadata.
 # Steps: submodule checkout, GHOSTTY.lock (sha256 verified against both the
-# published tarball and `git archive`), bindings, terminfo (source plus
-# `tic -x` output), shell integration scripts.
+# published tarball and `git archive`), crate versions, bindings, terminfo
+# (source plus `tic -x` output), shell integration scripts.
 #
 # Needs: git, curl, shasum, tar, zig 0.16, tic, rsync, cargo, Homebrew llvm@22
 # (for bindgen). Run on macOS, where the bindings are generated.
@@ -18,11 +21,31 @@ cd "$root"
 lock=crates/ghostty-vt-sys/GHOSTTY.lock
 current=$(sed -n 's/^commit = //p' "$lock")
 commit=${1:-$current}
+gpui_cn_version=$(awk '
+  /^\[workspace.package\]$/ { package = 1; next }
+  /^\[/ { package = 0 }
+  package && /^version = "/ {
+    gsub(/^version = "|".*$/, "")
+    print
+    exit
+  }
+' Cargo.toml)
+crate_version=${2:-$gpui_cn_version}
 case "$commit" in
   *[!0-9a-f]* | ?????????????????????????????????????????*) ;;
 esac
 if [ ${#commit} -ne 40 ]; then
   echo "expected a full 40-character Ghostty commit, got '$commit'" >&2
+  exit 1
+fi
+case "$crate_version" in
+  *+*)
+    echo "pass the crate version without build metadata, got '$crate_version'" >&2
+    exit 1
+    ;;
+esac
+if ! [[ "$crate_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-][0-9A-Za-z.-]+)?$ ]]; then
+  echo "expected a SemVer crate version, got '$crate_version'" >&2
   exit 1
 fi
 
@@ -40,7 +63,15 @@ curl -fsSL -o "$work/source.tar.gz" "$url"
 sha=$(shasum -a 256 "$work/source.tar.gz" | cut -d' ' -f1)
 tarroot=$(tar tzf "$work/source.tar.gz" | head -1 | cut -d/ -f1)
 version=${tarroot#libghostty-vt-}
+short=${commit:0:7}
+if [ "${version##*+}" != "$short" ]; then
+  echo "Ghostty version '$version' does not end in commit '$short'" >&2
+  exit 1
+fi
+ghostty_version=${version%+"$short"}
+package_version="$crate_version+ghostty.${ghostty_version//+/.}.$short"
 echo "    version $version"
+echo "    crate   $package_version"
 echo "    sha256  $sha"
 
 echo "==> reproduce the tarball with git archive"
@@ -68,6 +99,69 @@ url = $url
 sha256 = $sha
 root = $tarroot
 EOF
+cp "$lock" third_party/GHOSTTY.lock
+
+set_package_version() {
+  local manifest=$1
+  local output
+  output="$work/$(basename "$(dirname "$manifest")").Cargo.toml"
+  awk -v version="$package_version" '
+    !updated && /^version = "/ {
+      print "version = \"" version "\""
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) exit 1
+    }
+  ' "$manifest" > "$output"
+  cat "$output" > "$manifest"
+}
+
+set_workspace_dependency_version() {
+  local dependency=$1
+  local output="$work/root-$dependency.Cargo.toml"
+  awk -v dependency="$dependency" -v version="$crate_version" '
+    $0 ~ "^" dependency " = " {
+      print dependency " = { path = \"crates/" dependency "\", version = \"" version "\" }"
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) exit 1
+    }
+  ' Cargo.toml > "$output"
+  cat "$output" > Cargo.toml
+}
+
+set_version_mode() {
+  local mode=follow-gpui-cn
+  local output="$work/root-version-mode.Cargo.toml"
+  if [ "$crate_version" != "$gpui_cn_version" ]; then
+    mode=independent
+  fi
+  awk -v mode="$mode" '
+    /^version-mode = "/ {
+      print "version-mode = \"" mode "\""
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) exit 1
+    }
+  ' Cargo.toml > "$output"
+  cat "$output" > Cargo.toml
+}
+
+echo "==> crate versions"
+set_package_version crates/ghostty-vt-sys/Cargo.toml
+set_package_version crates/ghostty-vt/Cargo.toml
+set_workspace_dependency_version ghostty-vt-sys
+set_workspace_dependency_version ghostty-vt
+set_version_mode
 
 echo "==> bindings"
 # The doc comments bindgen keeps depend on the libclang version; CI checks
@@ -109,5 +203,6 @@ mkdir -p "$res/shell-integration"
 rsync -a --exclude README.md third_party/ghostty/src/shell-integration/ "$res/shell-integration/"
 
 echo "==> verify"
-cargo build -p ghostty-vt-sys
+cargo build -p ghostty-vt-sys -p ghostty-vt
+"$root/scripts/check-ghostty-version.sh"
 echo "synced to $commit ($version)"

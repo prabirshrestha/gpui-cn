@@ -3,6 +3,13 @@
 Raw FFI bindings for [libghostty-vt](https://ghostty.org), the terminal
 emulation library extracted from the Ghostty terminal emulator.
 
+This crate is currently developed primarily for
+[`gpui-cn`](https://github.com/prabirshrestha/gpui-cn).
+
+The crate version normally follows gpui-cn and records its Ghostty source as
+build metadata. For example, `0.5.0+ghostty.1.3.2-main.b40acce` uses Ghostty
+`1.3.2-main` at commit `b40acce`.
+
 The build script builds libghostty-vt from Ghostty's official
 `libghostty-vt-source.tar.gz` for the pinned commit with Zig 0.16 and links
 the static archive. `src/bindings.rs` is generated from the pinned headers
@@ -12,7 +19,8 @@ Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-
 
 ## Requirements
 
-- Zig 0.16.x on `PATH` (or in `ZIG`).
+- Zig 0.16.x on `PATH` or in `ZIG`. In this repository, the build also finds
+  the version from `mise.toml` through `mise`.
 - On macOS, the Xcode command line tools.
 - Network on the first build, or `GHOSTTY_SOURCE_DIR` and
   `GHOSTTY_ZIG_SYSTEM_DIR` for offline builds.

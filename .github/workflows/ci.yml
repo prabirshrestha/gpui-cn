@@ -30,6 +30,7 @@ jobs:
           sudo apt-get install -y gcc g++ clang libfontconfig-dev libwayland-dev \
             libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev \
             vulkan-validationlayers libvulkan1
+      - run: scripts/check-ghostty-version.sh
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys --no-deps --all-features --locked

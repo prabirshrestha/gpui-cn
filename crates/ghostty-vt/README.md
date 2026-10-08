@@ -5,6 +5,10 @@ emulation library extracted from the Ghostty terminal emulator. The
 underlying library is built from Ghostty's official source tarball by
 [`ghostty-vt-sys`](https://crates.io/crates/ghostty-vt-sys) with Zig 0.16.
 
+The crate version normally follows gpui-cn and records its Ghostty source as
+build metadata. For example, `0.5.0+ghostty.1.3.2-main.b40acce` uses Ghostty
+`1.3.2-main` at commit `b40acce`.
+
 This crate is a fork of [libghostty-vt](https://github.com/Uzaaft/libghostty-rs)
 0.2.2 (MIT OR Apache-2.0, by Uzaaft and pluiedev) pinned to a newer Ghostty
 commit. Module, type and method names and call shapes are kept, and every

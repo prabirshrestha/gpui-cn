@@ -1,15 +1,17 @@
 [package]
 name = "ghostty-vt"
 description = "Safe Rust API for libghostty-vt, the Ghostty terminal emulation library, built from Ghostty's official source tarball"
-version = "0.1.0"
+version = "0.5.0+ghostty.1.3.2-main.b40acce"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 readme = "README.md"
+build = "build.rs"
 keywords = ["ghostty", "terminal", "vt", "libghostty"]
 categories = ["command-line-interface", "api-bindings"]
 include = [
+    "build.rs",
     "src/**",
     "resources/**",
     "README.md",
