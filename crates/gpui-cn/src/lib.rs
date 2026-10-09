@@ -45,6 +45,7 @@ mod command;
 mod command_dialog;
 mod composer;
 mod dialog;
+pub mod dock;
 mod file_picker;
 mod folder_picker;
 pub mod fuzzy;
@@ -97,6 +98,7 @@ pub use composer::{
     SEARCH_MIN_OPTIONS, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
+pub use dock::DockSkin;
 pub use file_picker::{
     FileEntry, FileFilter, FileKind, FileListing, FileLoaded, FilePage, FilePicker,
     FilePickerEvent, FilePickerState, FileSource, LocalFiles, MemoryFiles,
@@ -163,11 +165,11 @@ pub mod prelude {
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
         Command, CommandDialog, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu,
-        Dialog, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker, FolderPickerState,
-        Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState, MenuEntry, MenuItem,
-        MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt, NavStackState,
-        Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea, Select,
-        SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
+        Dialog, DockSkin, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker,
+        FolderPickerState, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState,
+        MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
+        NavStackState, Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea,
+        Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
         SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
         SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
         Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,
