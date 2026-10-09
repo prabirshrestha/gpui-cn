@@ -269,6 +269,7 @@ mod macos {
                 "Progress",
                 "Theme",
                 "Sidebar",
+                "Dock",
                 "Nav stack",
                 "Scroll area",
                 "Title bar",

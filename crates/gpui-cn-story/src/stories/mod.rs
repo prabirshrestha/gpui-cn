@@ -7,6 +7,7 @@ mod color;
 mod command;
 mod composer;
 mod dialog;
+mod dock;
 mod file_picker;
 mod folder_picker;
 mod input;
@@ -41,6 +42,7 @@ pub use color::{
 pub use command::CommandStory;
 pub use composer::ComposerStory;
 pub use dialog::DialogStory;
+pub use dock::DockStory;
 pub use file_picker::FilePickerStory;
 pub use folder_picker::FolderPickerStory;
 pub use input::InputStory;
