@@ -1,22 +1,28 @@
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use std::path::PathBuf;
-
+use gpui_cn::dock::{
+    DockArea, DockLayout, DockPlacement, InsertTarget, NodeId, Panel, PanelEvent, PanelId,
+    Placement,
+};
 use gpui_cn::prelude::{Disableable as _, StyledExt as _};
 use gpui_cn::terminal::{
     FixtureSource, LocalTerminalOptions, Terminal, TerminalColors, TerminalConfig, TerminalEvent,
     TerminalState, WorkingDirectory, actions,
 };
 use gpui_cn::{
-    ActiveTheme as _, Button, ContextMenu, Dialog, MenuEntry, MenuItem, MenuState, Select,
-    SelectEvent, SelectItem, SelectState, Tab, Tabs, TabsEvent, TabsState, Theme, ThemeScope,
-    ThemeTokens, gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ContextMenu, Dialog, DockSkin, MenuEntry, MenuItem, MenuState,
+    Select, SelectEvent, SelectItem, SelectState, Tab, Tabs, TabsEvent, TabsState, Theme,
+    ThemeScope, ThemeTokens, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
-    Action, AnyView, App, AppContext as _, Axis, Context, ElementId, Entity, Global,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
-    Styled as _, WeakEntity, Window, actions, div, prelude::FluentBuilder as _, px,
+    Action, AnyView, App, AppContext as _, Axis, Bounds, Context, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
+    ParentElement as _, Pixels, Render, SharedString, Styled as _, WeakEntity, Window, actions,
+    base::ElementExt as _, div, px,
 };
 
 use crate::{Story, frame, note, page, section};
@@ -158,162 +164,115 @@ impl PaneId {
     }
 }
 
-/// A tab's layout: a pane, or panes side by side along an axis.
-#[derive(Debug, PartialEq)]
-enum Node {
-    Leaf(PaneId),
-    Split { axis: Axis, children: Vec<Node> },
+/// The pane beside `from` in a direction, among `others` by their bounds:
+/// the nearest one past `from`'s edge on that side that overlaps it across
+/// the axis, and of those the one whose center lines up best.
+fn neighbor(
+    from: Bounds<Pixels>,
+    others: &[(PaneId, Bounds<Pixels>)],
+    axis: Axis,
+    forward: bool,
+) -> Option<PaneId> {
+    let hairline = px(1.);
+    others
+        .iter()
+        .filter_map(|(id, other)| {
+            let (gap, overlaps, offset) = match axis {
+                Axis::Horizontal => (
+                    if forward {
+                        other.left() - from.right()
+                    } else {
+                        from.left() - other.right()
+                    },
+                    other.top() < from.bottom() && other.bottom() > from.top(),
+                    (other.center().y - from.center().y).abs(),
+                ),
+                Axis::Vertical => (
+                    if forward {
+                        other.top() - from.bottom()
+                    } else {
+                        from.top() - other.bottom()
+                    },
+                    other.left() < from.right() && other.right() > from.left(),
+                    (other.center().x - from.center().x).abs(),
+                ),
+            };
+            (gap >= -hairline && overlaps).then_some((gap, offset, *id))
+        })
+        .min_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        })
+        .map(|(_, _, id)| id)
 }
 
-impl Node {
-    fn first_leaf(&self) -> PaneId {
-        match self {
-            Node::Leaf(id) => *id,
-            Node::Split { children, .. } => children[0].first_leaf(),
-        }
-    }
+/// A pane of the dock: a terminal with its context menu. It records the
+/// bounds it was laid out at, which the focus keys move between.
+struct TerminalPane {
+    id: PaneId,
+    terminal: Entity<TerminalState>,
+    story: WeakEntity<TerminalStory>,
+    menu: Entity<MenuState>,
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+}
 
-    fn last_leaf(&self) -> PaneId {
-        match self {
-            Node::Leaf(id) => *id,
-            Node::Split { children, .. } => children[children.len() - 1].last_leaf(),
-        }
-    }
-
-    fn leaves(&self) -> Vec<PaneId> {
-        let mut out = Vec::new();
-        self.collect(&mut out);
-        out
-    }
-
-    fn collect(&self, out: &mut Vec<PaneId>) {
-        match self {
-            Node::Leaf(id) => out.push(*id),
-            Node::Split { children, .. } => children.iter().for_each(|c| c.collect(out)),
-        }
-    }
-
-    /// The child indexes from the root to `target`.
-    fn path(&self, target: PaneId, path: &mut Vec<usize>) -> bool {
-        match self {
-            Node::Leaf(id) => *id == target,
-            Node::Split { children, .. } => {
-                for (index, child) in children.iter().enumerate() {
-                    path.push(index);
-                    if child.path(target, path) {
-                        return true;
-                    }
-                    path.pop();
-                }
-                false
-            }
-        }
-    }
-
-    fn at(&self, path: &[usize]) -> &Node {
-        match (self, path) {
-            (Node::Split { children, .. }, [index, rest @ ..]) => children[*index].at(rest),
-            (node, _) => node,
-        }
-    }
-
-    /// Puts `new` beside `target` along `axis`: after it, or before it
-    /// with `before`.
-    fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, before: bool) -> bool {
-        match self {
-            Node::Leaf(id) if *id == target => {
-                let pair = if before {
-                    vec![Node::Leaf(new), Node::Leaf(target)]
-                } else {
-                    vec![Node::Leaf(target), Node::Leaf(new)]
-                };
-                *self = Node::Split {
-                    axis,
-                    children: pair,
-                };
-                true
-            }
-            Node::Leaf(_) => false,
-            Node::Split {
-                axis: own,
-                children,
-            } => {
-                if *own == axis
-                    && let Some(index) = children
-                        .iter()
-                        .position(|c| matches!(c, Node::Leaf(id) if *id == target))
-                {
-                    children.insert(index + usize::from(!before), Node::Leaf(new));
-                    return true;
-                }
-                children
-                    .iter_mut()
-                    .any(|child| child.split(target, axis, new, before))
-            }
-        }
-    }
-
-    /// Removes `target` and collapses a split left with one child. False
-    /// when the root itself is the target.
-    fn remove(&mut self, target: PaneId) -> bool {
-        let Node::Split { children, .. } = self else {
-            return false;
-        };
-        if let Some(index) = children
-            .iter()
-            .position(|c| matches!(c, Node::Leaf(id) if *id == target))
-        {
-            children.remove(index);
-        } else if !children.iter_mut().any(|child| child.remove(target)) {
-            return false;
-        }
-        if children.len() == 1 {
-            *self = children.remove(0);
-        }
-        true
-    }
-
-    /// The pane beside `from` in a direction: up the path to the nearest
-    /// split along `axis` with a sibling on that side.
-    fn neighbor(&self, from: PaneId, axis: Axis, forward: bool) -> Option<PaneId> {
-        let mut path = Vec::new();
-        if !self.path(from, &mut path) {
-            return None;
-        }
-        while let Some(index) = path.pop() {
-            let Node::Split {
-                axis: own,
-                children,
-            } = self.at(&path)
-            else {
-                continue;
-            };
-            if *own != axis {
-                continue;
-            }
-            let sibling = if forward {
-                index.checked_add(1)
-            } else {
-                index.checked_sub(1)
-            };
-            if let Some(node) = sibling.and_then(|sibling| children.get(sibling)) {
-                return Some(if forward {
-                    node.first_leaf()
-                } else {
-                    node.last_leaf()
-                });
-            }
-        }
-        None
+impl Panel for TerminalPane {
+    fn panel_name(&self) -> &'static str {
+        "terminal"
     }
 }
 
-/// One tab: its layout and the pane that has, or last had, focus.
+impl EventEmitter<PanelEvent> for TerminalPane {}
+
+impl Focusable for TerminalPane {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.terminal.read(cx).focus_handle().clone()
+    }
+}
+
+impl Render for TerminalPane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus = self.terminal.read(cx).focus_handle().clone();
+        let entries = self.terminal.clone();
+        let story = self.story.clone();
+        let pane = self.id;
+        let bounds = self.bounds.clone();
+        // A right click focuses the pane first, so its menu's commands go
+        // to that pane. A program that reports the mouse gets the click
+        // instead, as in Ghostty.
+        div()
+            .size_full()
+            .on_prepaint(move |laid_out, _, _| bounds.set(laid_out))
+            .child(
+                ContextMenu::new(
+                    ElementId::NamedChild(Arc::new(pane.element_id()), "menu".into()),
+                    &self.menu,
+                )
+                .action_context(&focus)
+                .items(move |_, cx| TerminalStory::pane_entries(&story, pane, &entries, cx))
+                .size_full()
+                .child(Terminal::new(pane.element_id(), &self.terminal)),
+            )
+    }
+}
+
+/// A pane's terminal and the dock panel that shows it.
+struct Pane {
+    terminal: Entity<TerminalState>,
+    panel: Entity<TerminalPane>,
+}
+
+impl Pane {
+    fn panel_id(&self) -> PanelId {
+        PanelId::from(self.panel.entity_id())
+    }
+}
+
+/// One tab: its dock and the pane that has, or last had, focus.
 struct TabPanes {
-    root: Node,
+    area: Entity<DockArea>,
     focused: PaneId,
-    /// Whether the focused pane fills the tab, the others hidden.
-    zoomed: bool,
 }
 
 /// Where Ghostty looks for theme files, in its order: the user's config
@@ -394,7 +353,7 @@ pub struct TerminalStory {
     colors: TerminalColors,
     themes: Entity<SelectState<SharedString>>,
     layouts: HashMap<SharedString, TabPanes>,
-    panes: HashMap<PaneId, Entity<TerminalState>>,
+    panes: HashMap<PaneId, Pane>,
     /// Tabs the user named. The others follow their focused pane's title.
     named: HashSet<SharedString>,
     /// Set while the story itself renames a tab to a title, so the
@@ -518,9 +477,10 @@ impl TerminalStory {
     pub fn set_colors(&mut self, colors: TerminalColors, cx: &mut Context<Self>) {
         let config = colors.theme_config(Theme::global(cx));
         Theme::set_scope(cx, Self::SCOPE, config);
-        for terminal in self.panes.values() {
+        for pane in self.panes.values() {
             let colors = colors.clone();
-            terminal.update(cx, |terminal, cx| terminal.set_colors(colors, cx));
+            pane.terminal
+                .update(cx, |terminal, cx| terminal.set_colors(colors, cx));
         }
         self.colors = colors;
         cx.notify();
@@ -533,7 +493,10 @@ impl TerminalStory {
 
     /// Every pane's terminal, in no order.
     pub fn terminals(&self) -> Vec<Entity<TerminalState>> {
-        self.panes.values().cloned().collect()
+        self.panes
+            .values()
+            .map(|pane| pane.terminal.clone())
+            .collect()
     }
 
     /// The tokens the tab strip draws with.
@@ -564,12 +527,41 @@ impl TerminalStory {
         &self.themes
     }
 
-    /// The tab that holds pane `id`.
-    fn tab_of(&self, id: PaneId) -> Option<SharedString> {
+    /// The panes of tab `tab`, in layout order.
+    fn leaves(&self, tab: &SharedString, cx: &App) -> Vec<PaneId> {
+        let Some(layout) = self.layouts.get(tab) else {
+            return Vec::new();
+        };
+        let Some(tree) = layout.area.read(cx).layout(DockPlacement::Center) else {
+            return Vec::new();
+        };
+        tree.panels()
+            .filter_map(|panel| {
+                self.panes
+                    .iter()
+                    .find(|(_, pane)| pane.panel_id() == panel)
+                    .map(|(id, _)| *id)
+            })
+            .collect()
+    }
+
+    /// The group that holds pane `id` in tab `tab`'s dock.
+    fn node_of(&self, tab: &SharedString, id: PaneId, cx: &App) -> Option<NodeId> {
+        let panel = self.panes.get(&id)?.panel_id();
         self.layouts
-            .iter()
-            .find(|(_, layout)| layout.root.leaves().contains(&id))
-            .map(|(tab, _)| tab.clone())
+            .get(tab)?
+            .area
+            .read(cx)
+            .layout(DockPlacement::Center)?
+            .find_panel_node(panel)
+    }
+
+    /// The tab that holds pane `id`.
+    fn tab_of(&self, id: PaneId, cx: &App) -> Option<SharedString> {
+        self.layouts
+            .keys()
+            .find(|tab| self.leaves(tab, cx).contains(&id))
+            .cloned()
     }
 
     /// Names tab `tab` after its focused pane's title, unless the user
@@ -582,7 +574,7 @@ impl TerminalStory {
             .layouts
             .get(tab)
             .and_then(|layout| self.panes.get(&layout.focused))
-            .map(|terminal| terminal.read(cx).title().clone())
+            .map(|pane| pane.terminal.read(cx).title().clone())
             .filter(|title| !title.is_empty())
         else {
             return;
@@ -599,7 +591,9 @@ impl TerminalStory {
 
     fn focused_terminal(&self, cx: &App) -> Option<&Entity<TerminalState>> {
         let tab = self.selected_tab(cx)?;
-        self.panes.get(&self.layouts.get(&tab)?.focused)
+        self.panes
+            .get(&self.layouts.get(&tab)?.focused)
+            .map(|pane| &pane.terminal)
     }
 
     /// A new pane, a shell started in the focused pane's directory.
@@ -624,7 +618,18 @@ impl TerminalStory {
                 )
             }
         });
-        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+        let story = self.this.clone();
+        let menu = self.pane_menu.clone();
+        let panel = cx.new(|cx| {
+            cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+            TerminalPane {
+                id,
+                terminal: terminal.clone(),
+                story,
+                menu,
+                bounds: Rc::default(),
+            }
+        });
         cx.subscribe_in(&terminal, window, move |this, _, event, window, cx| {
             match event {
                 // A shell that ended normally takes its pane with it. One
@@ -635,7 +640,7 @@ impl TerminalStory {
                 // A click focuses a pane too, and the splits and the tab's
                 // name follow the pane with focus.
                 TerminalEvent::Focused => {
-                    if let Some(tab) = this.tab_of(id)
+                    if let Some(tab) = this.tab_of(id, cx)
                         && let Some(layout) = this.layouts.get_mut(&tab)
                     {
                         layout.focused = id;
@@ -644,7 +649,7 @@ impl TerminalStory {
                     }
                 }
                 TerminalEvent::TitleChanged => {
-                    if let Some(tab) = this.tab_of(id)
+                    if let Some(tab) = this.tab_of(id, cx)
                         && this.layouts.get(&tab).is_some_and(|l| l.focused == id)
                     {
                         this.follow_title(&tab, cx);
@@ -654,7 +659,7 @@ impl TerminalStory {
             }
         })
         .detach();
-        self.panes.insert(id, terminal);
+        self.panes.insert(id, Pane { terminal, panel });
         id
     }
 
@@ -662,12 +667,18 @@ impl TerminalStory {
         let pane = self.spawn_pane(window, cx);
         self.next_tab += 1;
         let tab_id = SharedString::from(format!("shell-{}", self.next_tab));
+        let area = DockSkin::area(tab_id.clone(), window, cx);
+        let panel = self.panes[&pane].panel.clone();
+        area.update(cx, |area, cx| {
+            area.set_center(DockLayout::tabs().panel(panel), window, cx);
+        });
+        // The pane menu and the zoom mark read the layout.
+        cx.observe(&area, |_, _, cx| cx.notify()).detach();
         self.layouts.insert(
             tab_id.clone(),
             TabPanes {
-                root: Node::Leaf(pane),
+                area,
                 focused: pane,
-                zoomed: false,
             },
         );
         let tab = Tab::new(tab_id.clone(), format!("Shell {}", self.next_tab))
@@ -688,10 +699,12 @@ impl TerminalStory {
         // A zoomed tab shows its focused pane only. The others keep their
         // programs and drain their output, but paint nothing, and may park.
         for (tab, layout) in &self.layouts {
-            for pane in layout.root.leaves() {
-                let visible = *tab == selected && (!layout.zoomed || pane == layout.focused);
-                if let Some(terminal) = self.panes.get(&pane) {
-                    terminal.update(cx, |terminal, cx| terminal.set_visible(visible, cx));
+            let zoomed = layout.area.read(cx).is_zoomed();
+            for pane in self.leaves(tab, cx) {
+                let visible = *tab == selected && (!zoomed || pane == layout.focused);
+                if let Some(pane) = self.panes.get(&pane) {
+                    pane.terminal
+                        .update(cx, |terminal, cx| terminal.set_visible(visible, cx));
                 }
             }
         }
@@ -706,8 +719,8 @@ impl TerminalStory {
         {
             layout.focused = id;
         }
-        if let Some(terminal) = self.panes.get(&id) {
-            let handle = terminal.read(cx).focus_handle().clone();
+        if let Some(pane) = self.panes.get(&id) {
+            let handle = pane.terminal.read(cx).focus_handle().clone();
             window.focus(&handle, cx);
         }
         cx.notify();
@@ -731,28 +744,38 @@ impl TerminalStory {
         let Some(tab) = self.selected_tab(cx) else {
             return;
         };
-        let zoomed = match self.layouts.get_mut(&tab) {
-            Some(layout) if matches!(layout.root, Node::Split { .. }) => {
-                layout.zoomed = !layout.zoomed;
-                layout.zoomed
-            }
-            _ => return,
+        if self.leaves(&tab, cx).len() < 2 {
+            return;
+        }
+        let Some(layout) = self.layouts.get(&tab) else {
+            return;
         };
+        let area = layout.area.clone();
+        let zoomed = !area.read(cx).is_zoomed();
+        if zoomed {
+            let Some(node) = self.node_of(&tab, layout.focused, cx) else {
+                return;
+            };
+            area.update(cx, |area, cx| area.set_zoomed_in(node, window, cx));
+        } else {
+            area.update(cx, |area, cx| area.set_zoomed_out(window, cx));
+        }
         self.mark_zoom(&tab, zoomed, cx);
         self.show_selected(window, cx);
     }
 
     /// Puts tab `tab`'s layout back if a pane is zoomed. Splitting, closing
     /// and moving focus do this first, as in tmux. Returns whether it did.
-    fn unzoom(&mut self, tab: &SharedString, cx: &mut Context<Self>) -> bool {
-        match self.layouts.get_mut(tab) {
-            Some(layout) if layout.zoomed => {
-                layout.zoomed = false;
-                self.mark_zoom(tab, false, cx);
-                true
-            }
-            _ => false,
+    fn unzoom(&mut self, tab: &SharedString, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(area) = self.layouts.get(tab).map(|layout| layout.area.clone()) else {
+            return false;
+        };
+        if !area.read(cx).is_zoomed() {
+            return false;
         }
+        area.update(cx, |area, cx| area.set_zoomed_out(window, cx));
+        self.mark_zoom(tab, false, cx);
+        true
     }
 
     /// The tab's icon marks a zoomed pane.
@@ -769,26 +792,44 @@ impl TerminalStory {
     }
 
     /// Whether pane `id`'s tab has a zoomed pane.
-    fn zoomed(&self, id: PaneId) -> bool {
-        self.tab_of(id)
+    fn zoomed(&self, id: PaneId, cx: &App) -> bool {
+        self.tab_of(id, cx)
             .and_then(|tab| self.layouts.get(&tab))
-            .is_some_and(|layout| layout.zoomed)
+            .is_some_and(|layout| layout.area.read(cx).is_zoomed())
     }
 
-    fn split(&mut self, axis: Axis, before: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a pane beside the focused one, on side `placement`.
+    fn split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.selected_tab(cx) else {
             return;
         };
         let Some(target) = self.layouts.get(&tab).map(|layout| layout.focused) else {
             return;
         };
-        self.unzoom(&tab, cx);
+        self.unzoom(&tab, window, cx);
+        let Some(node) = self.node_of(&tab, target, cx) else {
+            return;
+        };
         let pane = self.spawn_pane(window, cx);
-        if let Some(layout) = self.layouts.get_mut(&tab)
-            && layout.root.split(target, axis, pane, before)
-        {
-            self.focus_pane(pane, window, cx);
-        }
+        let panel = self.panes[&pane].panel.clone();
+        let id = PanelId::from(panel.entity_id());
+        let area = self.layouts[&tab].area.clone();
+        // The dock adds a panel to its first group, and the move then puts
+        // it in a group of its own beside the target.
+        area.update(cx, |area, cx| {
+            area.add_panel(panel, DockPlacement::Center, None, window, cx);
+            area.move_panel(
+                id,
+                InsertTarget::Split {
+                    node,
+                    placement,
+                    size: None,
+                },
+                window,
+                cx,
+            );
+        });
+        self.focus_pane(pane, window, cx);
     }
 
     fn focus_direction(
@@ -798,37 +839,51 @@ impl TerminalStory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(tab) = self.selected_tab(cx)
-            && self.unzoom(&tab, cx)
-        {
+        let Some(tab) = self.selected_tab(cx) else {
+            return;
+        };
+        if self.unzoom(&tab, window, cx) {
             self.show_selected(window, cx);
         }
-        let next = self
-            .selected_tab(cx)
-            .and_then(|tab| self.layouts.get(&tab))
-            .and_then(|layout| layout.root.neighbor(layout.focused, axis, forward));
-        if let Some(next) = next {
+        let Some(focused) = self.layouts.get(&tab).map(|layout| layout.focused) else {
+            return;
+        };
+        let bounds = |id: &PaneId| {
+            self.panes
+                .get(id)
+                .map(|pane| pane.panel.read(cx).bounds.get())
+        };
+        let Some(from) = bounds(&focused) else {
+            return;
+        };
+        let others: Vec<(PaneId, Bounds<Pixels>)> = self
+            .leaves(&tab, cx)
+            .into_iter()
+            .filter(|id| *id != focused)
+            .filter_map(|id| Some((id, bounds(&id)?)))
+            .collect();
+        if let Some(next) = neighbor(from, &others, axis, forward) {
             self.focus_pane(next, window, cx);
         }
     }
 
     fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.selected_tab(cx)
-            && self.unzoom(&tab, cx)
-        {
+        let Some(tab) = self.selected_tab(cx) else {
+            return;
+        };
+        if self.unzoom(&tab, window, cx) {
             self.show_selected(window, cx);
         }
-        let next = self
-            .selected_tab(cx)
-            .and_then(|tab| self.layouts.get(&tab))
-            .map(|layout| {
-                let leaves = layout.root.leaves();
-                let at = leaves.iter().position(|id| *id == layout.focused);
-                leaves[at.map_or(0, |at| (at + 1) % leaves.len())]
-            });
-        if let Some(next) = next {
-            self.focus_pane(next, window, cx);
+        let leaves = self.leaves(&tab, cx);
+        let Some(focused) = self.layouts.get(&tab).map(|layout| layout.focused) else {
+            return;
+        };
+        if leaves.is_empty() {
+            return;
         }
+        let at = leaves.iter().position(|id| *id == focused);
+        let next = leaves[at.map_or(0, |at| (at + 1) % leaves.len())];
+        self.focus_pane(next, window, cx);
     }
 
     fn close_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -846,17 +901,13 @@ impl TerminalStory {
     fn running(&self, closing: &Closing, cx: &App) -> Vec<String> {
         let panes = match closing {
             Closing::Pane(pane) => vec![*pane],
-            Closing::Tabs(tabs) => tabs
-                .iter()
-                .filter_map(|tab| self.layouts.get(tab))
-                .flat_map(|layout| layout.root.leaves())
-                .collect(),
+            Closing::Tabs(tabs) => tabs.iter().flat_map(|tab| self.leaves(tab, cx)).collect(),
         };
         panes
             .iter()
             .filter_map(|pane| self.panes.get(pane))
-            .filter_map(|terminal| {
-                let terminal = terminal.read(cx);
+            .filter_map(|pane| {
+                let terminal = pane.terminal.read(cx);
                 let process = terminal.foreground()?;
                 (terminal.is_live() && !process.is_shell()).then(|| process.name().to_owned())
             })
@@ -899,27 +950,28 @@ impl TerminalStory {
     /// Stops a pane's program and takes it out of its tab. The last pane
     /// takes its tab with it, and the last tab is replaced by a new one.
     fn close_pane(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(terminal) = self.panes.remove(&id) else {
+        let Some(tab) = self.tab_of(id, cx) else {
             return;
         };
-        terminal.update(cx, |terminal, cx| terminal.close(cx));
-        let Some(tab) = self
-            .layouts
-            .iter()
-            .find(|(_, layout)| layout.root.leaves().contains(&id))
-            .map(|(tab, _)| tab.clone())
-        else {
+        let leaves = self.leaves(&tab, cx);
+        let Some(pane) = self.panes.remove(&id) else {
             return;
         };
-        self.unzoom(&tab, cx);
-        let layout = self.layouts.get_mut(&tab).expect("found above");
-        if !layout.root.remove(id) {
+        pane.terminal.update(cx, |terminal, cx| terminal.close(cx));
+        self.unzoom(&tab, window, cx);
+        if leaves.len() < 2 {
             // The removal is reported back through `TabsEvent::Closed`.
             self.tabs.update(cx, |tabs, cx| tabs.remove(tab, cx));
             return;
         }
-        if layout.focused == id {
-            layout.focused = layout.root.first_leaf();
+        let area = self.layouts[&tab].area.clone();
+        area.update(cx, |area, cx| area.remove_panel(pane.panel, window, cx));
+        let first = self.leaves(&tab, cx).first().copied();
+        if let Some(layout) = self.layouts.get_mut(&tab)
+            && layout.focused == id
+            && let Some(first) = first
+        {
+            layout.focused = first;
         }
         if self.selected_tab(cx) == Some(tab) {
             self.show_selected(window, cx);
@@ -928,13 +980,12 @@ impl TerminalStory {
     }
 
     fn tab_closed(&mut self, id: &SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(layout) = self.layouts.remove(id) {
-            for pane in layout.root.leaves() {
-                if let Some(terminal) = self.panes.remove(&pane) {
-                    terminal.update(cx, |terminal, cx| terminal.close(cx));
-                }
+        for pane in self.leaves(id, cx) {
+            if let Some(pane) = self.panes.remove(&pane) {
+                pane.terminal.update(cx, |terminal, cx| terminal.close(cx));
             }
         }
+        self.layouts.remove(id);
         if self.tabs.read(cx).tabs().is_empty() {
             self.new_tab(window, cx);
         } else {
@@ -1049,10 +1100,9 @@ impl TerminalStory {
             .map(|story| {
                 let story = story.read(cx);
                 let split = story
-                    .tab_of(pane)
-                    .and_then(|tab| story.layouts.get(&tab))
-                    .is_some_and(|layout| matches!(layout.root, Node::Split { .. }));
-                (story.zoomed(pane), split)
+                    .tab_of(pane, cx)
+                    .is_some_and(|tab| story.leaves(&tab, cx).len() > 1);
+                (story.zoomed(pane, cx), split)
             })
             .unwrap_or_default();
         vec![
@@ -1098,56 +1148,6 @@ impl TerminalStory {
     fn send_leader(&mut self, cx: &mut Context<Self>) {
         if let Some(terminal) = self.focused_terminal(cx).cloned() {
             terminal.update(cx, |terminal, cx| terminal.send_text("\u{1}", cx));
-        }
-    }
-
-    fn render_node(&self, node: &Node, focused: PaneId, split: bool, cx: &App) -> gpui_kit::Div {
-        let theme = self.tokens(cx);
-        match node {
-            // In a split, a hairline frames each pane and the focused one
-            // takes the ring color.
-            Node::Leaf(id) => div()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .when(split, |this| {
-                    this.border_1().border_color(if *id == focused {
-                        theme.ring()
-                    } else {
-                        theme.border()
-                    })
-                })
-                .children(self.panes.get(id).map(|terminal| {
-                    let focus = terminal.read(cx).focus_handle().clone();
-                    let entries = terminal.clone();
-                    let story = self.this.clone();
-                    let pane = *id;
-                    // A right click focuses the pane first, so its menu's
-                    // commands go to that pane. A program that reports the
-                    // mouse gets the click instead, as in Ghostty.
-                    ContextMenu::new(
-                        ElementId::NamedChild(Arc::new(id.element_id()), "menu".into()),
-                        &self.pane_menu,
-                    )
-                    .action_context(&focus)
-                    .items(move |_, cx| Self::pane_entries(&story, pane, &entries, cx))
-                    .size_full()
-                    .child(Terminal::new(id.element_id(), terminal))
-                })),
-            Node::Split { axis, children } => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .map(|this| match axis {
-                    Axis::Horizontal => this.flex_row(),
-                    Axis::Vertical => this.flex_col(),
-                })
-                .children(
-                    children
-                        .iter()
-                        .map(|child| self.render_node(child, focused, split, cx)),
-                ),
         }
     }
 }
@@ -1318,12 +1318,9 @@ impl Render for TerminalStory {
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
             .map(|layout| {
-                if layout.zoomed {
-                    self.render_node(&Node::Leaf(layout.focused), layout.focused, false, cx)
-                } else {
-                    let split = matches!(layout.root, Node::Split { .. });
-                    self.render_node(&layout.root, layout.focused, split, cx)
-                }
+                // The dividers, the focus ring and the drag draw in the
+                // terminal's colors too.
+                ThemeScope::new(Self::SCOPE, div().size_full().child(layout.area.clone()))
             });
         page([section(
             "Shell",
@@ -1376,16 +1373,16 @@ impl Render for TerminalStory {
                             this.select_tab(action.0.saturating_sub(1), cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitRight, window, cx| {
-                            this.split(Axis::Horizontal, false, window, cx);
+                            this.split(Placement::Right, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitDown, window, cx| {
-                            this.split(Axis::Vertical, false, window, cx);
+                            this.split(Placement::Bottom, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitLeft, window, cx| {
-                            this.split(Axis::Horizontal, true, window, cx);
+                            this.split(Placement::Left, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &SplitUp, window, cx| {
-                            this.split(Axis::Vertical, true, window, cx);
+                            this.split(Placement::Top, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &FocusLeft, window, cx| {
                             this.focus_direction(Axis::Horizontal, false, window, cx);
@@ -1438,73 +1435,38 @@ impl Render for TerminalStory {
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::{point, size};
+
     use super::*;
 
-    fn pane(id: u64) -> PaneId {
-        PaneId(id)
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    /// Pane 0 on the left; panes 1 over 2 on the right, parted by
+    /// hairlines.
+    fn layout() -> Vec<(PaneId, Bounds<Pixels>)> {
+        vec![
+            (PaneId(0), rect(0., 0., 400., 400.)),
+            (PaneId(1), rect(402., 0., 398., 199.)),
+            (PaneId(2), rect(402., 201., 398., 199.)),
+        ]
+    }
+
+    fn from(id: u64, axis: Axis, forward: bool) -> Option<PaneId> {
+        let panes = layout();
+        let (_, bounds) = panes[id as usize];
+        let others: Vec<_> = panes.into_iter().filter(|(p, _)| p.0 != id).collect();
+        neighbor(bounds, &others, axis, forward)
     }
 
     #[test]
-    fn splits_nest_across_axes_and_flatten_along_one() {
-        let mut root = Node::Leaf(pane(0));
-        assert!(root.split(pane(0), Axis::Horizontal, pane(1), false));
-        assert!(root.split(pane(1), Axis::Horizontal, pane(2), false));
-        assert!(root.split(pane(2), Axis::Vertical, pane(3), false));
-        assert_eq!(root.leaves(), [pane(0), pane(1), pane(2), pane(3)]);
-        let Node::Split { axis, children } = &root else {
-            panic!("a split");
-        };
-        assert_eq!(*axis, Axis::Horizontal);
-        assert_eq!(
-            children.len(),
-            3,
-            "a split along the same axis adds a sibling"
-        );
-    }
-
-    #[test]
-    fn a_split_before_puts_the_new_pane_first() {
-        let mut root = Node::Leaf(pane(0));
-        assert!(root.split(pane(0), Axis::Horizontal, pane(1), true));
-        assert!(root.split(pane(0), Axis::Horizontal, pane(2), true));
-        assert_eq!(root.leaves(), [pane(1), pane(2), pane(0)]);
-        assert!(root.split(pane(0), Axis::Vertical, pane(3), true));
-        assert_eq!(root.leaves(), [pane(1), pane(2), pane(3), pane(0)]);
-    }
-
-    #[test]
-    fn neighbors_follow_the_split_axes() {
-        let mut root = Node::Leaf(pane(0));
-        root.split(pane(0), Axis::Horizontal, pane(1), false);
-        root.split(pane(1), Axis::Vertical, pane(2), false);
-        assert_eq!(
-            root.neighbor(pane(0), Axis::Horizontal, true),
-            Some(pane(1))
-        );
-        assert_eq!(
-            root.neighbor(pane(2), Axis::Horizontal, false),
-            Some(pane(0))
-        );
-        assert_eq!(root.neighbor(pane(1), Axis::Vertical, true), Some(pane(2)));
-        assert_eq!(root.neighbor(pane(0), Axis::Vertical, true), None);
-        assert_eq!(root.neighbor(pane(0), Axis::Horizontal, false), None);
-    }
-
-    #[test]
-    fn removing_a_pane_collapses_a_split_of_one() {
-        let mut root = Node::Leaf(pane(0));
-        root.split(pane(0), Axis::Horizontal, pane(1), false);
-        root.split(pane(1), Axis::Vertical, pane(2), false);
-        assert!(root.remove(pane(2)));
-        assert_eq!(
-            root,
-            Node::Split {
-                axis: Axis::Horizontal,
-                children: vec![Node::Leaf(pane(0)), Node::Leaf(pane(1))],
-            }
-        );
-        assert!(root.remove(pane(0)));
-        assert_eq!(root, Node::Leaf(pane(1)));
-        assert!(!root.remove(pane(1)), "the last pane is the tab");
+    fn neighbors_follow_the_pane_bounds() {
+        assert_eq!(from(0, Axis::Horizontal, true), Some(PaneId(1)));
+        assert_eq!(from(2, Axis::Horizontal, false), Some(PaneId(0)));
+        assert_eq!(from(1, Axis::Vertical, true), Some(PaneId(2)));
+        assert_eq!(from(2, Axis::Vertical, false), Some(PaneId(1)));
+        assert_eq!(from(0, Axis::Vertical, true), None);
+        assert_eq!(from(0, Axis::Horizontal, false), None);
     }
 }
