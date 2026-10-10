@@ -22,6 +22,7 @@ struct Pane {
     name: &'static str,
     focus: FocusHandle,
     removed: Rc<Cell<usize>>,
+    pressed: Rc<Cell<usize>>,
 }
 
 impl Panel for Pane {
@@ -48,6 +49,10 @@ impl Render for Pane {
             .id(ElementId::Name(format!("pane-{}", self.name).into()))
             .test_support()
             .track_focus(&self.focus)
+            .on_mouse_down(MouseButton::Left, {
+                let pressed = self.pressed.clone();
+                move |_, _, _| pressed.set(pressed.get() + 1)
+            })
             .size_full()
             .child(self.name)
     }
@@ -59,6 +64,7 @@ struct Setup {
     a: Entity<Pane>,
     b: Entity<Pane>,
     removed: Rc<Cell<usize>>,
+    pressed: Rc<Cell<usize>>,
 }
 
 /// An 800x400 window holding one dock: pane `a` left of pane `b`.
@@ -76,14 +82,17 @@ fn setup(cx: &mut TestAppContext, motion: bool, touch: bool) -> Setup {
         });
     });
     let removed = Rc::new(Cell::new(0));
+    let pressed = Rc::new(Cell::new(0));
     let mut made = None;
     let handle = cx.open_window(size(px(800.), px(400.)), |window, cx| {
         let pane = |name, cx: &mut App| {
             let removed = removed.clone();
+            let pressed = pressed.clone();
             cx.new(|cx| Pane {
                 name,
                 focus: cx.focus_handle(),
                 removed,
+                pressed,
             })
         };
         let a = pane("a", cx);
@@ -108,6 +117,7 @@ fn setup(cx: &mut TestAppContext, motion: bool, touch: bool) -> Setup {
         a,
         b,
         removed,
+        pressed,
     };
     frames(&setup, cx, 2);
     setup
@@ -272,6 +282,18 @@ fn focus(setup: &Setup, cx: &mut TestAppContext, pane: &Entity<Pane>) {
 
 fn dim(panel: &Entity<Pane>) -> ElementId {
     ElementId::NamedInteger("dock-dim".into(), id(panel).as_u64())
+}
+
+#[gpui_kit::test]
+fn a_press_on_the_handle_does_not_reach_the_pane_under_it(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, false);
+    let handle = press_a(&setup, cx);
+    up(&setup, cx, handle);
+    assert_eq!(setup.pressed.get(), 0, "a terminal would start a selection");
+    let pane = bounds(&setup, cx, pane_id("a")).center();
+    down(&setup, cx, pane);
+    up(&setup, cx, pane);
+    assert_eq!(setup.pressed.get(), 1);
 }
 
 #[gpui_kit::test]

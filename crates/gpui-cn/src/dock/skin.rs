@@ -234,7 +234,11 @@ impl DockSkin {
                                     state.hover_handle(panel, *hovered, cx)
                                 });
                             })
+                            // Ghostty's handle consumes its press too: a pane
+                            // under it, such as a terminal, would start a
+                            // selection that the drag then extends.
                             .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+                                cx.stop_propagation();
                                 press
                                     .update(cx, |state, cx| state.press(panel, event.position, cx));
                             })
