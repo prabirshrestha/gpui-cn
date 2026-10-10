@@ -154,12 +154,18 @@ impl Core {
         options: &EngineOptions,
         colors: TerminalColors,
     ) -> io::Result<Self> {
-        let terminal = vt::Terminal::new(vt::TerminalOptions {
+        let mut terminal = vt::Terminal::new(vt::TerminalOptions {
             cols: viewport.columns(),
             rows: viewport.rows(),
             max_scrollback: options.scrollback_bytes,
         })
         .map_err(fault)?;
+        // The C API starts with prompt redraw off (c/terminal.zig), so a
+        // resize keeps the old prompt and the shell's redraw stacks under it.
+        // The Ghostty app keeps Terminal.init's default of on. OSC 133
+        // `redraw=1` is the only way to set it; the `C` that follows puts
+        // the cursor back in output, so a shell without marks loses nothing.
+        terminal.vt_write(b"\x1b]133;A;redraw=1\x07\x1b]133;C\x07");
         Self::around(terminal, viewport, options, colors)
     }
 
@@ -988,6 +994,41 @@ mod tests {
         core.write(b"\x1b[?2004h", &mut effects);
         let bracketed = core.input(TerminalInput::Paste("a\nb".to_owned())).unwrap();
         assert_eq!(bracketed, b"\x1b[200~a\nb\x1b[201~");
+    }
+
+    fn screen(core: &mut Core) -> Vec<String> {
+        let frame = core.frame(true).unwrap().unwrap();
+        frame
+            .rows
+            .iter()
+            .map(|row| row.text.trim_end().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_resize_clears_the_prompt_so_the_shell_redraws_one_copy() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        // Fish 4 marks its prompt this way and never sends `redraw=1`.
+        core.write(
+            b"\x1b]133;A;click_events=1\x1b\\user@host ~> \x1b]133;B\x1b\\",
+            &mut effects,
+        );
+        assert!(core.at_prompt());
+        core.resize(Viewport::new(16, 4, 8, 16).unwrap(), &mut effects)
+            .unwrap();
+        assert_eq!(screen(&mut core), vec!["", "", "", ""]);
+    }
+
+    #[test]
+    fn a_resize_keeps_output_that_is_not_a_prompt() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        assert!(!core.at_prompt());
+        core.write(b"build ok", &mut effects);
+        core.resize(Viewport::new(4, 4, 8, 16).unwrap(), &mut effects)
+            .unwrap();
+        assert_eq!(screen(&mut core), vec!["buil", "d ok", "", ""]);
     }
 
     #[test]
