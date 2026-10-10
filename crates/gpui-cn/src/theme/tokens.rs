@@ -196,6 +196,11 @@ pub struct ThemeTokens {
     /// The ellipsis on a hovered grab handle: the text color at 80%,
     /// Ghostty's `.primary.opacity(0.8)` in the same file.
     pub dock_handle_hover: Hsla,
+    /// The fill over a pane of a split that does not have focus: the
+    /// background at 30%, Ghostty's default `unfocused-split-opacity` of 0.7
+    /// with `unfocused-split-fill` left to the background
+    /// (`src/config/Config.zig`).
+    pub dock_unfocused: Hsla,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -835,6 +840,7 @@ impl ThemeTokens {
             dock_drop: config.accent.opacity(0.3),
             dock_handle: foreground.opacity(0.3),
             dock_handle_hover: foreground.opacity(0.8),
+            dock_unfocused: surface.opacity(0.3),
         }
     }
 
@@ -1588,6 +1594,8 @@ mod tests {
         assert_eq!(dark.dock_drop.a, 0.3, "Ghostty's drop overlay");
         assert_eq!(dark.dock_handle.a, 0.3);
         assert_eq!(dark.dock_handle_hover.a, 0.8);
+        assert_eq!(to_hex(dark.dock_unfocused.alpha(1.)), "#181818");
+        assert_eq!(dark.dock_unfocused.a, 0.3, "Ghostty's unfocused split");
         assert_eq!(to_hex(dark.dock_handle.alpha(1.)), "#dfdfdf");
         let m = &dark.metrics;
         assert_eq!(m.dock_handle_width, px(80.));

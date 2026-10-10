@@ -261,6 +261,37 @@ fn focused(setup: &Setup, cx: &mut TestAppContext, pane: &Entity<Pane>) -> bool 
     .unwrap()
 }
 
+fn focus(setup: &Setup, cx: &mut TestAppContext, pane: &Entity<Pane>) {
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        let handle = pane.read(cx).focus.clone();
+        window.focus(&handle, cx);
+    })
+    .unwrap();
+    frames(setup, cx, 1);
+}
+
+fn dim(panel: &Entity<Pane>) -> ElementId {
+    ElementId::NamedInteger("dock-dim".into(), id(panel).as_u64())
+}
+
+#[gpui_kit::test]
+fn panes_without_focus_are_dimmed_and_focus_resizes_nothing(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, false);
+    focus(&setup, cx, &setup.a);
+    let a = bounds(&setup, cx, pane_id("a"));
+    assert!(!present(&setup, cx, dim(&setup.a)));
+    assert!(present(&setup, cx, dim(&setup.b)));
+    assert_eq!(
+        bounds(&setup, cx, dim(&setup.b)),
+        bounds(&setup, cx, pane_id("b")),
+        "the fill covers the whole pane"
+    );
+    focus(&setup, cx, &setup.b);
+    assert!(present(&setup, cx, dim(&setup.a)));
+    assert!(!present(&setup, cx, dim(&setup.b)));
+    assert_eq!(bounds(&setup, cx, pane_id("a")), a);
+}
+
 #[gpui_kit::test]
 fn a_pane_dropped_on_the_right_edge_of_another_lands_right_of_it(cx: &mut TestAppContext) {
     let setup = setup(cx, false, false);
@@ -278,7 +309,7 @@ fn a_pane_dropped_on_the_right_edge_of_another_lands_right_of_it(cx: &mut TestAp
     assert_eq!(setup.removed.get(), 0);
     assert_eq!(
         bounds(&setup, cx, pane_id("a")),
-        Bounds::new(point(px(401.), px(1.)), size(px(398.), px(398.)))
+        Bounds::new(point(px(400.), px(0.)), size(px(400.), px(400.)))
     );
 }
 
@@ -356,7 +387,7 @@ fn a_dropped_pane_glides_into_its_slot(cx: &mut TestAppContext) {
     let card = bounds(&setup, cx, ElementId::Name("dock-card".into()));
     assert_eq!(
         card,
-        Bounds::new(point(px(599.), px(195.)), size(px(380.), px(260.)))
+        Bounds::new(point(px(601.), px(196.)), size(px(380.), px(260.)))
     );
     up(&setup, cx, to);
     // 60ms of 460ms on ease-out quint is 1 - (1 - 60/460)^5 = 0.5025 of
@@ -364,10 +395,10 @@ fn a_dropped_pane_glides_into_its_slot(cx: &mut TestAppContext) {
     wait(&setup, cx, 60);
     assert_eq!(
         bounds(&setup, cx, pane_id("a")),
-        Bounds::new(point(px(499.5), px(97.5)), size(px(398.), px(398.)))
+        Bounds::new(point(px(500.), px(97.5)), size(px(400.), px(400.)))
     );
     wait(&setup, cx, 400);
-    let slot = Bounds::new(point(px(401.), px(1.)), size(px(398.), px(398.)));
+    let slot = Bounds::new(point(px(400.), px(0.)), size(px(400.), px(400.)));
     assert_eq!(bounds(&setup, cx, pane_id("a")), slot);
     wait(&setup, cx, 100);
     assert_eq!(bounds(&setup, cx, pane_id("a")), slot, "at rest it stays");

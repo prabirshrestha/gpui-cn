@@ -309,27 +309,13 @@ impl DockAreaRenderer for DockSkin {
 }
 
 impl TabGroupRenderer for DockSkin {
-    fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        let theme = cx.theme();
-        let split = self.state.read(cx).split();
-        let focused = group
-            .active_panel()
-            .is_some_and(|panel| panel.focus_handle(cx).contains_focused(window, cx));
+    fn frame(&self, group: &TabGroupContext, _: &mut Window, cx: &mut App) -> Stateful<Div> {
         div()
             .id(ElementId::NamedInteger(
                 "dock-group".into(),
                 group.node().as_u64(),
             ))
-            .bg(theme.background())
-            // Every pane of a split keeps the hairline's room, so focus
-            // moving between panes repaints a color and resizes nothing.
-            .when(split && !group.is_zoomed(), |this| {
-                this.border_1().border_color(if focused {
-                    theme.ring()
-                } else {
-                    theme.background()
-                })
-            })
+            .bg(cx.theme().background())
     }
 
     fn content_frame(&self, group: &TabGroupContext, _: &mut Window, _: &mut App) -> Stateful<Div> {
@@ -386,7 +372,7 @@ impl TabGroupRenderer for DockSkin {
         &self,
         panel: AnyView,
         group: &TabGroupContext,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         let Some(id) = Self::panel_id(group, cx) else {
@@ -409,15 +395,34 @@ impl TabGroupRenderer for DockSkin {
                 .border_color(ring)
                 .into_any_element();
         }
-        let handle =
-            (split && !group.is_zoomed()).then(|| self.render_handle(id, group.node(), cx));
+        let split = split && !group.is_zoomed();
+        let dimmed = split
+            && !group
+                .active_panel()
+                .is_some_and(|panel| panel.focus_handle(cx).contains_focused(window, cx));
+        let unfocused = cx.theme().dock_unfocused;
+        let handle = split.then(|| self.render_handle(id, group.node(), cx));
         div()
             .relative()
             .size_full()
             .child(LayoutMotion::new(
                 id,
                 self.state.clone(),
-                div().size_full().bg(background).child(panel),
+                div()
+                    .relative()
+                    .size_full()
+                    .bg(background)
+                    .child(panel)
+                    .when(dimmed, |this| {
+                        this.child(
+                            div()
+                                .id(ElementId::NamedInteger("dock-dim".into(), id.as_u64()))
+                                .test_support()
+                                .absolute()
+                                .inset_0()
+                                .bg(unfocused),
+                        )
+                    }),
             ))
             .children(handle)
             .into_any_element()
