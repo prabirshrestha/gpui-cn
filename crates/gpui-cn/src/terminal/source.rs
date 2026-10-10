@@ -183,9 +183,9 @@ pub trait FrameHandle: 'static {
 
 /// A source that parses canned bytes once, with no program behind it.
 ///
-/// The frame is rebuilt at every resize. Input is recorded and can be read
-/// back through [`FixtureSource::inputs`], which makes it the source for UI
-/// tests and galleries.
+/// A resize reflows the parsed screen, as a terminal does. Input is
+/// recorded and can be read back through [`FixtureSource::inputs`], which
+/// makes it the source for UI tests and galleries.
 #[derive(Debug)]
 pub struct FixtureSource {
     bytes: Vec<u8>,
@@ -219,38 +219,27 @@ impl FixtureSource {
 }
 
 struct FixtureHandle {
-    bytes: Vec<u8>,
-    options: EngineOptions,
-    colors: Mutex<TerminalColors>,
-    cursor: Mutex<Option<(CursorShape, bool)>>,
+    core: Mutex<Core>,
+    bells: u64,
     inputs: Arc<Mutex<Vec<TerminalInput>>>,
     sink: FrameSink,
 }
 
 impl FixtureHandle {
-    fn publish(&self, viewport: Viewport) -> io::Result<()> {
-        let colors = self
-            .colors
+    fn core(&self) -> std::sync::MutexGuard<'_, Core> {
+        self.core
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let cursor = *self
-            .cursor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut core = Core::new(viewport, &self.options, colors)?;
-        if let Some((shape, blinking)) = cursor {
-            core.set_cursor(shape, blinking)?;
-        }
-        let mut effects = Effects::default();
-        core.write(&self.bytes, &mut effects);
+    }
+
+    fn publish(&self, core: &mut Core) -> io::Result<()> {
         let frame = core
             .frame(true)?
             .ok_or_else(|| io::Error::other("fixture frame missing"))?;
         let mut snapshot = TerminalSnapshot::for_frame(frame);
         core.title().clone_into(&mut snapshot.title);
         snapshot.cwd = core.cwd().cloned();
-        snapshot.bell_count = effects.bells;
+        snapshot.bell_count = self.bells;
         snapshot.at_prompt = core.at_prompt();
         self.sink.publish(Arc::new(snapshot));
         Ok(())
@@ -263,15 +252,19 @@ impl FrameSource for FixtureSource {
         sink: FrameSink,
         options: StartOptions,
     ) -> io::Result<Box<dyn FrameHandle>> {
+        let mut core = Core::new(options.viewport, &self.options, options.colors)?;
+        if let Some((shape, blinking)) = options.cursor {
+            core.set_cursor(shape, blinking)?;
+        }
+        let mut effects = Effects::default();
+        core.write(&self.bytes, &mut effects);
         let handle = FixtureHandle {
-            bytes: self.bytes,
-            options: self.options,
-            colors: Mutex::new(options.colors),
-            cursor: Mutex::new(options.cursor),
+            core: Mutex::new(core),
+            bells: effects.bells,
             inputs: self.inputs,
             sink,
         };
-        handle.publish(options.viewport)?;
+        handle.publish(&mut handle.core())?;
         Ok(Box::new(handle))
     }
 }
@@ -286,7 +279,11 @@ impl FrameHandle for FixtureHandle {
     }
 
     fn resize(&self, viewport: Viewport) {
-        let _ = self.publish(viewport);
+        let mut core = self.core();
+        let mut effects = Effects::default();
+        if core.resize(viewport, &mut effects).is_ok() {
+            let _ = self.publish(&mut core);
+        }
     }
 
     fn set_visible(&self, _visible: bool) {}
@@ -294,18 +291,52 @@ impl FrameHandle for FixtureHandle {
     fn request_frame(&self) {}
 
     fn set_colors(&self, colors: TerminalColors) {
-        *self
-            .colors
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = colors;
+        let _ = self.core().set_colors(colors);
     }
 
     fn set_cursor(&self, shape: CursorShape, blinking: bool) {
-        *self
-            .cursor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((shape, blinking));
+        let _ = self.core().set_cursor(shape, blinking);
     }
 
     fn close(&self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(sink: &FrameSink) -> Vec<(String, u64)> {
+        let snapshot = sink.take().expect("a published frame");
+        snapshot
+            .frame
+            .rows
+            .iter()
+            .take(4)
+            .map(|row| (row.text.trim_end().to_owned(), row.revision))
+            .collect()
+    }
+
+    #[test]
+    fn a_fixture_resize_reflows_and_gives_changed_rows_new_revisions() {
+        let (sink, _wake) = FrameSink::new();
+        let handle = Box::new(FixtureSource::new("$ ls\r\naaaa bbbb\r\n$ "))
+            .start(
+                sink.clone(),
+                StartOptions {
+                    viewport: Viewport::new(20, 4, 8, 16).unwrap(),
+                    ..StartOptions::default()
+                },
+            )
+            .unwrap();
+        let before = rows(&sink);
+        handle.resize(Viewport::new(5, 4, 8, 16).unwrap());
+        let after = rows(&sink);
+        let text = |rows: &[(String, u64)]| rows.iter().map(|r| r.0.clone()).collect::<Vec<_>>();
+        assert_eq!(text(&before), vec!["$ ls", "aaaa bbbb", "$", ""]);
+        assert_eq!(text(&after), vec!["$ ls", "aaaa", "bbbb", "$"]);
+        assert!(
+            after[2].1 > before[2].1,
+            "a changed row keeps its cache key: {before:?} -> {after:?}"
+        );
+    }
 }
