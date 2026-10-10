@@ -199,6 +199,7 @@ pub use engine::{
     TerminalSnapshot, TerminalStatus,
 };
 pub use frame::{RowId, TerminalColors, TerminalFrame, Viewport};
+pub use geometry::Geometry;
 pub use input::TerminalInput;
 pub use options::{EngineOptions, LocalTerminalOptions, ShellIntegration, WorkingDirectory};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
