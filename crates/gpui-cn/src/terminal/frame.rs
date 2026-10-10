@@ -10,7 +10,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use ghostty_vt::render::RowId;
+pub use ghostty_vt::render::RowId;
 use ghostty_vt::style::Palette;
 
 /// An 8-bit RGB color.
@@ -429,6 +429,71 @@ pub struct TerminalFrame {
 }
 
 impl TerminalFrame {
+    /// A frame of `rows` for `viewport`, with the default cursor, colors,
+    /// scroll position and modes, for a host that builds its own frames. The
+    /// scroll position covers exactly the rows. `revision` and
+    /// `content_revision` start at 1.
+    #[must_use]
+    pub fn new(viewport: Viewport, rows: impl Into<Arc<[Arc<TerminalRow>]>>) -> Self {
+        let rows = rows.into();
+        let count = rows.len();
+        Self {
+            revision: 1,
+            content_revision: 1,
+            viewport,
+            rows,
+            cursor: Cursor::default(),
+            colors: TerminalColors::default(),
+            scroll: ScrollMetrics::new(count, 0, count),
+            modes: InputModes::default(),
+        }
+    }
+
+    /// Set the frame revision. It must increase with every frame a host
+    /// publishes.
+    #[must_use]
+    pub fn with_revision(mut self, revision: u64) -> Self {
+        self.revision = revision;
+        self
+    }
+
+    /// Set the content revision. It must increase when the rows, the
+    /// viewport or the scroll position change, so a selection anchored to
+    /// content knows when it moved.
+    #[must_use]
+    pub fn with_content_revision(mut self, revision: u64) -> Self {
+        self.content_revision = revision;
+        self
+    }
+
+    /// Set the cursor.
+    #[must_use]
+    pub fn with_cursor(mut self, cursor: Cursor) -> Self {
+        self.cursor = cursor;
+        self
+    }
+
+    /// Set the colors.
+    #[must_use]
+    pub fn with_colors(mut self, colors: TerminalColors) -> Self {
+        self.colors = colors;
+        self
+    }
+
+    /// Set the scroll position.
+    #[must_use]
+    pub fn with_scroll(mut self, scroll: ScrollMetrics) -> Self {
+        self.scroll = scroll;
+        self
+    }
+
+    /// Set the input modes.
+    #[must_use]
+    pub fn with_modes(mut self, modes: InputModes) -> Self {
+        self.modes = modes;
+        self
+    }
+
     /// The rows as text, trailing spaces trimmed, joined with newlines.
     #[must_use]
     pub fn text(&self) -> String {
@@ -437,6 +502,275 @@ impl TerminalFrame {
             .map(|row| row.text.trim_end())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+impl Style {
+    /// A style with the terminal defaults and no attributes.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the foreground color.
+    #[must_use]
+    pub fn with_foreground(mut self, color: Color) -> Self {
+        self.foreground = color;
+        self
+    }
+
+    /// Set the background color.
+    #[must_use]
+    pub fn with_background(mut self, color: Color) -> Self {
+        self.background = color;
+        self
+    }
+
+    /// Set the underline color.
+    #[must_use]
+    pub fn with_underline_color(mut self, color: Color) -> Self {
+        self.underline_color = color;
+        self
+    }
+
+    /// Set bold.
+    #[must_use]
+    pub fn with_bold(mut self, bold: bool) -> Self {
+        self.bold = bold;
+        self
+    }
+
+    /// Set italic.
+    #[must_use]
+    pub fn with_italic(mut self, italic: bool) -> Self {
+        self.italic = italic;
+        self
+    }
+
+    /// Set faint.
+    #[must_use]
+    pub fn with_faint(mut self, faint: bool) -> Self {
+        self.faint = faint;
+        self
+    }
+
+    /// Set blink.
+    #[must_use]
+    pub fn with_blink(mut self, blink: bool) -> Self {
+        self.blink = blink;
+        self
+    }
+
+    /// Set inverse video.
+    #[must_use]
+    pub fn with_inverse(mut self, inverse: bool) -> Self {
+        self.inverse = inverse;
+        self
+    }
+
+    /// Set invisible.
+    #[must_use]
+    pub fn with_invisible(mut self, invisible: bool) -> Self {
+        self.invisible = invisible;
+        self
+    }
+
+    /// Set the underline style.
+    #[must_use]
+    pub fn with_underline(mut self, underline: Underline) -> Self {
+        self.underline = underline;
+        self
+    }
+
+    /// Set strikethrough.
+    #[must_use]
+    pub fn with_strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
+    }
+
+    /// Set overline.
+    #[must_use]
+    pub fn with_overline(mut self, overline: bool) -> Self {
+        self.overline = overline;
+        self
+    }
+}
+
+impl CellSpan {
+    /// A cell at `column` whose bytes are `text` in the row text and that is
+    /// `width` columns wide.
+    #[must_use]
+    pub fn new(column: u16, text: Range<usize>, width: u8) -> Self {
+        Self {
+            text,
+            column,
+            width,
+            spacer: false,
+            hyperlink: None,
+        }
+    }
+
+    /// A spacer cell at `column`: the tail of a wide character or a wrap
+    /// spacer. It has no text and is never drawn.
+    #[must_use]
+    pub fn spacer(column: u16) -> Self {
+        Self {
+            text: 0..0,
+            column,
+            width: 0,
+            spacer: true,
+            hyperlink: None,
+        }
+    }
+
+    /// Set the OSC 8 hyperlink on the cell.
+    #[must_use]
+    pub fn with_hyperlink(mut self, uri: impl Into<Arc<str>>) -> Self {
+        self.hyperlink = Some(uri.into());
+        self
+    }
+}
+
+impl StyleRun {
+    /// A run over the bytes `text` of the row text and the columns
+    /// `columns`, drawn in `style`.
+    #[must_use]
+    pub fn new(text: Range<usize>, columns: Range<u16>, style: Style) -> Self {
+        Self {
+            text,
+            columns,
+            style,
+        }
+    }
+}
+
+impl TerminalRow {
+    /// A row with `text`, one span per column in `cells` and the style runs
+    /// in `runs`. `id` is the source's identity for the row: it must stay
+    /// with the row as it scrolls and never be [`RowId::default`].
+    #[must_use]
+    pub fn new(
+        id: RowId,
+        text: impl Into<Arc<str>>,
+        cells: impl Into<Arc<[CellSpan]>>,
+        runs: impl Into<Arc<[StyleRun]>>,
+    ) -> Self {
+        Self {
+            id,
+            revision: 0,
+            text: text.into(),
+            cells: cells.into(),
+            runs: runs.into(),
+            soft_wrapped: false,
+        }
+    }
+
+    /// Set the frame revision the row was last rebuilt in. A renderer
+    /// caches a row by its id and revision, so a changed row needs a new
+    /// revision.
+    #[must_use]
+    pub fn with_revision(mut self, revision: u64) -> Self {
+        self.revision = revision;
+        self
+    }
+
+    /// Set whether the row continues on the next row.
+    #[must_use]
+    pub fn with_soft_wrapped(mut self, soft_wrapped: bool) -> Self {
+        self.soft_wrapped = soft_wrapped;
+        self
+    }
+}
+
+impl Cursor {
+    /// A visible, non-blinking block cursor at `column` and `row`.
+    #[must_use]
+    pub fn new(column: u16, row: u16) -> Self {
+        Self {
+            column,
+            row,
+            visible: true,
+            blinking: false,
+            shape: CursorShape::Block,
+        }
+    }
+
+    /// Set whether the cursor is visible.
+    #[must_use]
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    /// Set whether the cursor blinks.
+    #[must_use]
+    pub fn with_blinking(mut self, blinking: bool) -> Self {
+        self.blinking = blinking;
+        self
+    }
+
+    /// Set the cursor shape.
+    #[must_use]
+    pub fn with_shape(mut self, shape: CursorShape) -> Self {
+        self.shape = shape;
+        self
+    }
+}
+
+impl ScrollMetrics {
+    /// A viewport of `viewport_rows` rows that starts at row `offset` of
+    /// `total_rows`.
+    #[must_use]
+    pub fn new(total_rows: usize, offset: usize, viewport_rows: usize) -> Self {
+        Self {
+            total_rows,
+            offset,
+            viewport_rows,
+        }
+    }
+}
+
+impl InputModes {
+    /// No mode set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set whether a program receives mouse reports.
+    #[must_use]
+    pub fn with_mouse_reporting(mut self, on: bool) -> Self {
+        self.mouse_reporting = on;
+        self
+    }
+
+    /// Set whether the alternate screen is active.
+    #[must_use]
+    pub fn with_alternate_screen(mut self, on: bool) -> Self {
+        self.alternate_screen = on;
+        self
+    }
+
+    /// Set whether bracketed paste is on.
+    #[must_use]
+    pub fn with_bracketed_paste(mut self, on: bool) -> Self {
+        self.bracketed_paste = on;
+        self
+    }
+
+    /// Set whether focus reporting is on.
+    #[must_use]
+    pub fn with_focus_reporting(mut self, on: bool) -> Self {
+        self.focus_reporting = on;
+        self
+    }
+
+    /// Set whether alternate scroll is on.
+    #[must_use]
+    pub fn with_alternate_scroll(mut self, on: bool) -> Self {
+        self.alternate_scroll = on;
+        self
     }
 }
 
