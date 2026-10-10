@@ -10,7 +10,7 @@ default-members = ["crates/gpui-cn", "crates/gpui-cn-story"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
@@ -23,11 +23,11 @@ homepage = "https://github.com/prabirshrestha/gpui-cn"
 version-mode = "follow-gpui-cn"
 
 [workspace.dependencies]
-gpui-cn = { path = "crates/gpui-cn", version = "0.6.0" }
+gpui-cn = { path = "crates/gpui-cn", version = "0.7.0" }
 # The terminal crates normally follow gpui-cn's SemVer core. Their package
 # versions append the pinned Ghostty version and commit as build metadata.
-ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.6.0" }
-ghostty-vt = { path = "crates/ghostty-vt", version = "0.6.0" }
+ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.7.0" }
+ghostty-vt = { path = "crates/ghostty-vt", version = "0.7.0" }
 gpui-kit = { version = "0.7.1", default-features = false }
 
 [workspace.lints.clippy]
