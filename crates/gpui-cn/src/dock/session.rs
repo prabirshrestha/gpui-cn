@@ -215,25 +215,13 @@ impl DockSkinState {
     /// Shows or hides the grab handle of `panel` as the pointer enters or
     /// leaves the top band of its pane.
     pub(crate) fn reveal(&mut self, panel: PanelId, inside: bool, cx: &mut Context<Self>) {
-        let next = match (inside, self.revealed) {
-            (true, _) => Some(panel),
-            (false, Some(shown)) if shown == panel => None,
-            (false, shown) => shown,
-        };
-        if next != self.revealed {
-            self.revealed = next;
+        if toggle(&mut self.revealed, panel, inside) {
             cx.notify();
         }
     }
 
     pub(crate) fn hover_handle(&mut self, panel: PanelId, hovered: bool, cx: &mut Context<Self>) {
-        let next = match (hovered, self.hovered) {
-            (true, _) => Some(panel),
-            (false, Some(shown)) if shown == panel => None,
-            (false, shown) => shown,
-        };
-        if next != self.hovered {
-            self.hovered = next;
+        if toggle(&mut self.hovered, panel, hovered) {
             cx.notify();
         }
     }
@@ -338,7 +326,6 @@ impl DockSkinState {
             },
             pending: None,
         };
-        // The lifted pane takes the keys, so Escape reaches the dock.
         view.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -563,6 +550,19 @@ impl DockSkinState {
     }
 }
 
+/// Sets `slot` to `panel` when `on`, or clears it when it holds `panel`.
+/// Reports whether it changed.
+fn toggle(slot: &mut Option<PanelId>, panel: PanelId, on: bool) -> bool {
+    let next = match (on, *slot) {
+        (true, _) => Some(panel),
+        (false, Some(shown)) if shown == panel => None,
+        (false, shown) => shown,
+    };
+    let changed = next != *slot;
+    *slot = next;
+    changed
+}
+
 /// The card of a lifted pane at this moment, and whether it is still
 /// shrinking from the pane's slot toward the compact card size.
 fn card_rect(lift: &Lift, cx: &App) -> (Bounds<Pixels>, bool) {
@@ -666,7 +666,6 @@ mod tests {
         assert_eq!(at(490., 100.), Placement::Right);
         assert_eq!(at(300., 10.), Placement::Top);
         assert_eq!(at(300., 190.), Placement::Bottom);
-        // The middle still picks a side: right of center is right.
         assert_eq!(at(320., 100.), Placement::Right);
         assert_eq!(at(280., 100.), Placement::Left);
     }

@@ -22,7 +22,7 @@ enum Tint {
 }
 
 /// A plain pane: a name on a tinted fill. A press focuses it, so the
-/// focus ring follows the pointer as it does in the Terminal story.
+/// other panes dim as they do in the Terminal story.
 struct ColorPane {
     name: &'static str,
     tint: Tint,

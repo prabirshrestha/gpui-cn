@@ -200,9 +200,12 @@ mod tests {
         let (start, moving) = track.sample(now, duration, &curve);
         assert!(moving);
         assert_eq!(start.origin.x, px(0.));
-        // Ease-out quint at half time is 1 - 0.5^5 = 0.96875 of the way.
         let (half, _) = track.sample(now + duration / 2, duration, &curve);
-        assert_eq!(half.origin.x, px(193.75));
+        assert_eq!(
+            half.origin.x,
+            px(193.75),
+            "ease-out quint at half time is 1 - 0.5^5 = 0.96875 of the way"
+        );
         let (end, moving) = track.sample(now + duration, duration, &curve);
         assert!(!moving);
         assert_eq!(end, rect(200., 100.));
@@ -219,7 +222,6 @@ mod tests {
         track.retarget(rect(0., 100.), later, duration, &curve);
         let (at, _) = track.sample(later, duration, &curve);
         assert_eq!(at.origin.x, px(100.));
-        // The same slot again keeps the motion going.
         track.retarget(rect(0., 100.), later + duration / 2, duration, &curve);
         let (at, _) = track.sample(later + duration / 2, duration, &curve);
         assert_eq!(at.origin.x, px(50.));

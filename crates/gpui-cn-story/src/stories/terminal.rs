@@ -238,9 +238,6 @@ impl Render for TerminalPane {
         let story = self.story.clone();
         let pane = self.id;
         let bounds = self.bounds.clone();
-        // A right click focuses the pane first, so its menu's commands go
-        // to that pane. A program that reports the mouse gets the click
-        // instead, as in Ghostty.
         div()
             .size_full()
             .on_prepaint(move |laid_out, _, _| bounds.set(laid_out))
@@ -672,7 +669,6 @@ impl TerminalStory {
         area.update(cx, |area, cx| {
             area.set_center(DockLayout::tabs().panel(panel), window, cx);
         });
-        // The pane menu and the zoom mark read the layout.
         cx.observe(&area, |_, _, cx| cx.notify()).detach();
         self.layouts.insert(
             tab_id.clone(),
@@ -1318,8 +1314,6 @@ impl Render for TerminalStory {
             .selected_tab(cx)
             .and_then(|tab| self.layouts.get(&tab))
             .map(|layout| {
-                // The dividers, the focus ring and the drag draw in the
-                // terminal's colors too.
                 ThemeScope::new(Self::SCOPE, div().size_full().child(layout.area.clone()))
             });
         page([section(

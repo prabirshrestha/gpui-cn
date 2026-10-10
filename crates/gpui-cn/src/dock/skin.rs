@@ -33,8 +33,8 @@ const DROP_SURFACE: usize = 4;
 /// The gpui-cn look of a `DockArea`, with Ghostty-style pane dragging.
 ///
 /// Each pane is a tab group of `gpui-base`'s dock. In a split, the panes
-/// are parted by hairlines, the focused one is framed in the ring color,
-/// and a grab handle at the top center of each pane lifts it. A lifted
+/// are parted by hairlines, the panes without focus are dimmed, and a
+/// grab handle at the top center of each pane lifts it. A lifted
 /// pane floats as a card under the pointer; resting on another pane for a
 /// moment previews it beside that pane, on the nearest side, and the other
 /// panes make room. Letting go keeps the preview; Escape, or letting go

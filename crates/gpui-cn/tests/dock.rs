@@ -382,7 +382,6 @@ fn a_dropped_pane_glides_into_its_slot(cx: &mut TestAppContext) {
     let b = bounds(&setup, cx, pane_id("b"));
     let to = point(b.right() - px(10.), b.center().y);
     lift_a_to(&setup, cx, to);
-    // Past the card's own 220ms shrink, so its rect is the compact one.
     wait(&setup, cx, 600);
     let card = bounds(&setup, cx, ElementId::Name("dock-card".into()));
     assert_eq!(
@@ -390,12 +389,11 @@ fn a_dropped_pane_glides_into_its_slot(cx: &mut TestAppContext) {
         Bounds::new(point(px(601.), px(196.)), size(px(380.), px(260.)))
     );
     up(&setup, cx, to);
-    // 60ms of 460ms on ease-out quint is 1 - (1 - 60/460)^5 = 0.5025 of
-    // the way from the card to the slot, at the slot's own size.
     wait(&setup, cx, 60);
     assert_eq!(
         bounds(&setup, cx, pane_id("a")),
-        Bounds::new(point(px(500.), px(97.5)), size(px(400.), px(400.)))
+        Bounds::new(point(px(500.), px(97.5)), size(px(400.), px(400.))),
+        "60ms of 460ms on ease-out quint is 0.5025 of the way from the card to the slot"
     );
     wait(&setup, cx, 400);
     let slot = Bounds::new(point(px(400.), px(0.)), size(px(400.), px(400.)));

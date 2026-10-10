@@ -349,11 +349,8 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the shortcuts");
-                    // A split shows the dividers, the focus ring, and the
-                    // grab handle the pointer reveals at the top of a pane.
                     cx.update_window(handle.into(), |_, window, cx| {
                         use gpui_kit::InputEvent as _;
-                        // A click in the pane gives it the keys.
                         let strip = window
                             .find(gpui_kit::ElementId::Name("terminal-tabs".into()))
                             .bounds();
