@@ -123,6 +123,7 @@ pub struct TerminalState {
     /// Rows prepared in the last frame, for the element to reuse.
     pub(crate) row_cache: crate::terminal::element::RowCache,
     pressed_keys: HashSet<String>,
+    right_click_passthrough: bool,
     hovered_link: Option<(u16, Link)>,
     scroll: ScrollAccumulator,
     pub(crate) cursor: Blink,
@@ -165,6 +166,7 @@ impl TerminalState {
             marked_text: None,
             row_cache: crate::terminal::element::RowCache::default(),
             pressed_keys: HashSet::new(),
+            right_click_passthrough: true,
             hovered_link: None,
             scroll: ScrollAccumulator::default(),
             cursor: Blink::new(),
@@ -510,6 +512,21 @@ impl TerminalState {
         self.selection = None;
         self.cursor.stop();
         cx.notify();
+    }
+
+    /// Whether a right click goes to a program that reports the mouse. It
+    /// does by default. When it does not, or a modifier is held, or no
+    /// program reports the mouse, the click is left to the host, such as for
+    /// a context menu.
+    pub fn set_right_click_passthrough(&mut self, passthrough: bool) {
+        self.right_click_passthrough = passthrough;
+    }
+
+    fn leaves_right_click(&self, button: MouseButton, modifiers: Modifiers, _: &Window) -> bool {
+        button == MouseButton::Right
+            && (!self.right_click_passthrough
+                || modifiers != Modifiers::default()
+                || !self.reports_mouse(modifiers))
     }
 
     /// Whether a non-empty selection exists.
@@ -904,6 +921,9 @@ impl TerminalState {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        if self.leaves_right_click(event.button, event.modifiers, window) {
+            return;
+        }
         if event.button == MouseButton::Left && event.modifiers.platform {
             self.hover_link(event.position, true, cx);
             if let Some((_, link)) = self.hovered_link.clone() {
@@ -988,6 +1008,9 @@ impl TerminalState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.leaves_right_click(event.button, event.modifiers, window) {
+            return;
+        }
         if self.reports_mouse(event.modifiers) {
             self.report_mouse(
                 MouseAction::Release,
