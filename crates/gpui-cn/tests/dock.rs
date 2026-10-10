@@ -339,11 +339,32 @@ fn a_pane_dropped_on_the_right_edge_of_another_lands_right_of_it(cx: &mut TestAp
 fn a_drop_near_the_center_takes_the_nearest_edge_and_never_merges(cx: &mut TestAppContext) {
     let setup = setup(cx, false, false);
     let b = bounds(&setup, cx, pane_id("b"));
+    lift_a_to(&setup, cx, point(b.right() - px(10.), b.center().y));
+    let b = bounds(&setup, cx, pane_id("b"));
     let to = point(b.center().x, b.center().y + px(30.));
-    lift_a_to(&setup, cx, to);
-    up(&setup, cx, to + point(px(1.), px(0.)));
+    move_to(&setup, cx, to, true);
+    wait(&setup, cx, 200);
+    up(&setup, cx, to);
     wait(&setup, cx, 10);
     assert_eq!(shape(&setup, cx), "h[v[b,a]]", "below b, not in b's group");
+}
+
+#[gpui_kit::test]
+fn a_lifted_pane_closes_its_slot_and_its_neighbor_fills_it(cx: &mut TestAppContext) {
+    let setup = setup(cx, false, false);
+    let start = press_a(&setup, cx);
+    move_to(&setup, cx, start + point(px(3.), px(0.)), true);
+    move_to(&setup, cx, start + point(px(12.), px(0.)), true);
+    assert_eq!(shape(&setup, cx), "h[b+a]", "a waits as a hidden tab of b");
+    assert_eq!(
+        bounds(&setup, cx, pane_id("b")),
+        Bounds::new(point(px(0.), px(0.)), size(px(800.), px(400.)))
+    );
+    assert!(!present(
+        &setup,
+        cx,
+        ElementId::NamedInteger("dock-tab".into(), id(&setup.a).as_u64())
+    ));
 }
 
 #[gpui_kit::test]

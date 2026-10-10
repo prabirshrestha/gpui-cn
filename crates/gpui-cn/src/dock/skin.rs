@@ -337,7 +337,13 @@ impl TabGroupRenderer for DockSkin {
     }
 
     fn render_tab_bar(&self, group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
-        if group.panels().len() < 2 {
+        let lifted = self.state.read(cx).lifted();
+        let shown = group
+            .panels()
+            .iter()
+            .filter(|panel| Some(panel.panel_id(cx)) != lifted)
+            .count();
+        if shown < 2 {
             return Empty.into_any_element();
         }
         let theme = cx.theme();
@@ -350,25 +356,32 @@ impl TabGroupRenderer for DockSkin {
             .border_b_1()
             .border_color(theme.border())
             .text_size(theme.text_control.size)
-            .children(group.panels().iter().enumerate().map(|(ix, panel)| {
-                let select = group.clone();
-                div()
-                    .id(ElementId::NamedInteger(
-                        "dock-tab".into(),
-                        panel.panel_id(cx).as_u64(),
-                    ))
-                    .test_support()
-                    .px_2()
-                    .rounded(theme.radius_sm())
-                    .text_color(if ix == active {
-                        theme.foreground()
-                    } else {
-                        theme.muted_foreground()
-                    })
-                    .when(ix == active, |this| this.bg(theme.selected))
-                    .child(panel.panel_name(cx))
-                    .on_click(move |_, window, cx| select.select_tab(ix, window, cx))
-            }))
+            .children(
+                group
+                    .panels()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, panel)| Some(panel.panel_id(cx)) != lifted)
+                    .map(|(ix, panel)| {
+                        let select = group.clone();
+                        div()
+                            .id(ElementId::NamedInteger(
+                                "dock-tab".into(),
+                                panel.panel_id(cx).as_u64(),
+                            ))
+                            .test_support()
+                            .px_2()
+                            .rounded(theme.radius_sm())
+                            .text_color(if ix == active {
+                                theme.foreground()
+                            } else {
+                                theme.muted_foreground()
+                            })
+                            .when(ix == active, |this| this.bg(theme.selected))
+                            .child(panel.panel_name(cx))
+                            .on_click(move |_, window, cx| select.select_tab(ix, window, cx))
+                    }),
+            )
             .into_any_element()
     }
 

@@ -67,8 +67,8 @@ pub(crate) enum PaneDrag {
         grab: Point<Pixels>,
         start: Point<Pixels>,
     },
-    /// The pane is a floating card and the layout is still the one it
-    /// lifted from.
+    /// The pane is a floating card and its slot has closed: it waits as a
+    /// hidden tab of its nearest neighbor, which grows into the room.
     Lifted { lift: Lift, pending: Option<Target> },
     /// The layout shows the pane at `target`, where a drop would leave it.
     Previewing {
@@ -314,6 +314,7 @@ impl DockSkinState {
             self.drag = PaneDrag::Idle;
             return;
         };
+        let neighbor = neighbor_group(origin.root(), panel);
         self.drag = PaneDrag::Lifted {
             lift: Lift {
                 panel,
@@ -326,6 +327,20 @@ impl DockSkinState {
             },
             pending: None,
         };
+        if let Some(node) = neighbor {
+            area.update(cx, |area, cx| {
+                area.move_panel(
+                    panel,
+                    InsertTarget::Tabs {
+                        node,
+                        ix: None,
+                        activate: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        }
         view.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -339,7 +354,13 @@ impl DockSkinState {
         let Some(tree) = area.layout(DockPlacement::Center) else {
             return Hover::Nothing;
         };
-        let own = tree.find_panel_node(lift.panel);
+        // While the pane waits in a neighbor's group, that group is a
+        // target; only a group holding nothing else is its own slot.
+        let own = tree.find_panel_node(lift.panel).filter(|node| {
+            tree.find_node(*node).is_some_and(
+                |found| matches!(found.kind(), PaneRef::Tabs { panels, .. } if panels.len() == 1),
+            )
+        });
         let hit = self.groups.iter().find(|(node, bounds)| {
             bounds.contains(&position)
                 && tree
@@ -505,9 +526,7 @@ impl DockSkinState {
         let Some(lift) = self.lift().cloned() else {
             return;
         };
-        if matches!(self.drag, PaneDrag::Previewing { .. })
-            && let Some(area) = self.area.upgrade()
-        {
+        if let Some(area) = self.area.upgrade() {
             let layout = {
                 let area = area.read(cx);
                 layout_of(lift.origin.root(), area, cx)
@@ -620,6 +639,49 @@ pub(crate) fn nearest_edge(bounds: Bounds<Pixels>, position: Point<Pixels>) -> P
             }
         })
         .1
+}
+
+/// The group a lifted `panel` waits in: the nearest group of the sibling
+/// beside its own in the parent split, on the side that touches it.
+fn neighbor_group(root: &PaneNode, panel: PanelId) -> Option<NodeId> {
+    let PaneRef::Split { children, .. } = root.kind() else {
+        return None;
+    };
+    let index = children.iter().position(|child| holds(child, panel))?;
+    let holds_only = matches!(
+        children[index].kind(),
+        PaneRef::Tabs { panels, .. } if panels.len() == 1
+    );
+    if !holds_only {
+        return neighbor_group(&children[index], panel);
+    }
+    let (sibling, from_start) = match index.checked_sub(1) {
+        Some(before) => (&children[before], false),
+        None => (children.get(index + 1)?, true),
+    };
+    Some(edge_group(sibling, from_start))
+}
+
+fn holds(node: &PaneNode, panel: PanelId) -> bool {
+    match node.kind() {
+        PaneRef::Split { children, .. } => children.iter().any(|child| holds(child, panel)),
+        PaneRef::Tabs { panels, .. } => panels.contains(&panel),
+    }
+}
+
+/// The group of `node` at its start or its end.
+fn edge_group(node: &PaneNode, from_start: bool) -> NodeId {
+    match node.kind() {
+        PaneRef::Split { children, .. } => {
+            let child = if from_start {
+                children.first()
+            } else {
+                children.last()
+            };
+            child.map_or(node.id(), |child| edge_group(child, from_start))
+        }
+        PaneRef::Tabs { .. } => node.id(),
+    }
 }
 
 /// The layout `node` describes, with the area's own panel handles, so
