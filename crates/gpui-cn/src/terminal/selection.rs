@@ -131,11 +131,15 @@ impl Selection {
 
     /// The selected text from the visible rows of a frame.
     ///
-    /// Cells carry their own byte range in the row text, so a selection that
-    /// cuts across wide characters copies whole graphemes.
+    /// A cell is selected when its columns overlap the selection, and a cell
+    /// carries its own byte range in the row text, so a selection that cuts
+    /// across a wide character or a combining cluster copies the whole
+    /// grapheme. A row that soft-wraps joins the next without a newline,
+    /// except in a rectangle, where every row is its own line.
     #[must_use]
     pub fn text(self, frame: &TerminalFrame) -> String {
-        let mut lines: Vec<String> = Vec::new();
+        let mut text = String::new();
+        let mut needs_newline = false;
         for (index, row) in frame.rows.iter().enumerate() {
             let Ok(row_index) = u16::try_from(index) else {
                 break;
@@ -144,18 +148,23 @@ impl Selection {
             if columns.is_empty() {
                 continue;
             }
-            let mut line = String::new();
+            if needs_newline {
+                text.push('\n');
+            }
             for cell in row.cells.iter() {
-                if cell.spacer || !columns.contains(&cell.column) {
+                if cell.spacer
+                    || cell.column >= columns.end
+                    || columns.start >= cell.column.saturating_add(u16::from(cell.width))
+                {
                     continue;
                 }
-                if let Some(text) = row.text.get(cell.text.clone()) {
-                    line.push_str(text);
+                if let Some(grapheme) = row.text.get(cell.text.clone()) {
+                    text.push_str(grapheme);
                 }
             }
-            lines.push(line);
+            needs_newline = self.rectangle || !row.soft_wrapped;
         }
-        lines.join("\n")
+        text
     }
 }
 
@@ -210,5 +219,83 @@ mod tests {
         let cells = selection.to_cells();
         assert_eq!(cells.start, (2, 1));
         assert_eq!(cells.end, (4, 3));
+    }
+
+    fn frame(columns: u16, rows: u16, bytes: &str) -> std::sync::Arc<TerminalFrame> {
+        use crate::terminal::core::{Core, Effects};
+        use crate::terminal::{EngineOptions, TerminalColors, Viewport};
+        let mut core = Core::new(
+            Viewport::new(columns, rows, 8, 16).unwrap(),
+            &EngineOptions::default(),
+            TerminalColors::default(),
+        )
+        .unwrap();
+        core.write(bytes.as_bytes(), &mut Effects::default());
+        core.frame(true).unwrap().unwrap()
+    }
+
+    fn pick(frame: &TerminalFrame, start: (u16, u16), end: (u16, u16), rectangle: bool) -> String {
+        let mut selection = Selection::new(
+            Cell::new(start.0, start.1),
+            frame.content_revision,
+            rectangle,
+        );
+        selection.extend(Cell::new(end.0, end.1));
+        selection.text(frame)
+    }
+
+    #[test]
+    fn copying_uses_half_open_boundaries_including_the_last_column() {
+        let frame = frame(6, 2, "alphaX\r\nbetaYZ");
+        for (start, end, expected) in [
+            ((0, 0), (5, 0), "alpha"),
+            ((0, 0), (1, 0), "a"),
+            ((5, 0), (0, 0), "alpha"),
+            ((0, 0), (6, 0), "alphaX"),
+            ((0, 0), (0, 1), "alphaX"),
+        ] {
+            assert_eq!(
+                pick(&frame, start, end, false),
+                expected,
+                "{start:?} to {end:?}"
+            );
+        }
+        assert_eq!(pick(&frame, (0, 0), (6, 1), false), "alphaX\nbetaYZ");
+    }
+
+    #[test]
+    fn copying_joins_soft_wrapped_rows_and_keeps_hard_line_breaks() {
+        let frame = frame(6, 3, "alpha bravo\r\nlast");
+        assert!(frame.rows[0].soft_wrapped);
+        assert!(!frame.rows[1].soft_wrapped);
+        let copied = pick(&frame, (0, 0), (4, 2), false);
+        assert_eq!(copied, "alpha bravo \nlast");
+        assert_eq!(trim_lines(&copied), "alpha bravo\nlast");
+    }
+
+    #[test]
+    fn copying_a_rectangle_keeps_wrapped_rows_separate() {
+        let frame = frame(6, 2, "abcdefghijkl");
+        assert!(frame.rows[0].soft_wrapped);
+        assert_eq!(pick(&frame, (1, 0), (4, 1), true), "bcd\nhij");
+        assert_eq!(pick(&frame, (4, 1), (1, 0), true), "bcd\nhij");
+    }
+
+    #[test]
+    fn copying_either_half_of_a_wide_cell_keeps_the_whole_grapheme() {
+        let frame = frame(10, 1, "\u{6f22}e\u{301}X");
+        for (start, end, expected) in [
+            (0, 1, "\u{6f22}"),
+            (1, 2, "\u{6f22}"),
+            (0, 2, "\u{6f22}"),
+            (2, 3, "e\u{301}"),
+            (0, 4, "\u{6f22}e\u{301}X"),
+        ] {
+            assert_eq!(
+                pick(&frame, (start, 0), (end, 0), false),
+                expected,
+                "columns {start}..{end}"
+            );
+        }
     }
 }
