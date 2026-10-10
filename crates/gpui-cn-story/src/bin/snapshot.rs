@@ -269,6 +269,7 @@ mod macos {
                 "Progress",
                 "Theme",
                 "Sidebar",
+                "Dock",
                 "Nav stack",
                 "Scroll area",
                 "Title bar",
@@ -348,6 +349,71 @@ mod macos {
                         window.render_frame(cx);
                     })
                     .expect("close the shortcuts");
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        use gpui_kit::InputEvent as _;
+                        let strip = window
+                            .find(gpui_kit::ElementId::Name("terminal-tabs".into()))
+                            .bounds();
+                        let position =
+                            gpui_kit::point(strip.left() + px(200.), strip.bottom() + px(100.));
+                        window.dispatch_event(
+                            gpui_kit::MouseDownEvent {
+                                button: gpui_kit::MouseButton::Left,
+                                position,
+                                modifiers: Default::default(),
+                                click_count: 1,
+                                first_mouse: false,
+                            }
+                            .to_platform_input(),
+                            cx,
+                        );
+                        window.dispatch_event(
+                            gpui_kit::MouseUpEvent {
+                                button: gpui_kit::MouseButton::Left,
+                                position,
+                                modifiers: Default::default(),
+                                click_count: 1,
+                            }
+                            .to_platform_input(),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                        window.press("ctrl-a", cx);
+                        window.press("%", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("split the pane");
+                    for _ in 0..3 {
+                        cx.run_until_parked();
+                        cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                            .expect("draw the panes");
+                    }
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        let pane = window
+                            .find(gpui_kit::ElementId::Name("terminal-tabs".into()))
+                            .bounds();
+                        let top = pane.bottom() + px(20.);
+                        use gpui_kit::InputEvent as _;
+                        window.dispatch_event(
+                            gpui_kit::MouseMoveEvent {
+                                position: gpui_kit::point(pane.left() + px(200.), top),
+                                pressed_button: None,
+                                modifiers: Default::default(),
+                            }
+                            .to_platform_input(),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                    })
+                    .expect("reveal a handle");
+                    capture(&mut cx, &format!("story-{slug}-split-{name}"));
+                    cx.update_window(handle.into(), |_, window, cx| {
+                        window.press("ctrl-a", cx);
+                        window.press("x", cx);
+                        window.render_frame(cx);
+                    })
+                    .expect("close the split");
+                    cx.run_until_parked();
                 }
                 if story == "Composer" {
                     let named = |parent: &'static str, child: &'static str| {

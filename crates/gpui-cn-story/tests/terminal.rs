@@ -489,3 +489,56 @@ fn the_shortcuts_button_opens_a_dialog_that_escape_closes(cx: &mut TestAppContex
     press(handle, cx, &["escape"]);
     assert!(!shows(handle, cx, popup()), "Escape closes it");
 }
+
+fn focused(handle: WindowHandle<Root>, cx: &mut TestAppContext, id: ElementId) -> Option<bool> {
+    cx.update_window(handle.into(), |_, window, _| window.find(id).focused())
+        .unwrap()
+}
+
+#[gpui_kit::test]
+fn the_focus_keys_move_between_panes_by_where_they_are(cx: &mut TestAppContext) {
+    let handle = setup(cx);
+    cx.update_window(handle.into(), |_, window, cx| window.click(pane(0), cx))
+        .unwrap();
+    press(handle, cx, &["ctrl-a", "-"]);
+    let (top, bottom) = cx
+        .update_window(handle.into(), |_, window, _| {
+            (window.find(pane(0)).bounds(), window.find(pane(1)).bounds())
+        })
+        .unwrap();
+    assert!(bottom.top() >= top.bottom(), "a split down opens below");
+    assert_eq!(focused(handle, cx, pane(1)), Some(true));
+
+    press(handle, cx, &["ctrl-a", "k"]);
+    assert_eq!(
+        focused(handle, cx, pane(0)),
+        Some(true),
+        "up to the top pane"
+    );
+    press(handle, cx, &["ctrl-a", "l"]);
+    assert_eq!(
+        focused(handle, cx, pane(0)),
+        Some(true),
+        "nothing on the right"
+    );
+
+    press(handle, cx, &["ctrl-a", "%"]);
+    let (left, right) = cx
+        .update_window(handle.into(), |_, window, _| {
+            (window.find(pane(0)).bounds(), window.find(pane(2)).bounds())
+        })
+        .unwrap();
+    assert!(
+        right.left() >= left.right(),
+        "a split right of the top pane"
+    );
+    assert!(right.bottom() <= bottom.top(), "and above the bottom pane");
+    press(handle, cx, &["ctrl-a", "j"]);
+    assert_eq!(focused(handle, cx, pane(1)), Some(true), "down from either");
+    press(handle, cx, &["ctrl-a", "o"]);
+    assert_eq!(
+        focused(handle, cx, pane(0)),
+        Some(true),
+        "the next pane wraps to the first"
+    );
+}

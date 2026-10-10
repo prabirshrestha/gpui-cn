@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui_kit::{
-    FontWeight, Hsla, Pixels, SharedString,
+    FontWeight, Hsla, Pixels, SharedString, Size,
     base::{
         ColorTokens, RadiusTokens, SemanticThemeTokens, ShadowTokens, SpacingTokens,
         TextStyleToken, ThemeAppearance, TypographyTokens,
@@ -184,6 +184,23 @@ pub struct ThemeTokens {
     /// measured from the reference app's settings textarea at 2x (37px),
     /// looser than `text_control` so lines of prose read apart.
     pub text_textarea: TextStyleToken,
+    /// The slot a lifted pane of a dock leaves and the place it will land:
+    /// the accent at 30%, the drop overlay of Ghostty's splits
+    /// (`Color.accentColor.opacity(0.3)` in
+    /// `macos/Sources/Features/Splits/TerminalSplitTreeView.swift`).
+    pub dock_drop: Hsla,
+    /// The ellipsis on a pane's grab handle at rest: the text color at
+    /// 30%, Ghostty's `.primary.opacity(0.3)` in
+    /// `macos/Sources/Ghostty/Surface View/SurfaceGrabHandle.swift`.
+    pub dock_handle: Hsla,
+    /// The ellipsis on a hovered grab handle: the text color at 80%,
+    /// Ghostty's `.primary.opacity(0.8)` in the same file.
+    pub dock_handle_hover: Hsla,
+    /// The fill over a pane of a split that does not have focus: the
+    /// background at 30%, Ghostty's default `unfocused-split-opacity` of 0.7
+    /// with `unfocused-split-fill` left to the background
+    /// (`src/config/Config.zig`).
+    pub dock_unfocused: Hsla,
 }
 
 /// The sizes gpui-cn components are built from.
@@ -448,6 +465,27 @@ pub struct MetricTokens {
     /// The width of a bar cursor and the height of an underline cursor in
     /// a terminal: 2px, chosen to stay visible at every code font size.
     pub terminal_cursor_thickness: Pixels,
+    /// The width of the grab handle at the top center of a dock pane:
+    /// 80px, `handleSize` in Ghostty's
+    /// `macos/Sources/Ghostty/Surface View/SurfaceGrabHandle.swift`.
+    pub dock_handle_width: Pixels,
+    /// The height of the grab handle: 12px, Ghostty's `handleSize`. On
+    /// touch it is the 44pt hit target.
+    pub dock_handle_height: Pixels,
+    /// The ellipsis in the grab handle: 12px, the handle's own height.
+    pub dock_handle_icon: Pixels,
+    /// The share of a pane's height, from its top edge, in which the
+    /// pointer reveals the grab handle: 20%, Ghostty's
+    /// `hoverHeightFactor`.
+    pub dock_handle_reveal: f32,
+    /// How far the pointer moves from a press on the grab handle before
+    /// the pane lifts: 6px, the drag threshold of Trellis (`Tv=6` in its
+    /// bundle).
+    pub dock_drag_threshold: Pixels,
+    /// The floating card a lifted pane becomes, clamped to the pane:
+    /// 380x260, the compact drag size of Trellis (`ou={w:380,h:260}` in
+    /// its bundle).
+    pub dock_card: Size<Pixels>,
 }
 
 impl MetricTokens {
@@ -560,6 +598,12 @@ impl MetricTokens {
             avatar_group_ring: px(2.),
             terminal_padding: px(2.),
             terminal_cursor_thickness: px(2.),
+            dock_handle_width: px(80.),
+            dock_handle_height: if touch { control_md } else { px(12.) },
+            dock_handle_icon: px(12.),
+            dock_handle_reveal: 0.2,
+            dock_drag_threshold: px(6.),
+            dock_card: Size::new(px(380.), px(260.)),
         }
     }
 }
@@ -793,6 +837,10 @@ impl ThemeTokens {
             field_border,
             field_focus_border,
             text_textarea,
+            dock_drop: config.accent.opacity(0.3),
+            dock_handle: foreground.opacity(0.3),
+            dock_handle_hover: foreground.opacity(0.8),
+            dock_unfocused: surface.opacity(0.3),
         }
     }
 
@@ -1537,5 +1585,33 @@ mod tests {
                 "the card's hairline reads on the tab: {hairline}"
             );
         }
+    }
+
+    #[test]
+    fn dock_panes_take_ghosttys_handle_and_trellis_drag_sizes() {
+        let dark = dark();
+        assert_eq!(to_hex(dark.dock_drop.alpha(1.)), to_hex(dark.ring()));
+        assert_eq!(dark.dock_drop.a, 0.3, "Ghostty's drop overlay");
+        assert_eq!(dark.dock_handle.a, 0.3);
+        assert_eq!(dark.dock_handle_hover.a, 0.8);
+        assert_eq!(to_hex(dark.dock_unfocused.alpha(1.)), "#181818");
+        assert_eq!(dark.dock_unfocused.a, 0.3, "Ghostty's unfocused split");
+        assert_eq!(to_hex(dark.dock_handle.alpha(1.)), "#dfdfdf");
+        let m = &dark.metrics;
+        assert_eq!(m.dock_handle_width, px(80.));
+        assert_eq!(m.dock_handle_height, px(12.));
+        assert_eq!(m.dock_handle_reveal, 0.2);
+        assert_eq!(m.dock_drag_threshold, px(6.));
+        assert_eq!(m.dock_card, Size::new(px(380.), px(260.)));
+        let touch = ThemeTokens::derive(
+            &ThemeConfig::dark(),
+            ThemeAppearance::Dark,
+            Metrics {
+                touch: true,
+                ..metrics()
+            },
+        );
+        assert_eq!(touch.metrics.dock_handle_height, px(44.), "the HIG target");
+        assert_eq!(touch.metrics.dock_handle_width, px(80.));
     }
 }

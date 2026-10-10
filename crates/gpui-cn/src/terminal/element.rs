@@ -332,10 +332,13 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
             let mut painting = prepare(
                 &frame,
                 geometry,
-                &appearance,
                 look,
                 s.selection,
-                focused && s.cursor.visible,
+                cursor_style(
+                    focused,
+                    s.cursor.visible,
+                    appearance.cursor_shape.unwrap_or(frame.cursor.shape),
+                ),
                 marked.as_deref(),
                 &font,
                 font_size,
@@ -423,10 +426,9 @@ impl TerminalState {
 fn prepare(
     frame: &TerminalFrame,
     geometry: Geometry,
-    appearance: &crate::terminal::appearance::TerminalAppearance,
     look: Look,
     selection: Option<Selection>,
-    cursor_visible: bool,
+    cursor: Option<CursorShape>,
     marked: Option<&str>,
     font: &Font,
     font_size: Pixels,
@@ -529,12 +531,27 @@ fn prepare(
         return painting;
     }
 
-    if cursor_visible && cursor_in_grid(frame, geometry) {
+    if let Some(shape) = cursor
+        && cursor_in_grid(frame, geometry)
+    {
         let bounds = geometry.cell_bounds(frame.cursor.column, frame.cursor.row);
-        let shape = appearance.cursor_shape.unwrap_or(frame.cursor.shape);
         painting.cursor = Some((bounds, palette.cursor(), shape));
     }
     painting
+}
+
+/// The cursor to draw, in Ghostty's order (`src/renderer/cursor.zig`): a
+/// terminal without focus always shows a hollow block, so a split shows
+/// where each pane's cursor sits; one with focus shows `shape` while the
+/// blink is on.
+fn cursor_style(focused: bool, blink_on: bool, shape: CursorShape) -> Option<CursorShape> {
+    if !focused {
+        Some(CursorShape::Hollow)
+    } else if blink_on {
+        Some(shape)
+    } else {
+        None
+    }
 }
 
 fn cursor_in_grid(frame: &TerminalFrame, geometry: Geometry) -> bool {
@@ -814,7 +831,25 @@ fn paint(painting: Painting, window: &mut Window, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_quad;
+    use super::{cursor_style, merge_quad};
+    use crate::terminal::frame::CursorShape;
+
+    #[test]
+    fn a_terminal_without_focus_shows_a_hollow_block_through_the_blink() {
+        assert_eq!(
+            cursor_style(false, true, CursorShape::Bar),
+            Some(CursorShape::Hollow)
+        );
+        assert_eq!(
+            cursor_style(false, false, CursorShape::Bar),
+            Some(CursorShape::Hollow)
+        );
+        assert_eq!(
+            cursor_style(true, true, CursorShape::Bar),
+            Some(CursorShape::Bar)
+        );
+        assert_eq!(cursor_style(true, false, CursorShape::Bar), None);
+    }
     use gpui_kit::{Bounds, Hsla, point, px, size};
 
     #[test]

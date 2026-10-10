@@ -193,6 +193,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::ThemeModePickerStory>(StorySection::Foundations),
         StoryEntry::of::<stories::SidebarStory>(StorySection::Navigation),
         StoryEntry::of::<stories::NavStackStory>(StorySection::Navigation),
+        StoryEntry::of::<stories::DockStory>(StorySection::Navigation),
         StoryEntry::of::<stories::ScrollAreaStory>(StorySection::Navigation),
         StoryEntry::of::<stories::TitleBarStory>(StorySection::Navigation),
         StoryEntry::of::<stories::TabsStory>(StorySection::Navigation),
@@ -1012,7 +1013,7 @@ mod tests {
         let terminal = usize::from(cfg!(feature = "terminal"));
         assert_eq!(
             count,
-            29 + terminal,
+            30 + terminal,
             "a story was dropped or added without this count"
         );
         for section in super::StorySection::ALL {
