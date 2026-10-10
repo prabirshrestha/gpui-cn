@@ -3,10 +3,11 @@
 //! Derived from Herdr (Apache-2.0).
 
 use gpui_kit::{
-    Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString, Size,
-    TextRun, Window, px, size,
+    App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString,
+    Size, TextRun, Window, px, size,
 };
 
+use crate::ActiveTheme as _;
 use crate::terminal::frame::CursorShape;
 use crate::theme::ThemeTokens;
 
@@ -186,6 +187,14 @@ impl TerminalAppearance {
     /// Whether copied lines lose their trailing spaces.
     pub fn trim_trailing_spaces(&self) -> bool {
         self.trim_trailing_spaces
+    }
+
+    /// The size of one cell with the theme filling the slots this appearance
+    /// leaves open, and the edge padding around the grid. A host that lays
+    /// terminals out on a shared grid uses these to agree with the painter.
+    pub fn measure(&self, window: &mut Window, cx: &App) -> (Size<Pixels>, Pixels) {
+        let resolved = self.resolved(cx.theme());
+        (resolved.cell_size(window), resolved.inset())
     }
 
     /// The appearance with the theme's values in the slots left open.
