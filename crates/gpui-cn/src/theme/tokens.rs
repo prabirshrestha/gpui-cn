@@ -634,7 +634,23 @@ impl ThemeTokens {
         let c = f32::from(config.contrast) / 50.;
         let surface = config.surface;
         let ink = config.ink;
-        let toward_ink = |amount: f32| mix(surface, ink, amount);
+        // OKLab steps vanish near black: 7% from #000 toward white is
+        // #010101. The steps start from a surface at least as light as the
+        // reference app's #181818, so a black surface keeps visible
+        // separators and fills. The surface itself stays the background.
+        let floor = super::color::lightness(super::color::hex("#181818"));
+        let base = {
+            let (from, to) = (
+                super::color::lightness(surface),
+                super::color::lightness(ink),
+            );
+            if dark && from < floor && to > floor {
+                mix(surface, ink, (floor - from) / (to - from))
+            } else {
+                surface
+            }
+        };
+        let toward_ink = |amount: f32| mix(base, ink, amount);
 
         // Every fill is one OKLab step from the surface toward the ink,
         // scaled by contrast. The constants reproduce the values sampled
@@ -1053,6 +1069,20 @@ mod tests {
 
     fn light() -> ThemeTokens {
         ThemeTokens::derive(&ThemeConfig::light(), ThemeAppearance::Light, metrics())
+    }
+
+    #[test]
+    fn a_black_surface_keeps_visible_separators() {
+        let mut config = ThemeConfig::dark();
+        config.surface = super::super::color::hex("#000000");
+        let tokens = ThemeTokens::derive(&config, ThemeAppearance::Dark, metrics());
+        let lightness = super::super::color::lightness;
+        assert_eq!(tokens.background(), config.surface);
+        assert!(
+            lightness(tokens.border()) > lightness(super::super::color::hex("#181818")),
+            "border {}",
+            super::super::color::to_hex(tokens.border())
+        );
     }
 
     #[test]
