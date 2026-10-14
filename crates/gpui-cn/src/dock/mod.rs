@@ -29,7 +29,7 @@
 //! painted gliding from its old rect, clipped to the rect it is passing
 //! through. Nothing animates once every pane rests.
 
-mod motion;
+pub(crate) mod motion;
 mod session;
 mod skin;
 
