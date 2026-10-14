@@ -49,6 +49,7 @@ pub mod dock;
 mod file_picker;
 mod folder_picker;
 pub mod fuzzy;
+mod glide;
 mod icon;
 mod input;
 mod label;
@@ -107,6 +108,7 @@ pub use folder_picker::{
     FolderEntry, FolderPage, FolderPicker, FolderPickerEvent, FolderPickerState, FolderSource,
     Listing, Loaded, LocalFolders, MemoryFolders, MoreState, PageToken,
 };
+pub use glide::{Glide, GlideState};
 pub use gpui_kit;
 pub use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
 pub use gpui_kit::base::slider::{SliderEvent, SliderState, SliderValue};
