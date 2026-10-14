@@ -220,6 +220,70 @@ impl TerminalSnapshot {
             ..Self::default()
         }
     }
+
+    /// Set the state of the program.
+    #[must_use]
+    pub fn with_status(mut self, status: TerminalStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// Set the title the program set.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    /// Set the working directory the program reported.
+    #[must_use]
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
+    /// Set the number of bells received so far. A change rings the bell.
+    #[must_use]
+    pub fn with_bell_count(mut self, count: u64) -> Self {
+        self.bell_count = count;
+        self
+    }
+
+    /// Set the last clipboard write and its sequence number. A new sequence
+    /// number writes `text` to the clipboard.
+    #[must_use]
+    pub fn with_clipboard(mut self, sequence: u64, text: impl Into<Arc<str>>) -> Self {
+        self.clipboard_sequence = sequence;
+        self.clipboard = Some(text.into());
+        self
+    }
+
+    /// Set the last desktop notification and its sequence number.
+    #[must_use]
+    pub fn with_notification(
+        mut self,
+        sequence: u64,
+        title: impl Into<Arc<str>>,
+        body: impl Into<Arc<str>>,
+    ) -> Self {
+        self.notification_sequence = sequence;
+        self.notification = Some((title.into(), body.into()));
+        self
+    }
+
+    /// Set whether the cursor was at a shell prompt.
+    #[must_use]
+    pub fn with_at_prompt(mut self, at_prompt: bool) -> Self {
+        self.at_prompt = at_prompt;
+        self
+    }
+
+    /// Set the process in the foreground.
+    #[must_use]
+    pub fn with_foreground(mut self, foreground: ForegroundProcess) -> Self {
+        self.foreground = Some(foreground);
+        self
+    }
 }
 
 /// A source of terminal output that also accepts the program's input.

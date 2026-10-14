@@ -166,6 +166,17 @@ fn the_grid_fills_the_element_and_shows_the_program_output(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn the_terminal_is_one_accessibility_node_that_dictation_can_write_to(cx: &mut TestAppContext) {
+    let setup = setup(cx);
+    cx.update_window(setup.handle.into(), |_, window, _| {
+        let node = window.find("terminal");
+        assert_eq!(node.role(), Some(gpui_kit::Role::Terminal));
+        assert_eq!(node.label(), Some("Terminal"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_click_focuses_the_terminal_and_reports_focus(cx: &mut TestAppContext) {
     let setup = setup(cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {

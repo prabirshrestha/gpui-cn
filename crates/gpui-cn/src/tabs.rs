@@ -228,6 +228,19 @@ impl TabsState {
         self.select(id, cx);
     }
 
+    /// Selects the first tab, or the last one when `last` is set.
+    pub fn select_edge(&mut self, last: bool, cx: &mut Context<Self>) {
+        let Some(tab) = (if last {
+            self.tabs.last()
+        } else {
+            self.tabs.first()
+        }) else {
+            return;
+        };
+        let id = tab.id.clone();
+        self.select(id, cx);
+    }
+
     fn select_index(&mut self, index: usize) {
         self.selected = Some(self.tabs[index].id.clone());
         self.reveal = true;
@@ -249,6 +262,19 @@ impl TabsState {
         self.entering.push(id.clone());
         self.select_index(self.tabs.len() - 1);
         cx.emit(TabsEvent::Selected(id));
+        cx.notify();
+    }
+
+    /// Inserts a tab at `index`, clamped to the end, without selecting it,
+    /// so a host that keeps its own order can put a tab where it belongs.
+    /// Its id must be new to the strip.
+    pub fn insert(&mut self, index: usize, tab: Tab, cx: &mut Context<Self>) {
+        debug_assert!(self.index_of(&tab.id).is_none(), "tab ids must be unique");
+        let index = index.min(self.tabs.len());
+        let id = tab.id.clone();
+        self.leaving.retain(|leaving| leaving.tab.id != id);
+        self.tabs.insert(index, tab);
+        self.entering.push(id);
         cx.notify();
     }
 
@@ -1150,12 +1176,13 @@ impl RenderOnce for Tabs {
                 if event.keystroke.modifiers.modified() || key_state.read(cx).renaming.is_some() {
                     return;
                 }
-                let step: isize = match event.keystroke.key.as_str() {
-                    "left" => -1,
-                    "right" => 1,
+                match event.keystroke.key.as_str() {
+                    "left" => key_state.update(cx, |state, cx| state.select_neighbor(-1, cx)),
+                    "right" => key_state.update(cx, |state, cx| state.select_neighbor(1, cx)),
+                    "home" => key_state.update(cx, |state, cx| state.select_edge(false, cx)),
+                    "end" => key_state.update(cx, |state, cx| state.select_edge(true, cx)),
                     _ => return,
-                };
-                key_state.update(cx, |state, cx| state.select_neighbor(step, cx));
+                }
                 cx.stop_propagation();
             })
             .refine_style(&self.style)
@@ -1261,6 +1288,35 @@ mod tests {
         assert!(!separator_after(4, Some(2), 5), "the last tab");
         assert!(separator_after(0, None, 2), "no selection");
         assert!(!separator_after(0, None, 1));
+    }
+
+    #[gpui_kit::test]
+    fn the_edges_are_selectable(cx: &mut TestAppContext) {
+        let state = cx
+            .new(|_| TabsState::new([Tab::new("a", "A"), Tab::new("b", "B"), Tab::new("c", "C")]));
+        state.update(cx, |state, cx| state.select_edge(true, cx));
+        assert_eq!(
+            state.read_with(cx, |state, _| state.selected().cloned()),
+            Some("c".into())
+        );
+        state.update(cx, |state, cx| state.select_edge(false, cx));
+        assert_eq!(
+            state.read_with(cx, |state, _| state.selected().cloned()),
+            Some("a".into())
+        );
+    }
+
+    #[gpui_kit::test]
+    fn inserting_puts_a_tab_in_place_without_selecting_it(cx: &mut TestAppContext) {
+        let state = cx.new(|_| TabsState::new([Tab::new("a", "A"), Tab::new("c", "C")]));
+        state.update(cx, |state, cx| {
+            state.insert(1, Tab::new("b", "B"), cx);
+            state.insert(99, Tab::new("d", "D"), cx);
+        });
+        state.read_with(cx, |state, _| {
+            assert_eq!(ids(state), ["a", "b", "c", "d"]);
+            assert_eq!(state.selected().map(AsRef::as_ref), Some("a"));
+        });
     }
 
     #[gpui_kit::test]

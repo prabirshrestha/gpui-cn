@@ -88,6 +88,16 @@
 //! # }
 //! ```
 //!
+//! A host that keeps the terminal elsewhere, such as a server that sends
+//! the rows it wants drawn, implements [`FrameSource`] and publishes
+//! frames it builds itself to the [`FrameSink`]. The builders on
+//! [`TerminalFrame`], [`frame::TerminalRow`], [`frame::Style`],
+//! [`frame::CellSpan`], [`frame::StyleRun`], [`frame::Cursor`] and
+//! [`TerminalSnapshot`] make them. The [`FrameHandle`] it returns gets the
+//! input, the measured grid and the request for the next frame; its `copy`
+//! answers a selection that reaches scrollback the frame does not carry.
+//! `tests/terminal_hosted.rs` is a small example.
+//!
 //! A local pty reports the process in the terminal's foreground, such as
 //! the shell or an editor it started: [`TerminalState::foreground`] reads
 //! it, [`TerminalEvent::ForegroundChanged`] reports a change, and
@@ -188,7 +198,8 @@ pub use engine::{
     ByteHandle, ByteSink, ByteSource, Engine, ExitStatus, ForegroundProcess, InputRejected,
     TerminalSnapshot, TerminalStatus,
 };
-pub use frame::{TerminalColors, TerminalFrame, Viewport};
+pub use frame::{RowId, TerminalColors, TerminalFrame, Viewport};
+pub use geometry::Geometry;
 pub use input::TerminalInput;
 pub use options::{EngineOptions, LocalTerminalOptions, ShellIntegration, WorkingDirectory};
 #[cfg(not(any(target_os = "ios", target_os = "android")))]

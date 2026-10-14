@@ -3,10 +3,11 @@
 //! Derived from Herdr (Apache-2.0).
 
 use gpui_kit::{
-    Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString, Size,
-    TextRun, Window, px, size,
+    App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, SharedString,
+    Size, TextRun, Window, px, size,
 };
 
+use crate::ActiveTheme as _;
 use crate::terminal::frame::CursorShape;
 use crate::theme::ThemeTokens;
 
@@ -23,6 +24,7 @@ pub struct TerminalAppearance {
     pub(crate) font_size: Option<Pixels>,
     pub(crate) font_weight: FontWeight,
     pub(crate) cell_height_adjust: f32,
+    pub(crate) cell_height_offset: Pixels,
     pub(crate) padding: Option<Pixels>,
     pub(crate) padding_balance: bool,
     pub(crate) cursor_blink: Option<bool>,
@@ -39,6 +41,7 @@ impl Default for TerminalAppearance {
             font_size: None,
             font_weight: FontWeight::NORMAL,
             cell_height_adjust: 0.0,
+            cell_height_offset: px(0.),
             padding: None,
             padding_balance: false,
             cursor_blink: None,
@@ -86,6 +89,14 @@ impl TerminalAppearance {
     #[must_use]
     pub fn with_cell_height_adjust(mut self, fraction: f32) -> Self {
         self.cell_height_adjust = fraction;
+        self
+    }
+
+    /// Add `offset` to the cell height after the fractional adjustment, as
+    /// Ghostty's `adjust-cell-height = 2` does. It may be negative.
+    #[must_use]
+    pub fn with_cell_height_offset(mut self, offset: impl Into<Pixels>) -> Self {
+        self.cell_height_offset = offset.into();
         self
     }
 
@@ -158,6 +169,11 @@ impl TerminalAppearance {
         self.cell_height_adjust
     }
 
+    /// The cell height offset in pixels.
+    pub fn cell_height_offset(&self) -> Pixels {
+        self.cell_height_offset
+    }
+
     /// The padding; `None` follows the theme.
     pub fn padding(&self) -> Option<Pixels> {
         self.padding
@@ -186,6 +202,14 @@ impl TerminalAppearance {
     /// Whether copied lines lose their trailing spaces.
     pub fn trim_trailing_spaces(&self) -> bool {
         self.trim_trailing_spaces
+    }
+
+    /// The size of one cell with the theme filling the slots this appearance
+    /// leaves open, and the edge padding around the grid. A host that lays
+    /// terminals out on a shared grid uses these to agree with the painter.
+    pub fn measure(&self, window: &mut Window, cx: &App) -> (Size<Pixels>, Pixels) {
+        let resolved = self.resolved(cx.theme());
+        (resolved.cell_size(window), resolved.inset())
     }
 
     /// The appearance with the theme's values in the slots left open.
@@ -229,7 +253,8 @@ impl TerminalAppearance {
     /// Cell height after the adjustment, snapped to a physical pixel so rows
     /// tile without seams.
     pub(crate) fn cell_height(&self, natural: Pixels, scale: f32) -> Pixels {
-        let adjusted = f32::from(natural) * (1.0 + self.cell_height_adjust);
+        let adjusted = f32::from(natural) * (1.0 + self.cell_height_adjust)
+            + f32::from(self.cell_height_offset);
         let scale = if scale > 0.0 { scale } else { 1.0 };
         px(((adjusted * scale).round() / scale).max(1.0))
     }
@@ -274,6 +299,8 @@ mod tests {
         let taller = appearance.clone().with_cell_height_adjust(0.2);
         assert_eq!(taller.cell_height(px(10.0), 1.0), px(12.0));
         assert_eq!(taller.cell_height(px(17.3), 2.0), px(21.0));
+        let offset = appearance.clone().with_cell_height_offset(px(4.));
+        assert_eq!(offset.cell_height(px(20.), 1.0), px(24.));
         let crushed = appearance.with_cell_height_adjust(-2.0);
         assert_eq!(crushed.cell_height(px(17.0), 1.0), px(1.0));
     }

@@ -13,10 +13,10 @@ use gpui_kit::base::{StyledExt as _, TestSupportExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, ElementId, ElementInputHandler, Entity,
-    Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement, LineLayout,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    RenderOnce, ShapedLine, Size, StyleRefinement, Styled, TextAlign, TextRun, Window, canvas, div,
-    fill, outline, point, px, size,
+    EntityInputHandler as _, Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
+    LineLayout, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, RenderOnce, ShapedLine, Size, StatefulInteractiveElement as _, StyleRefinement,
+    Styled, TextAlign, TextRun, Window, canvas, div, fill, outline, point, px, size,
 };
 
 use crate::theme::ActiveTheme as _;
@@ -106,6 +106,18 @@ impl RenderOnce for Terminal {
             .relative()
             .size_full()
             .overflow_hidden()
+            .role(gpui_kit::Role::Terminal)
+            .aria_label("Terminal")
+            .aria_value("")
+            .on_a11y_action(gpui_kit::AccessibleAction::SetValue, {
+                let state = state.clone();
+                move |data, window, cx| {
+                    let Some(gpui_kit::accesskit::ActionData::Value(text)) = data else {
+                        return;
+                    };
+                    state.update(cx, |s, cx| s.replace_text_in_range(None, text, window, cx));
+                }
+            })
             .bg(background)
             .refine_style(&self.style)
             .on_action(update(&state, |s, _: &Copy, _, cx| {
