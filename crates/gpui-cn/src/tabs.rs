@@ -18,7 +18,6 @@
 //! }
 //! ```
 
-use crate::bounds::OnPaddingBounds as _;
 use std::{fmt, rc::Rc, sync::Arc};
 
 use gpui_kit::{
@@ -28,8 +27,8 @@ use gpui_kit::{
     StatefulInteractiveElement as _, StyleRefinement, Styled, Subscription, Window,
     assets::IconName,
     base::{
-        self, Disableable as _, Interpolate as _, Sequence, StyledExt as _, TestSupportExt as _,
-        h_flex, transition,
+        self, Disableable as _, ElementExt as _, Interpolate as _, Sequence, StyledExt as _,
+        TestSupportExt as _, h_flex, transition,
     },
     canvas, div, point,
     prelude::FluentBuilder as _,
@@ -1059,7 +1058,7 @@ impl RenderOnce for Tabs {
                                 .text_color(text)
                                 .map(|this| {
                                     if has_overlay {
-                                        this.on_padding_bounds(tooltip.track_bounds())
+                                        this.on_prepaint(tooltip.track_bounds())
                                             .on_hover(move |hovered, window, cx| {
                                                 tooltip.hovered(*hovered, window, cx)
                                             })

@@ -38,7 +38,6 @@
 
 mod avatar;
 mod badge;
-mod bounds;
 mod button;
 mod collapse;
 mod command;

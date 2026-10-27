@@ -13,7 +13,7 @@ use gpui_kit::{
     RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     Window,
     base::{
-        Align, Disableable, GlobalState, Selectable as _, TestSupportExt as _,
+        Align, Disableable, ElementExt as _, GlobalState, Selectable as _, TestSupportExt as _,
         actions::{SelectDown, SelectLeft, SelectRight},
         h_flex,
     },
@@ -21,9 +21,7 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use super::{
-    BAR_CONTEXT, MenuAnchor, MenuEntry, MenuEvent, MenuState, panel::MenuPanels, panel::measure,
-};
+use super::{BAR_CONTEXT, MenuAnchor, MenuEntry, MenuEvent, MenuState, panel::MenuPanels};
 use crate::{ActiveTheme as _, Button, ButtonSize};
 
 /// One menu of a [`MenuBar`]: its title and its rows.
@@ -469,9 +467,9 @@ impl RenderOnce for MenuBar {
                     .relative()
                     .flex_shrink_0()
                     .child(title)
-                    .child(measure(move |bounds| {
+                    .on_prepaint(move |bounds, _, _| {
                         titles.borrow_mut().insert(key, bounds);
-                    }))
+                    })
             }))
             .child(MenuPanels::new(
                 ElementId::NamedChild(self.id.into(), "menus".into()),

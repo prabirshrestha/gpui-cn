@@ -15,8 +15,8 @@ use gpui_kit::{
     StyleRefinement, Styled, Window,
     assets::IconName,
     base::{
-        self, Align, Disableable, GlobalState, Placement, Positioner, StyledExt as _,
-        TestSupportExt as _,
+        self, Align, Disableable, ElementExt as _, GlobalState, Placement, Positioner,
+        StyledExt as _, TestSupportExt as _,
         actions::{Confirm, SelectDown, SelectFirst, SelectLast, SelectUp},
         h_flex,
         input::InputContextMenuCapabilities,
@@ -35,7 +35,7 @@ use menu::{ItemRenderer, LabelRenderer, Menu, PartRenderer, Rows};
 use crate::{
     ActiveTheme as _, ButtonSize, Icon, MenuEntry, Theme, ThemeTokens,
     button::ControlGeometry,
-    menu::{MenuLook, MenuMotion, TextMenuBuilder, corner, measure},
+    menu::{MenuLook, MenuMotion, TextMenuBuilder, corner},
     theme::mix,
 };
 
@@ -555,11 +555,8 @@ impl<V: SelectValue> Select<V> {
                 )
             })
             // The recorder spans the padding box, so the hairline around
-            // the trigger is added back; `on_prepaint` would leave the
-            // bounds shifted by the trigger's padding.
-            .child(measure(move |bounds| {
-                trigger_bounds.set(bounds.dilate(px(1.)))
-            }))
+            // the trigger is added back.
+            .on_prepaint(move |bounds, _, _| trigger_bounds.set(bounds.dilate(px(1.))))
             .on_hover({
                 let hovered = hovered.clone();
                 move |is_hovered, _, cx| {

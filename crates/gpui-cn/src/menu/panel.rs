@@ -8,13 +8,13 @@ use gpui_kit::{
     accesskit::Toggled,
     assets::IconName,
     base::{
-        Align, POPUP_PRIORITY, Placement, Positioner, TestSupportExt as _,
+        Align, ElementExt as _, POPUP_PRIORITY, Placement, Positioner, TestSupportExt as _,
         actions::{
             Cancel, Confirm, SelectDown, SelectFirst, SelectLast, SelectLeft, SelectRight, SelectUp,
         },
         v_flex,
     },
-    canvas, deferred, div, point,
+    deferred, div, point,
     prelude::FluentBuilder as _,
     px,
 };
@@ -121,18 +121,6 @@ impl RenderOnce for MenuPanels {
         }
         holder.children(panels)
     }
-}
-
-/// Reports an element's bounds as it is laid out: an absolute child at
-/// its padding box's corner, the size of that box. `ElementExt::on_prepaint`
-/// leaves its recorder at the static position, inside the padding, which
-/// shifts the bounds by it.
-pub(crate) fn measure(on_bounds: impl FnOnce(Bounds<Pixels>) + 'static) -> impl IntoElement {
-    canvas(move |bounds, _, _| on_bounds(bounds), |_, _, _, _| {})
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
 }
 
 /// The id of the panel at `depth`: the menu's for the root, the submenu
@@ -281,7 +269,7 @@ impl Panel {
             .line_height(look.line_height)
             .text_color(look.foreground)
             // The recorder spans the padding box; the hairline is outside it.
-            .child(measure(move |panel| bounds.set(panel.dilate(px(1.)))))
+            .on_prepaint(move |panel, _, _| bounds.set(panel.dilate(px(1.))))
             .child(
                 ScrollArea::list(rows_id, &list, look.row_height, move |row, window, cx| {
                     rows.render(row, window, cx)
@@ -580,9 +568,9 @@ impl Rows {
             })
             .children(content)
             .when(is_submenu, |this| {
-                this.child(measure(move |bounds| {
+                this.on_prepaint(move |bounds, _, _| {
                     submenu_rows.borrow_mut().insert(row, bounds);
-                }))
+                })
             })
             // A pointer that moves over a row highlights it and opens its
             // submenu; a row that scrolls under a resting pointer does not.
