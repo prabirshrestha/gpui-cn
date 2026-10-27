@@ -21,9 +21,9 @@ all-features = true
 workspace = true
 
 [features]
-default = []
-# GPUI Fast as the GPUI backend instead of gpui-pre: retained views and
-# cached scroll layers, so unchanged frames cost less.
+default = ["gpui-fast"]
+# GPUI Fast as the GPUI backend instead of gpui-pre, on by default: retained
+# views and cached scroll layers, so unchanged frames cost less.
 gpui-fast = ["gpui-kit/gpui-fast"]
 # JetBrains Mono as the code font, registered by `init`.
 jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]

@@ -53,3 +53,6 @@ split-debuginfo = "unpacked"
 gpui-pre = { opt-level = 3 }
 gpui-pre-platform = { opt-level = 3 }
 gpui-pre-macros = { opt-level = 3 }
+gpui-fast = { opt-level = 3 }
+gpui-fast-platform = { opt-level = 3 }
+gpui-fast-macros = { opt-level = 3 }

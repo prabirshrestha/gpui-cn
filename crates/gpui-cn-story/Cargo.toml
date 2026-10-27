@@ -12,7 +12,7 @@ license.workspace = true
 workspace = true
 
 [features]
-default = ["terminal"]
+default = ["gpui-fast", "terminal"]
 # GPUI Fast as the backend, for the gallery and the FPS HUD.
 gpui-fast = ["gpui-cn/gpui-fast", "gpui-fps?/gpui-fast"]
 # The Terminal story: a shell in a pty through `gpui_cn::terminal`.
