@@ -22,6 +22,9 @@ workspace = true
 
 [features]
 default = []
+# GPUI Fast as the GPUI backend instead of gpui-pre: retained views and
+# cached scroll layers, so unchanged frames cost less.
+gpui-fast = ["gpui-kit/gpui-fast"]
 # JetBrains Mono as the code font, registered by `init`.
 jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
 # The terminal in `gpui_cn::terminal`, on libghostty-vt: the element, the

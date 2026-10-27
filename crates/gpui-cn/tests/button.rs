@@ -382,10 +382,13 @@ fn tab_recovers_after_the_focused_button_disappears(cx: &mut TestAppContext) {
         view.show_first = false;
         cx.notify();
     });
+    // The removed button's focus handle goes with its element state. GPUI
+    // Fast releases it when effects flush, as an app does after each event,
+    // so the window has no focus and Root takes it back on the next frame.
+    cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
-        // The removed button's focus handle goes with its element state, so
-        // the window has no focus and Root takes it back on the next frame.
-        window.render_frame(cx);
         window.render_frame(cx);
         window.press("tab", cx);
         assert_eq!(window.find("second").focused(), Some(true));
