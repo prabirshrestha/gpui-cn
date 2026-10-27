@@ -17,7 +17,7 @@ use gpui_cn::{
 use gpui_kit::{
     AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId,
     Entity, InteractiveElement as _, IntoElement, ParentElement as _, PlatformInput, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, Styled as _, Window, actions,
+    ScrollDelta, ScrollEvent, SharedString, Styled as _, Window, actions,
     base::{Selectable as _, StyledExt as _, TestSupportExt as _},
     div,
     prelude::FluentBuilder as _,
@@ -503,7 +503,7 @@ pub async fn exercise(gallery: Entity<Gallery>, handle: AnyWindowHandle, cx: &mu
                     // On the page, to the right of the sidebar.
                     let position = gpui_kit::point(size.width * 0.7, size.height * 0.6);
                     window.dispatch_event(
-                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        PlatformInput::Scroll(ScrollEvent {
                             position,
                             delta: ScrollDelta::Pixels(gpui_kit::point(px(0.), px(delta))),
                             ..Default::default()

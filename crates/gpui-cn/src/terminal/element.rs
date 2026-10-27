@@ -13,10 +13,11 @@ use gpui_kit::base::{StyledExt as _, TestSupportExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler as _, Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
-    LineLayout, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Point, RenderOnce, ShapedLine, Size, StatefulInteractiveElement as _, StyleRefinement,
-    Styled, TextAlign, TextRun, Window, canvas, div, fill, outline, point, px, size,
+    EntityInputHandler as _, Font, FontStyle, FontWeight, HitboxBehavior, Hsla, InteractiveElement,
+    IntoElement, LineLayout, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, RenderOnce, ScrollEvent, ShapedLine, Size,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, TextRun, Window, canvas,
+    div, fill, outline, point, px, size,
 };
 
 use crate::theme::ActiveTheme as _;
@@ -163,7 +164,6 @@ impl RenderOnce for Terminal {
             }))
             .on_key_down(update(&state, TerminalState::on_key_down))
             .on_key_up(update(&state, TerminalState::on_key_up))
-            .on_scroll_wheel(update(&state, TerminalState::on_scroll))
             .on_mouse_down(
                 MouseButton::Left,
                 update(&state, TerminalState::on_mouse_down),
@@ -370,9 +370,19 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                 }
             }
             state.update(cx, |s, _| s.row_cache = rows);
-            (painting, geometry)
+            let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+            (painting, geometry, hitbox)
         },
-        move |_bounds, (painting, geometry), window, cx| {
+        move |_bounds, (painting, geometry, hitbox), window, cx| {
+            // A scroll area around the terminal takes the wheel in the
+            // capture phase, from the outside in, so the terminal takes
+            // its steps there too, and its stop keeps them from the page.
+            let scroll_state = paint_state.downgrade();
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
+                    let _ = scroll_state.update(cx, |s, cx| s.on_scroll(event, window, cx));
+                }
+            });
             let drag_state = paint_state.downgrade();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                 if phase == DispatchPhase::Capture

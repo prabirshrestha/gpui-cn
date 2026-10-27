@@ -4,7 +4,7 @@ use gpui_cn::ScrollArea;
 use gpui_kit::base::Root;
 use gpui_kit::{
     AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    PlatformInput, Render, ScrollDelta, ScrollWheelEvent, Styled as _, TestAppContext, TouchPhase,
+    PlatformInput, Render, ScrollDelta, ScrollEvent, Styled as _, TestAppContext, TouchPhase,
     Window, base::TestSupportExt as _, div, point, px, size, test::TestWindowExt as _,
 };
 
@@ -159,7 +159,7 @@ fn a_step_past_the_top_stretches_the_region(cx: &mut TestAppContext) {
         // A finger pulling down at the top: the rows follow it past the
         // edge instead of staying put.
         window.dispatch_event(
-            PlatformInput::ScrollWheel(ScrollWheelEvent {
+            PlatformInput::Scroll(ScrollEvent {
                 position: window.find("rows").bounds().center(),
                 delta: ScrollDelta::Pixels(point(px(0.), px(60.))),
                 touch_phase: TouchPhase::Started,
@@ -168,7 +168,7 @@ fn a_step_past_the_top_stretches_the_region(cx: &mut TestAppContext) {
             cx,
         );
         window.dispatch_event(
-            PlatformInput::ScrollWheel(ScrollWheelEvent {
+            PlatformInput::Scroll(ScrollEvent {
                 position: window.find("rows").bounds().center(),
                 delta: ScrollDelta::Pixels(point(px(0.), px(60.))),
                 touch_phase: TouchPhase::Moved,

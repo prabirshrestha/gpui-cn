@@ -68,7 +68,7 @@ fn setup(cx: &mut TestAppContext, disabled: bool) -> Setup {
     }
 }
 
-fn tap(window: &mut Window, key: &str, cx: &mut gpui_kit::App) {
+fn tap(window: &mut Window, key: &'static str, cx: &mut gpui_kit::App) {
     let keystroke = gpui_kit::Keystroke::parse(key).unwrap();
     window.press(key, cx);
     window.dispatch_event(

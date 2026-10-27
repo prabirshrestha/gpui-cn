@@ -12,10 +12,9 @@ use gpui_cn::{
     ListError, LocalFiles, MemoryFiles, PageToken, PathStyle, ReduceMotion, SourcePath, Theme,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement as _, PlatformInput, Render, SharedString,
-    Styled as _, Task, TestAppContext, Window, WindowHandle, base::Root, div, px, size,
-    test::TestWindowExt as _,
+    App, AppContext as _, Context, ElementId, Entity, IntoElement, Modifiers, ParentElement as _,
+    Render, SharedString, Styled as _, Task, TestAppContext, Window, WindowHandle, base::Root, div,
+    px, size, test::TestWindowExt as _,
 };
 
 const SELECT_ALL: &str = if cfg!(target_os = "macos") {
@@ -217,25 +216,7 @@ fn double_click(setup: &Setup, id: impl Into<ElementId>, cx: &mut TestAppContext
 /// A click with `modifiers` held, which the window helper cannot send.
 fn click_with(setup: &Setup, id: ElementId, modifiers: Modifiers, cx: &mut TestAppContext) {
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        let position = window.find(id).bounds().center();
-        for event in [
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers,
-                click_count: 1,
-                first_mouse: false,
-            }),
-            PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers,
-                click_count: 1,
-            }),
-        ] {
-            window.dispatch_event(event, cx);
-            window.render_frame(cx);
-        }
+        window.click_with_modifiers(id, modifiers, cx)
     })
     .unwrap();
     settle(setup, cx);
@@ -418,9 +399,19 @@ fn the_selection_belongs_to_its_directory(cx: &mut TestAppContext) {
 fn modifiers_toggle_and_extend_a_selection_of_several(cx: &mut TestAppContext) {
     let setup = start(cx, project(), "/home/me", multiple());
     click(&setup, entry("lib.rs"), cx);
-    click_with(&setup, entry("notes.txt"), Modifiers::secondary_key(), cx);
+    click_with(
+        &setup,
+        entry("notes.txt"),
+        cx.update(|cx| Modifiers::secondary_key(cx)),
+        cx,
+    );
     assert_eq!(selection(&setup, cx), ["lib.rs", "notes.txt"]);
-    click_with(&setup, entry("lib.rs"), Modifiers::secondary_key(), cx);
+    click_with(
+        &setup,
+        entry("lib.rs"),
+        cx.update(|cx| Modifiers::secondary_key(cx)),
+        cx,
+    );
     assert_eq!(selection(&setup, cx), ["notes.txt"], "the modifier toggles");
     click(&setup, entry("Cargo.toml"), cx);
     assert_eq!(
@@ -455,7 +446,12 @@ fn modifiers_toggle_and_extend_a_selection_of_several(cx: &mut TestAppContext) {
 fn a_picker_of_one_file_ignores_modifiers(cx: &mut TestAppContext) {
     let setup = start(cx, project(), "/home/me", keep());
     click(&setup, entry("lib.rs"), cx);
-    click_with(&setup, entry("notes.txt"), Modifiers::secondary_key(), cx);
+    click_with(
+        &setup,
+        entry("notes.txt"),
+        cx.update(|cx| Modifiers::secondary_key(cx)),
+        cx,
+    );
     assert_eq!(selection(&setup, cx), ["notes.txt"]);
     press(&setup, SELECT_ALL, cx);
     assert_eq!(selection(&setup, cx), ["notes.txt"]);
@@ -565,7 +561,12 @@ fn the_menu_switches_the_filter(cx: &mut TestAppContext) {
 fn a_selected_file_the_filter_hides_is_not_chosen(cx: &mut TestAppContext) {
     let setup = start(cx, project(), "/home/me", multiple_filters());
     click(&setup, entry("lib.rs"), cx);
-    click_with(&setup, entry("notes.txt"), Modifiers::secondary_key(), cx);
+    click_with(
+        &setup,
+        entry("notes.txt"),
+        cx.update(|cx| Modifiers::secondary_key(cx)),
+        cx,
+    );
     setup
         .state
         .update(cx, |state, cx| state.set_active_filter(1, cx));

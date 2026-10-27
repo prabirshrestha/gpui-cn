@@ -215,7 +215,7 @@ impl TooltipTrigger {
             let build = self.build.clone();
             let request = TooltipRequest::new(self.bounds.get(), move |_, cx| build(cx));
             let request = match self.placement {
-                Some(placement) => request.placement(placement),
+                Some(placement) => request.with_placement(placement),
                 None => request,
             };
             TooltipHost::note_requester(window, &self.owner, cx);

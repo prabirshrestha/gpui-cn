@@ -28,7 +28,7 @@ gpui-cn = { path = "crates/gpui-cn", version = "0.7.2" }
 # versions append the pinned Ghostty version and commit as build metadata.
 ghostty-vt-sys = { path = "crates/ghostty-vt-sys", version = "0.7.2" }
 ghostty-vt = { path = "crates/ghostty-vt", version = "0.7.2" }
-gpui-kit = { version = "0.7.1", default-features = false }
+gpui-kit = { version = "0.8.1", default-features = false }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

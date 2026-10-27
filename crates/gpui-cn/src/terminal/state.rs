@@ -9,8 +9,8 @@ use std::sync::Arc;
 use gpui_kit::{
     App, ClipboardItem, Context, ElementId, EventEmitter, FocusHandle, Focusable, IntoElement,
     KeyDownEvent, KeyUpEvent, Keystroke, KeystrokeEvent, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString,
-    Subscription, Task, Window,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollEvent, SharedString, Subscription,
+    Task, Window,
 };
 
 use crate::terminal::appearance::TerminalAppearance;
@@ -767,7 +767,7 @@ impl TerminalState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Ok(keystroke) = Keystroke::parse(keystroke) else {
+        let Ok(keystroke) = Keystroke::parse_with_os(keystroke, cx.platform_info().os) else {
             return;
         };
         let event = KeyDownEvent {
@@ -822,7 +822,7 @@ impl TerminalState {
 
     pub(crate) fn on_scroll(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -389,15 +389,6 @@ impl<E: Entry> Browser<E> {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Path"));
         let overdraw = cx.theme().metrics.folder_list_height;
         let list = ListState::new(0, ListAlignment::Top, overdraw);
-        let weak = cx.weak_entity();
-        list.set_scroll_handler(move |event, _, cx| {
-            if event.count > 0 && event.visible_range.end >= event.count {
-                weak.update(cx, |owner: &mut O, cx| {
-                    owner.browser_mut().load_more_on_scroll(cx)
-                })
-                .ok();
-            }
-        });
         let style = source.style();
         Self {
             input,
@@ -1000,6 +991,13 @@ impl<E: Entry> Browser<E> {
     /// The list reached its last row: loads the next page unless a request
     /// is running or the last one failed, which the row retries on a
     /// click.
+    /// The rows moved. Reaching the end of the list loads the next page.
+    pub(crate) fn rows_scrolled<O: Host<E>>(&mut self, cx: &mut Context<O>) {
+        if self.list.is_scrolled_to_end() == Some(true) {
+            self.load_more_on_scroll(cx);
+        }
+    }
+
     fn load_more_on_scroll<O: Host<E>>(&mut self, cx: &mut Context<O>) {
         if let Some(Listing::Ready(loaded)) = self.listing()
             && loaded.more == MoreState::Idle

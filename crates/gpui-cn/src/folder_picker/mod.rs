@@ -519,12 +519,16 @@ impl RenderOnce for FolderPicker {
                     look: look.clone(),
                     pointer_cursors,
                 };
+                let scrolled = state.clone();
                 ScrollArea::list(
                     child("rows"),
                     &list,
                     look.row_height,
                     move |row, window, cx| rows.render(row, window, cx),
                 )
+                .on_scroll(move |_, cx| {
+                    scrolled.update(cx, |state, cx| state.browser_mut().rows_scrolled(cx));
+                })
                 .size_full()
                 .into_any_element()
             }

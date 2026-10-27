@@ -146,7 +146,7 @@ impl ScrollAccumulator {
 mod tests {
     use super::*;
 
-    fn keystroke(value: &str) -> Keystroke {
+    fn keystroke(value: &'static str) -> Keystroke {
         Keystroke::parse(value).expect("valid keystroke")
     }
 

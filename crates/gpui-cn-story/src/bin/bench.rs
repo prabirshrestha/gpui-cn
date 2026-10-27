@@ -29,7 +29,7 @@ mod macos {
     use gpui_cn_story::Gallery;
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, PlatformInput, ScrollDelta,
-        ScrollWheelEvent, point, px, test::TestWindowExt as _,
+        ScrollEvent, point, px, test::TestWindowExt as _,
     };
 
     /// Median and 95th percentile, in milliseconds.
@@ -186,7 +186,7 @@ mod macos {
                 let position = window.find("page").bounds().center();
                 let start = Instant::now();
                 window.dispatch_event(
-                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    PlatformInput::Scroll(ScrollEvent {
                         position,
                         delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
                         ..Default::default()
@@ -298,7 +298,7 @@ mod macos {
                         let position = window.find(child(id, "rows")).bounds().center();
                         let start = Instant::now();
                         window.dispatch_event(
-                            PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            PlatformInput::Scroll(ScrollEvent {
                                 position,
                                 delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
                                 ..Default::default()

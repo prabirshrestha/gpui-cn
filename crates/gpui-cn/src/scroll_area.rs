@@ -1,8 +1,6 @@
 //! A vertical scroll region that stretches past its ends and springs
 //! back, on every platform, with an overlay scrollbar.
 
-use std::rc::Rc;
-
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ListSizingBehavior,
     ListState, ParentElement, Pixels, RenderOnce, ScrollHandle, StatefulInteractiveElement as _,
@@ -12,6 +10,7 @@ use gpui_kit::{
 };
 
 type RenderItem = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
+type OnScroll = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// What the region scrolls: children laid out in full, or a virtual list
 /// that lays out only the rows in view.
@@ -59,6 +58,7 @@ pub struct ScrollArea {
     id: ElementId,
     content: Content,
     handle: Option<ScrollHandle>,
+    on_scroll: Option<OnScroll>,
     style: StyleRefinement,
 }
 
@@ -70,6 +70,7 @@ impl ScrollArea {
             id: id.into(),
             content: Content::Children(Vec::new()),
             handle: None,
+            on_scroll: None,
             style: StyleRefinement::default(),
         }
     }
@@ -98,6 +99,7 @@ impl ScrollArea {
                 render_item: Box::new(render_item),
             },
             handle: None,
+            on_scroll: None,
             style: StyleRefinement::default(),
         }
     }
@@ -109,6 +111,14 @@ impl ScrollArea {
     /// that. Without one the region keeps its own, keyed by its id.
     pub fn track(mut self, handle: &ScrollHandle) -> Self {
         self.handle = Some(handle.clone());
+        self
+    }
+
+    /// Runs after a wheel step or a pan moves the region. The region
+    /// moves its content itself, so a list's own scroll handler does not
+    /// run for these steps; read the new position from the list state.
+    pub fn on_scroll(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_scroll = Some(Box::new(handler));
         self
     }
 }
@@ -135,24 +145,20 @@ fn chrome<H: ScrollbarHandle + Clone>(
     id: &ElementId,
     handle: &H,
     viewport: impl IntoElement,
-) -> (AnyElement, AnyElement, Rc<dyn Fn() -> bool>) {
-    let bounce = ScrollBounce::new(
+    on_scroll: Option<OnScroll>,
+) -> (AnyElement, AnyElement) {
+    let mut bounce = ScrollBounce::new(
         ElementId::NamedChild(id.clone().into(), "bounce".into()),
         handle,
         viewport,
     )
     .enabled(true);
+    if let Some(handler) = on_scroll {
+        bounce = bounce.on_scroll(handler);
+    }
     let scrollbar = base::Scrollbar::vertical(handle)
         .id(ElementId::NamedChild(id.clone().into(), "scrollbar".into()));
-    let can_scroll = {
-        let handle = handle.clone();
-        move || handle.content_size().height > handle.viewport_bounds().size.height
-    };
-    (
-        bounce.into_any_element(),
-        scrollbar.into_any_element(),
-        Rc::new(can_scroll),
-    )
+    (bounce.into_any_element(), scrollbar.into_any_element())
 }
 
 impl RenderOnce for ScrollArea {
@@ -163,7 +169,8 @@ impl RenderOnce for ScrollArea {
         // flex, margin, position); the viewport takes the rest (padding,
         // direction, gap, colors).
         let (frame_style, viewport_style) = split_style(self.style);
-        let (bounce, scrollbar, can_scroll) = match self.content {
+        let on_scroll = self.on_scroll;
+        let (bounce, scrollbar) = match self.content {
             Content::Children(children) => {
                 let handle = match self.handle {
                     Some(handle) => handle,
@@ -184,7 +191,7 @@ impl RenderOnce for ScrollArea {
                     .track_scroll(&handle)
                     .refine_style(&viewport_style)
                     .children(children);
-                chrome(&self.id, &handle, viewport)
+                chrome(&self.id, &handle, viewport, on_scroll)
             }
             Content::List {
                 state,
@@ -219,23 +226,16 @@ impl RenderOnce for ScrollArea {
                             .with_sizing_behavior(ListSizingBehavior::Infer)
                             .size_full(),
                     );
-                chrome(&self.id, &state, viewport)
+                chrome(&self.id, &state, viewport, on_scroll)
             }
         };
-        // GPUI lets every scroll region under the pointer take a wheel
-        // step, so a region inside a page would scroll the page too. The
-        // box keeps the step when the region has room to scroll, after
-        // the viewport moved and the bounce took what was left; a region
-        // whose content fits passes it on.
+        // The bounce owns the wheel: the innermost region under the
+        // pointer with room to scroll takes the step in the capture phase
+        // and stops it there, and a region whose content fits passes it on.
         div()
             .id(ElementId::NamedChild(self.id.into(), "frame".into()))
             .relative()
             .refine_style(&frame_style)
-            .on_scroll_wheel(move |_, _, cx| {
-                if can_scroll() {
-                    cx.stop_propagation();
-                }
-            })
             .child(bounce)
             .child(scrollbar)
     }
