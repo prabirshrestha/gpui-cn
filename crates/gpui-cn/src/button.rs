@@ -442,11 +442,15 @@ impl Surface {
 /// moves and no gray passes through mid-transition.
 impl Interpolate for Surface {
     fn interpolate(&self, target: &Self, progress: f32) -> Self {
+        // Weighted this way, progress 0 and 1 give exactly `from` and `to`
+        // on every platform, so whole state weights paint the state's own
+        // colors.
+        let weigh = |from: f32, to: f32| from * (1. - progress) + to * progress;
         let lerp = |from: Hsla, to: Hsla| Hsla {
-            h: from.h + (to.h - from.h) * progress,
-            s: from.s + (to.s - from.s) * progress,
-            l: from.l + (to.l - from.l) * progress,
-            a: from.a + (to.a - from.a) * progress,
+            h: weigh(from.h, to.h),
+            s: weigh(from.s, to.s),
+            l: weigh(from.l, to.l),
+            a: weigh(from.a, to.a),
         };
         Self {
             background: lerp(self.background, target.background),
