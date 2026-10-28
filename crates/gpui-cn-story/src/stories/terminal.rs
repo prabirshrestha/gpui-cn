@@ -21,8 +21,8 @@ use gpui_cn::{
 use gpui_kit::{
     Action, AnyView, App, AppContext as _, Axis, Bounds, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement as _, Pixels, Render, SharedString, Styled as _, WeakEntity, Window, actions,
-    base::ElementExt as _, div, px,
+    KeyBindingContextPredicate, ParentElement as _, Pixels, Render, SharedString, Styled as _,
+    WeakEntity, Window, actions, base::ElementExt as _, div, px,
 };
 
 use crate::{Story, frame, note, page, section};
@@ -102,29 +102,25 @@ fn bind_keys(cx: &mut App) {
     let context = Some(CONTEXT);
     let leader = |key: &str| format!("{LEADER} {key}");
     let mut bindings = vec![
-        KeyBinding::new(&leader("c"), NewTab, context),
-        KeyBinding::new(&leader("n"), NextTab, context),
-        KeyBinding::new(&leader("p"), PreviousTab, context),
-        KeyBinding::new(&leader("|"), SplitRight, context),
-        KeyBinding::new(&leader("\\"), SplitRight, context),
-        KeyBinding::new(&leader("%"), SplitRight, context),
-        KeyBinding::new(&leader("-"), SplitDown, context),
-        KeyBinding::new(&leader("\""), SplitDown, context),
-        KeyBinding::new(&leader("h"), FocusLeft, context),
-        KeyBinding::new(&leader("j"), FocusDown, context),
-        KeyBinding::new(&leader("k"), FocusUp, context),
-        KeyBinding::new(&leader("l"), FocusRight, context),
-        KeyBinding::new(&leader("o"), FocusNext, context),
-        KeyBinding::new(&leader("x"), ClosePane, context),
-        KeyBinding::new(&leader("z"), TogglePaneZoom, context),
-        KeyBinding::new(&leader(LEADER), SendLeader, context),
+        binding(&leader("c"), NewTab, cx),
+        binding(&leader("n"), NextTab, cx),
+        binding(&leader("p"), PreviousTab, cx),
+        binding(&leader("|"), SplitRight, cx),
+        binding(&leader("\\"), SplitRight, cx),
+        binding(&leader("%"), SplitRight, cx),
+        binding(&leader("-"), SplitDown, cx),
+        binding(&leader("\""), SplitDown, cx),
+        binding(&leader("h"), FocusLeft, cx),
+        binding(&leader("j"), FocusDown, cx),
+        binding(&leader("k"), FocusUp, cx),
+        binding(&leader("l"), FocusRight, cx),
+        binding(&leader("o"), FocusNext, cx),
+        binding(&leader("x"), ClosePane, cx),
+        binding(&leader("z"), TogglePaneZoom, cx),
+        binding(&leader(LEADER), SendLeader, cx),
     ];
     for number in 1..=9 {
-        bindings.push(KeyBinding::new(
-            &leader(&number.to_string()),
-            SelectTab(number),
-            context,
-        ));
+        bindings.push(binding(&leader(&number.to_string()), SelectTab(number), cx));
     }
     if cfg!(target_os = "macos") {
         bindings.extend([
@@ -142,16 +138,27 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new("cmd-alt-down", FocusDown, context),
         ]);
         for number in 1..=9 {
-            bindings.push(KeyBinding::new(
-                &format!("cmd-{number}"),
-                SelectTab(number),
-                context,
-            ));
+            bindings.push(binding(&format!("cmd-{number}"), SelectTab(number), cx));
         }
     }
     cx.bind_keys(gpui_cn::terminal::default_key_bindings());
     cx.bind_keys(bindings);
     cx.set_global(Bindings);
+}
+
+/// A story binding for `keys`, which may be built at run time, in the
+/// story's key context.
+fn binding(keys: &str, action: impl Action, cx: &App) -> KeyBinding {
+    let context = KeyBindingContextPredicate::parse(CONTEXT).expect("a valid key context");
+    KeyBinding::load(
+        keys,
+        Box::new(action),
+        Some(Rc::new(context)),
+        false,
+        None,
+        cx,
+    )
+    .expect("a valid key binding")
 }
 
 /// A pane's identity, which names its element and its terminal.

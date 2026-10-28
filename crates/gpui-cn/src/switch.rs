@@ -114,8 +114,38 @@ impl Styled for Switch {
     }
 }
 
-/// The animated part of the look: the track color and where the thumb
-/// sits, measured from the track's padding edge.
+/// How far the switch is into checked and disabled, from 0 to 1. The
+/// progress animates and the track is mixed from the current theme each
+/// frame, so a theme change repaints at once instead of fading from the
+/// old theme's colors.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Progress {
+    checked: f32,
+    disabled: f32,
+}
+
+impl Progress {
+    fn of(checked: bool, disabled: bool) -> Self {
+        let weight = |on: bool| if on { 1. } else { 0. };
+        Self {
+            checked: weight(checked),
+            disabled: weight(disabled),
+        }
+    }
+}
+
+impl Interpolate for Progress {
+    fn interpolate(&self, target: &Self, progress: f32) -> Self {
+        let lerp = |from: f32, to: f32| from + (to - from) * progress;
+        Self {
+            checked: lerp(self.checked, target.checked),
+            disabled: lerp(self.disabled, target.disabled),
+        }
+    }
+}
+
+/// The look that follows the progress: the track color and where the
+/// thumb sits, measured from the track's padding edge.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Surface {
     track: Hsla,
@@ -158,6 +188,16 @@ impl Surface {
             },
         }
     }
+
+    /// The look at `progress`, mixed from the looks of the current theme.
+    /// Whole progress gives exactly the look of that state.
+    fn at(progress: Progress, theme: &ThemeTokens) -> Self {
+        let checked = |disabled| {
+            Self::of(false, disabled, theme)
+                .interpolate(&Self::of(true, disabled, theme), progress.checked)
+        };
+        checked(false).interpolate(&checked(true), progress.disabled)
+    }
 }
 
 /// The thumb color. GPUI fades each quad on its own, so a disabled thumb
@@ -199,7 +239,14 @@ impl RenderOnce for Switch {
         let pointer_cursors = settings.pointer_cursors;
         let checked = self.checked;
         let disabled = self.disabled;
-        let (look, target) = {
+        let progress = transition(
+            ElementId::NamedChild(self.id.clone().into(), "progress".into()),
+            Progress::of(checked, disabled),
+            slide,
+            window,
+            cx,
+        );
+        let (look, surface) = {
             let theme = cx.theme();
             let metrics = &theme.metrics;
             (
@@ -220,16 +267,9 @@ impl RenderOnce for Switch {
                     ring_spread: metrics.focus_ring,
                     radius: theme.radius_full(),
                 },
-                Surface::of(checked, disabled, theme),
+                Surface::at(progress, theme),
             )
         };
-        let surface = transition(
-            ElementId::NamedChild(self.id.clone().into(), "surface".into()),
-            target,
-            slide,
-            window,
-            cx,
-        );
 
         // The switch owns its focus handle and hands it to base, so it can
         // tell whether the ring shows.
@@ -327,6 +367,28 @@ mod tests {
         assert_eq!(off.track, theme.switch_track_off);
         let mid = off.interpolate(&on, 0.5);
         assert_eq!(mid.thumb_offset, px(6.));
+    }
+
+    #[test]
+    fn whole_progress_gives_the_look_of_that_state() {
+        let theme = crate::theme::test_tokens(&ThemeConfig::dark(), ThemeAppearance::Dark);
+        for checked in [false, true] {
+            for disabled in [false, true] {
+                assert_eq!(
+                    Surface::at(Progress::of(checked, disabled), &theme),
+                    Surface::of(checked, disabled, &theme),
+                    "checked {checked}, disabled {disabled}"
+                );
+            }
+        }
+        let half = Surface::at(
+            Progress {
+                checked: 0.5,
+                disabled: 0.,
+            },
+            &theme,
+        );
+        assert_eq!(half.thumb_offset, px(6.));
     }
 
     #[test]

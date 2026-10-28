@@ -721,7 +721,7 @@ impl FilePickerState {
         self.retarget();
         let mut names = self.selected.clone();
         let mut anchor = Some(name.clone());
-        if self.multiple && modifiers.secondary() {
+        if self.multiple && modifiers.secondary(cx) {
             if !names.remove(&name) {
                 names.insert(name.clone());
             }
@@ -973,12 +973,16 @@ impl RenderOnce for FilePicker {
                     look: look.clone(),
                     pointer_cursors,
                 };
+                let scrolled = state.clone();
                 ScrollArea::list(
                     child("rows"),
                     &list,
                     look.row_height,
                     move |row, window, cx| rows.render(row, window, cx),
                 )
+                .on_scroll(move |_, cx| {
+                    scrolled.update(cx, |state, cx| state.browser_mut().rows_scrolled(cx));
+                })
                 .size_full()
                 .into_any_element()
             }

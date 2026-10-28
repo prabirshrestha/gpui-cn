@@ -33,7 +33,7 @@ pub(crate) use look::{
     MenuLook, MenuMotion, check_slot, label_block, line_slot, matched_text, row_frame, row_line,
     search_row, search_style, separator,
 };
-pub(crate) use panel::{MenuPanels, corner, measure, placement, shortcut};
+pub(crate) use panel::{MenuPanels, corner, placement, shortcut};
 pub(crate) use slot::OpenSlot;
 pub(crate) use text::{TextMenuBuilder, open_text_menu};
 

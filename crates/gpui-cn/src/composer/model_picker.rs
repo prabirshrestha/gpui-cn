@@ -1530,7 +1530,7 @@ fn panel(
         })
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let keystroke = &event.keystroke;
-            if keystroke.modifiers.secondary() {
+            if keystroke.modifiers.secondary(cx) {
                 if let Ok(number) = keystroke.key.parse::<usize>()
                     && (1..=SHORTCUT_ROWS).contains(&number)
                 {

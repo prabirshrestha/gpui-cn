@@ -1,11 +1,13 @@
-use crate::bounds::OnPaddingBounds as _;
 use std::rc::Rc;
 
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement, Interactivity,
     IntoElement, ParentElement, Pixels, RenderOnce, Role, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
-    base::{self, Disableable, Interpolate, Placement, Selectable, StyledExt as _, transition},
+    base::{
+        self, Disableable, ElementExt as _, Interpolate, Placement, Selectable, StyledExt as _,
+        transition,
+    },
     div,
     prelude::FluentBuilder as _,
     px, relative,
@@ -416,7 +418,7 @@ impl InteractiveElement for Button {
     }
 }
 
-/// The colors of one variant in one state, animated as one value so the
+/// The colors of one variant in one state, mixed as one value so the
 /// three channels always agree.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Surface {
@@ -440,11 +442,15 @@ impl Surface {
 /// moves and no gray passes through mid-transition.
 impl Interpolate for Surface {
     fn interpolate(&self, target: &Self, progress: f32) -> Self {
+        // Weighted this way, progress 0 and 1 give exactly `from` and `to`
+        // on every platform, so whole state weights paint the state's own
+        // colors.
+        let weigh = |from: f32, to: f32| from * (1. - progress) + to * progress;
         let lerp = |from: Hsla, to: Hsla| Hsla {
-            h: from.h + (to.h - from.h) * progress,
-            s: from.s + (to.s - from.s) * progress,
-            l: from.l + (to.l - from.l) * progress,
-            a: from.a + (to.a - from.a) * progress,
+            h: weigh(from.h, to.h),
+            s: weigh(from.s, to.s),
+            l: weigh(from.l, to.l),
+            a: weigh(from.a, to.a),
         };
         Self {
             background: lerp(self.background, target.background),
@@ -460,6 +466,42 @@ enum PointerState {
     Rest,
     Hovered,
     Pressed,
+}
+
+/// How far the button is into each state, from 0 to 1. The weights
+/// animate and the colors are mixed from the current theme each frame,
+/// so a theme change repaints at once instead of fading from the old
+/// theme's colors.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StateWeights {
+    hovered: f32,
+    pressed: f32,
+    selected: f32,
+    disabled: f32,
+}
+
+impl StateWeights {
+    fn of(pointer: PointerState, selected: bool, disabled: bool) -> Self {
+        let weight = |on: bool| if on { 1. } else { 0. };
+        Self {
+            hovered: weight(pointer != PointerState::Rest),
+            pressed: weight(pointer == PointerState::Pressed),
+            selected: weight(selected),
+            disabled: weight(disabled),
+        }
+    }
+}
+
+impl Interpolate for StateWeights {
+    fn interpolate(&self, target: &Self, progress: f32) -> Self {
+        let lerp = |from: f32, to: f32| from + (to - from) * progress;
+        Self {
+            hovered: lerp(self.hovered, target.hovered),
+            pressed: lerp(self.pressed, target.pressed),
+            selected: lerp(self.selected, target.selected),
+            disabled: lerp(self.disabled, target.disabled),
+        }
+    }
 }
 
 impl ButtonVariant {
@@ -562,12 +604,48 @@ impl ButtonVariant {
             Self::Link => Surface::plain(gpui_kit::transparent_black(), theme.link),
         }
     }
+
+    /// The surface at `weights`, mixed from the surfaces of the current
+    /// theme. Whole weights give exactly the surface of that state.
+    fn surface_at(self, weights: StateWeights, in_sidebar: bool, theme: &ThemeTokens) -> Surface {
+        use PointerState::*;
+        let at = |selected: bool| {
+            let surface = |state| self.surface(state, selected, in_sidebar, theme);
+            surface(Rest)
+                .interpolate(&surface(Hovered), weights.hovered)
+                .interpolate(&surface(Pressed), weights.pressed)
+        };
+        let enabled = at(false).interpolate(&at(true), weights.selected);
+        if weights.disabled == 0. {
+            return enabled;
+        }
+        enabled.interpolate(&self.disabled(enabled, theme), weights.disabled)
+    }
+
+    /// `surface` as a disabled button paints it. The reference keeps a
+    /// disabled button's fill at half strength and drops its text most of
+    /// the way to the surface (#6e6e6e on #181818), rather than fading the
+    /// whole control.
+    fn disabled(self, surface: Surface, theme: &ThemeTokens) -> Surface {
+        Surface {
+            background: surface.background.opacity(theme.disabled_opacity),
+            border: surface.border.opacity(theme.disabled_opacity),
+            foreground: match self {
+                ButtonVariant::Primary => surface.foreground,
+                _ => mix(
+                    theme.foreground(),
+                    theme.background(),
+                    if theme.is_dark() { 0.52 } else { 0.64 },
+                ),
+            },
+        }
+    }
 }
 
 /// Everything the render needs from the theme, read in one borrow so the
 /// tokens are never cloned.
 struct Look {
-    target: Surface,
+    surface: Surface,
     underline: bool,
     ring: Hsla,
     ring_spread: Pixels,
@@ -622,27 +700,18 @@ impl RenderOnce for Button {
         };
 
         let in_sidebar = crate::sidebar::in_sidebar(cx);
+        let weights = transition(
+            ElementId::NamedChild(self.id.clone().into(), "state".into()),
+            StateWeights::of(pointer_state, shows_selected, disabled),
+            fast,
+            window,
+            cx,
+        );
         let look =
             {
                 let theme = cx.theme();
-                let mut target = variant.surface(pointer_state, shows_selected, in_sidebar, theme);
-                if disabled {
-                    // The reference keeps a disabled button's fill at half
-                    // strength and drops its text most of the way to the surface
-                    // (#6e6e6e on #181818), rather than fading the whole control.
-                    target.background = target.background.opacity(theme.disabled_opacity);
-                    target.border = target.border.opacity(theme.disabled_opacity);
-                    target.foreground = match variant {
-                        ButtonVariant::Primary => target.foreground,
-                        _ => mix(
-                            theme.foreground(),
-                            theme.background(),
-                            if theme.is_dark() { 0.52 } else { 0.64 },
-                        ),
-                    };
-                }
                 Look {
-                    target,
+                    surface: variant.surface_at(weights, in_sidebar, theme),
                     underline: variant == ButtonVariant::Link
                         && (shows_selected || pointer_state != PointerState::Rest),
                     ring: match variant {
@@ -656,13 +725,7 @@ impl RenderOnce for Button {
                     geometry: size.geometry(theme),
                 }
             };
-        let surface = transition(
-            ElementId::NamedChild(self.id.clone().into(), "surface".into()),
-            look.target,
-            fast,
-            window,
-            cx,
-        );
+        let surface = look.surface;
 
         let focus_handle = self.focus_handle.clone().unwrap_or_else(|| {
             window
@@ -814,7 +877,7 @@ impl RenderOnce for Button {
             .tab_stop(self.tab_stop)
             .child(content)
             .when_some(managed_tooltip.as_ref(), |this, (trigger, _)| {
-                this.on_padding_bounds(trigger.track_bounds())
+                this.on_prepaint(trigger.track_bounds())
             })
             .when_some(native_tooltip, |this, trigger| {
                 this.tooltip(trigger.native())
@@ -889,6 +952,35 @@ mod tests {
 
     fn dark() -> ThemeTokens {
         crate::theme::test_tokens(&ThemeConfig::dark(), ThemeAppearance::Dark)
+    }
+
+    #[test]
+    fn whole_weights_mix_to_the_surface_of_that_state() {
+        let theme = dark();
+        let ghost = ButtonVariant::Ghost;
+        for pointer in [
+            PointerState::Rest,
+            PointerState::Hovered,
+            PointerState::Pressed,
+        ] {
+            for selected in [false, true] {
+                let weights = StateWeights::of(pointer, selected, false);
+                assert_eq!(
+                    ghost.surface_at(weights, true, &theme),
+                    ghost.surface(pointer, selected, true, &theme),
+                    "{pointer:?}, selected {selected}"
+                );
+            }
+        }
+        let selected = ghost.surface(PointerState::Rest, true, false, &theme);
+        assert_eq!(
+            ghost.surface_at(
+                StateWeights::of(PointerState::Rest, true, true),
+                false,
+                &theme
+            ),
+            ghost.disabled(selected, &theme),
+        );
     }
 
     #[test]

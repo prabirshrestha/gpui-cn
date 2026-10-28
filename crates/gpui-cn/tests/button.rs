@@ -67,7 +67,7 @@ struct Setup {
 
 /// Presses and releases a key on the focused element. `press` sends only
 /// the key down; keyboard activation needs the matching key up.
-fn tap(window: &mut Window, key: &str, cx: &mut gpui_kit::App) {
+fn tap(window: &mut Window, key: &'static str, cx: &mut gpui_kit::App) {
     let keystroke = gpui_kit::Keystroke::parse(key).unwrap();
     window.press(key, cx);
     window.dispatch_event(
@@ -180,10 +180,15 @@ fn disabled_button_ignores_pointer_and_keyboard(cx: &mut TestAppContext) {
     .unwrap();
     focus_save(&setup, cx);
     cx.update_window(setup.handle.into(), |_, window, cx| {
-        // A disabled button does not take focus, so Enter goes nowhere.
-        assert_ne!(window.find("save").focused(), Some(true));
+        // Base keeps focus that a disabled button already holds, so Tab can
+        // leave it, but Enter and Space do not activate it.
         tap(window, "enter", cx);
         tap(window, "space", cx);
+        window.press("tab", cx);
+        assert_eq!(window.find("other").focused(), Some(true));
+        // It is not a Tab stop, so Shift-Tab does not come back to it.
+        window.press("shift-tab", cx);
+        assert_ne!(window.find("save").focused(), Some(true));
     })
     .unwrap();
     assert_eq!(setup.clicks.get(), 0);
@@ -377,10 +382,13 @@ fn tab_recovers_after_the_focused_button_disappears(cx: &mut TestAppContext) {
         view.show_first = false;
         cx.notify();
     });
+    // The removed button's focus handle goes with its element state. GPUI
+    // Fast releases it when effects flush, as an app does after each event,
+    // so the window has no focus and Root takes it back on the next frame.
+    cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
-        // The removed button's focus handle goes with its element state, so
-        // the window has no focus and Root takes it back on the next frame.
-        window.render_frame(cx);
         window.render_frame(cx);
         window.press("tab", cx);
         assert_eq!(window.find("second").focused(), Some(true));

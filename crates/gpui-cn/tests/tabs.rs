@@ -548,6 +548,28 @@ fn a_wheel_step_over_an_overflowing_strip_does_not_scroll_the_page(cx: &mut Test
     let top = strip_top(cx);
     wheel(cx);
     assert_eq!(strip_top(cx), top, "the page stayed under the strip");
+    // A vertical mouse line is the strip's too, though the page scrolls
+    // vertically: the strip glides it sideways.
+    let first_tab_x = |cx: &mut TestAppContext| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.find(tab_id(0)).bounds().origin.x
+        })
+        .unwrap()
+    };
+    let before = first_tab_x(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.scroll(
+            tab_id(1),
+            gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -1.)),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(400));
+    assert_eq!(strip_top(cx), top, "the page stayed under the strip");
+    assert!(first_tab_x(cx) < before, "the strip glided the line");
     tabs.update(cx, |state, cx| {
         for n in 3..8 {
             state.remove(format!("t{n}"), cx);

@@ -395,21 +395,6 @@ fn paint_card(picture: &Picture, ring: Hsla, bounds: Bounds<Pixels>, window: &mu
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Surface {
-    ring: Hsla,
-    label: Hsla,
-}
-
-impl Interpolate for Surface {
-    fn interpolate(&self, target: &Self, progress: f32) -> Self {
-        Self {
-            ring: self.ring.interpolate(&target.ring, progress),
-            label: self.label.interpolate(&target.label, progress),
-        }
-    }
-}
-
 impl RenderOnce for ThemeModePicker {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let settings = Theme::global(cx);
@@ -462,21 +447,17 @@ impl RenderOnce for ThemeModePicker {
                         |(ix, (mode, picture))| {
                             let option_id = ThemeModePicker::option_id(&id, mode);
                             let chosen = mode == value;
-                            let target = Surface {
-                                ring: if chosen {
-                                    look.ring
-                                } else {
-                                    look.ring.alpha(0.)
-                                },
-                                label: if chosen { look.label } else { look.muted_label },
-                            };
-                            let surface = transition(
-                                ElementId::NamedChild(option_id.clone().into(), "surface".into()),
-                                target,
+                            // The choice animates, not the colors, so a theme
+                            // change repaints the ring and label at once.
+                            let weight = transition(
+                                ElementId::NamedChild(option_id.clone().into(), "chosen".into()),
+                                if chosen { 1. } else { 0. },
                                 fast.clone(),
                                 window,
                                 cx,
                             );
+                            let ring = look.ring.alpha(look.ring.a * weight);
+                            let label = look.muted_label.interpolate(&look.label, weight);
                             let focus_handle = window
                                 .use_keyed_state(option_id.clone(), cx, |_, cx| cx.focus_handle())
                                 .read(cx)
@@ -484,7 +465,6 @@ impl RenderOnce for ThemeModePicker {
                             let focus_visible =
                                 focus_handle.is_focused(window) && window.last_input_was_keyboard();
                             let on_change = on_change.clone();
-                            let ring = surface.ring;
                             base::Radio::new(option_id)
                                 .track_focus(&focus_handle)
                                 .checked(chosen)
@@ -535,7 +515,7 @@ impl RenderOnce for ThemeModePicker {
                                     div()
                                         .text_size(look.text_size)
                                         .line_height(look.line_height)
-                                        .text_color(surface.label)
+                                        .text_color(label)
                                         .child(option_label(mode)),
                                 )
                                 .when_some(on_change, |this, on_change| {

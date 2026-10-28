@@ -4,17 +4,14 @@ use gpui_kit::{
     AnyElement, App, ElementId, Entity, FocusHandle, InteractiveElement as _, IntoElement, Length,
     MouseButton, ParentElement as _, RenderOnce, StyleRefinement, Styled, Window,
     base::{
-        Align, GlobalState, Selectable, StyledExt as _, TestSupportExt as _,
+        Align, ElementExt as _, GlobalState, Selectable, StyledExt as _, TestSupportExt as _,
         actions::{Confirm, SelectDown},
     },
     div,
     prelude::FluentBuilder as _,
 };
 
-use super::{
-    MenuAnchor, MenuEntry, MenuState, TRIGGER_CONTEXT,
-    panel::{MenuPanels, measure},
-};
+use super::{MenuAnchor, MenuEntry, MenuState, TRIGGER_CONTEXT, panel::MenuPanels};
 
 /// Builds the trigger, marked open while the menu is.
 type TriggerBuilder = Box<dyn FnOnce(bool) -> AnyElement>;
@@ -161,7 +158,7 @@ impl RenderOnce for DropdownMenu {
             .flex_shrink_0()
             .refine_style(&self.style)
             .relative()
-            .child(measure(move |bounds| trigger_bounds.set(bounds)))
+            .on_prepaint(move |bounds, _, _| trigger_bounds.set(bounds))
             .on_mouse_down(MouseButton::Left, {
                 let state = state.clone();
                 let open_menu = open_menu.clone();

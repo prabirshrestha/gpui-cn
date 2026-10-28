@@ -255,23 +255,25 @@ pub fn default_key_bindings() -> Vec<gpui_kit::KeyBinding> {
     };
     use gpui_kit::KeyBinding;
     let context = Some(KEY_CONTEXT);
-    let (copy, paste, select_all, clear) = if cfg!(target_os = "macos") {
-        ("cmd-c", "cmd-v", "cmd-a", "cmd-k")
-    } else {
-        (
-            "ctrl-shift-c",
-            "ctrl-shift-v",
-            "ctrl-shift-a",
-            "ctrl-shift-k",
-        )
-    };
     // Ghostty binds the font size to Cmd on macOS and Ctrl elsewhere, with
     // `+` beside `=` for keyboards that have a plus key.
-    let zoom = if cfg!(target_os = "macos") {
-        "cmd"
-    } else {
-        "ctrl"
-    };
+    let [copy, paste, select_all, clear, larger, plus, smaller, reset] =
+        if cfg!(target_os = "macos") {
+            [
+                "cmd-c", "cmd-v", "cmd-a", "cmd-k", "cmd-=", "cmd-+", "cmd--", "cmd-0",
+            ]
+        } else {
+            [
+                "ctrl-shift-c",
+                "ctrl-shift-v",
+                "ctrl-shift-a",
+                "ctrl-shift-k",
+                "ctrl-=",
+                "ctrl-+",
+                "ctrl--",
+                "ctrl-0",
+            ]
+        };
     vec![
         KeyBinding::new(copy, Copy, context),
         KeyBinding::new(paste, Paste, context),
@@ -283,9 +285,9 @@ pub fn default_key_bindings() -> Vec<gpui_kit::KeyBinding> {
         KeyBinding::new("shift-end", ScrollToBottom, context),
         KeyBinding::new("shift-up", ScrollLineUp, context),
         KeyBinding::new("shift-down", ScrollLineDown, context),
-        KeyBinding::new(&format!("{zoom}-="), IncreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}-+"), IncreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}--"), DecreaseFontSize, context),
-        KeyBinding::new(&format!("{zoom}-0"), ResetFontSize, context),
+        KeyBinding::new(larger, IncreaseFontSize, context),
+        KeyBinding::new(plus, IncreaseFontSize, context),
+        KeyBinding::new(smaller, DecreaseFontSize, context),
+        KeyBinding::new(reset, ResetFontSize, context),
     ]
 }

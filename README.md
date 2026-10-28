@@ -22,6 +22,14 @@ gpui-kit = "0.7"
 gpui-cn = "0.1"
 ```
 
+gpui-cn runs on [GPUI Fast](https://crates.io/crates/gpui-fast) by default,
+through its `gpui-fast` feature. To run on gpui-pre instead, turn off the
+default features:
+
+```toml
+gpui-cn = { version = "0.1", default-features = false }
+```
+
 ## Show a button
 
 ```rust
@@ -148,8 +156,9 @@ building the gallery needs [Zig](https://ziglang.org/download/) 0.16. Run
 `mise install`; the build finds the repository version through mise even
 when another `zig` is first on `PATH`. Without the submodule, the first
 build downloads the pinned Ghostty source instead.
-`cargo run --no-default-features` builds the gallery without the story
-and without Zig.
+`cargo run --no-default-features --features gpui-fast` builds the gallery
+without the story and without Zig. Without `--features gpui-fast`, it also
+runs on gpui-pre.
 
 Pick a story in the sidebar. Each story you pick is a page on the
 navigation stack, and the arrows in the title bar walk back and forward

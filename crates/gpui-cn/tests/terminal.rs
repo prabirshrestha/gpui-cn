@@ -430,6 +430,26 @@ fn the_grid_takes_every_whole_cell_inside_the_padding(cx: &mut TestAppContext) {
     assert!(room_y - f32::from(viewport.rows()) * cell_height < cell_height);
 }
 
+/// An application binding for `keys`, built at run time, in the terminal's
+/// key context.
+fn terminal_binding(
+    keys: &str,
+    action: impl gpui_kit::Action,
+    cx: &gpui_kit::App,
+) -> gpui_kit::KeyBinding {
+    let context = gpui_kit::KeyBindingContextPredicate::parse(gpui_cn::terminal::KEY_CONTEXT)
+        .expect("a valid key context");
+    gpui_kit::KeyBinding::load(
+        keys,
+        Box::new(action),
+        Some(Rc::new(context)),
+        false,
+        None,
+        cx,
+    )
+    .expect("a valid key binding")
+}
+
 fn zoom_key(key: &str) -> String {
     if cfg!(target_os = "macos") {
         format!("cmd-{key}")
@@ -521,16 +541,8 @@ fn an_app_binding_overrides_or_removes_a_terminal_default(cx: &mut TestAppContex
         move |cx| {
             // Bound after gpui_cn::init, in the terminal's context, so it wins.
             cx.bind_keys([
-                gpui_kit::KeyBinding::new(
-                    &zoom_key("="),
-                    AppZoom,
-                    Some(gpui_cn::terminal::KEY_CONTEXT),
-                ),
-                gpui_kit::KeyBinding::new(
-                    &zoom_key("-"),
-                    gpui_kit::NoAction,
-                    Some(gpui_cn::terminal::KEY_CONTEXT),
-                ),
+                terminal_binding(&zoom_key("="), AppZoom, cx),
+                terminal_binding(&zoom_key("-"), gpui_kit::NoAction, cx),
             ]);
             cx.on_action(move |_: &AppZoom, _| *used.borrow_mut() += 1);
         }

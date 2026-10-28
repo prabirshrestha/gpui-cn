@@ -64,12 +64,16 @@ that this repository does not name. The workspace has four crates:
 5. Anything that scrolls vertically is a `ScrollArea`, never a bare
    `overflow_y_scroll`. GPUI hands a wheel step to every scroll region
    under the pointer, so a bare region inside a page scrolls the page
-   with it. `ScrollArea` keeps the step while it has room to scroll and
-   passes it on when its content fits, and it bounces at its ends. A
-   component that scrolls its own content without a `ScrollArea`, such
-   as the terminal's scrollback or a strip of tabs, must consume the
-   wheel steps it uses with `cx.stop_propagation()`, so the page or the
-   window under it does not scroll too. Every such component has a
+   with it. `ScrollArea` takes the step in the capture phase while it
+   has room to scroll and passes it on when its content fits, and it
+   bounces at its ends. A component that scrolls its own content without
+   a `ScrollArea`, such as the terminal's scrollback or a strip of tabs,
+   must take the wheel steps it uses in the capture phase, from a hitbox
+   it paints, and stop them with `cx.stop_propagation()`, so the page or
+   the window under it does not scroll too. A bubble-phase `on_scroll`
+   runs too late. A list in a `ScrollArea` reads its position from the
+   area's `on_scroll`, because the list's own scroll handler does not
+   run for these steps. Every such component has a
    headless test that puts it in a `ScrollArea` taller than the window,
    sends a wheel step over it, and asserts that the component scrolled
    and the page did not. A region that shows or hides content animates

@@ -18,20 +18,19 @@
 //! }
 //! ```
 
-use crate::bounds::OnPaddingBounds as _;
 use std::{fmt, rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, EventEmitter, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _, StyleRefinement,
-    Styled, Subscription, Window,
+    AnyElement, App, AppContext as _, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
+    HitboxBehavior, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, Pixels, RenderOnce, ScrollEvent, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Subscription, Window,
     assets::IconName,
     base::{
-        self, Disableable as _, Interpolate as _, Sequence, StyledExt as _, TestSupportExt as _,
-        h_flex, transition,
+        self, Disableable as _, ElementExt as _, Interpolate as _, Sequence, StyledExt as _,
+        TestSupportExt as _, h_flex, transition,
     },
-    div, point,
+    canvas, div, point,
     prelude::FluentBuilder as _,
     px,
 };
@@ -423,14 +422,11 @@ impl TabsState {
         self.glide_to(from, from - delta, cx);
     }
 
-    /// Glides the strip by a wheel step GPUI already applied to the
-    /// offset: the offset goes back to where it was, and the strip glides
-    /// there instead. Steps that arrive while a glide is under way stack
-    /// on its end, so a spinning wheel keeps one smooth run.
+    /// Glides the strip by a mouse wheel step. Steps that arrive while a
+    /// glide is under way stack on its end, so a spinning wheel keeps one
+    /// smooth run.
     fn wheel_by(&mut self, step: Pixels, cx: &mut Context<Self>) {
-        let now = self.scroll.offset();
-        let from = now.x - step;
-        self.scroll.set_offset(point(from, now.y));
+        let from = self.scroll.offset().x;
         let base = match self.glide {
             Some(glide)
                 if (glide.from..=glide.to).contains(&from)
@@ -441,6 +437,19 @@ impl TabsState {
             _ => from,
         };
         self.glide_to(from, base + step, cx);
+    }
+
+    /// Moves the strip by a trackpad or touch step at once, clamped to
+    /// the content, and ends any glide.
+    fn pan_by(&mut self, step: Pixels, cx: &mut Context<Self>) {
+        let now = self.scroll.offset();
+        let max = self.scroll.max_offset().x;
+        let to = (now.x + step).clamp(-max, px(0.));
+        self.glide = None;
+        if to != now.x {
+            self.scroll.set_offset(point(to, now.y));
+            cx.notify();
+        }
     }
 
     fn glide_to(&mut self, from: Pixels, to: Pixels, cx: &mut Context<Self>) {
@@ -1049,7 +1058,7 @@ impl RenderOnce for Tabs {
                                 .text_color(text)
                                 .map(|this| {
                                     if has_overlay {
-                                        this.on_padding_bounds(tooltip.track_bounds())
+                                        this.on_prepaint(tooltip.track_bounds())
                                             .on_hover(move |hovered, window, cx| {
                                                 tooltip.hovered(*hovered, window, cx)
                                             })
@@ -1127,23 +1136,6 @@ impl RenderOnce for Tabs {
                     window.request_animation_frame();
                 }
             })
-            // GPUI hands a wheel step to every scroll region under the
-            // pointer, and applies a line step to this box before its
-            // listeners run: the viewport keeps the step while it can
-            // scroll, and glides a mouse line instead of jumping it.
-            .on_scroll_wheel(move |event, window, cx| {
-                if wheel_scroll.max_offset().x > px(0.) {
-                    cx.stop_propagation();
-                }
-                if event.delta.precise() {
-                    return;
-                }
-                let delta = event.delta.pixel_delta(window.line_height());
-                let step = if delta.x != px(0.) { delta.x } else { delta.y };
-                if step != px(0.) {
-                    wheel_state.update(cx, |state, cx| state.wheel_by(step, cx));
-                }
-            })
             .id(child("scroll"))
             .test_support()
             .flex()
@@ -1185,7 +1177,42 @@ impl RenderOnce for Tabs {
                 }
                 cx.stop_propagation();
             })
+            .relative()
             .refine_style(&self.style)
+            // A scroll area around the strip takes the wheel in the capture
+            // phase, from the outside in, so the strip takes its steps
+            // there too while it overflows, and its stop keeps them from
+            // the page. A mouse line glides; a trackpad step lands at once.
+            .child(
+                canvas(
+                    |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+                    move |_, hitbox, window, _| {
+                        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
+                            if phase != DispatchPhase::Capture
+                                || !hitbox.should_handle_scroll(window)
+                                || wheel_scroll.max_offset().x <= px(0.)
+                            {
+                                return;
+                            }
+                            cx.stop_propagation();
+                            let delta = event.delta.pixel_delta(window.line_height());
+                            let step = if delta.x != px(0.) { delta.x } else { delta.y };
+                            if step == px(0.) {
+                                return;
+                            }
+                            wheel_state.update(cx, |state, cx| {
+                                if event.delta.precise() {
+                                    state.pan_by(step, cx);
+                                } else {
+                                    state.wheel_by(step, cx);
+                                }
+                            });
+                        });
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
             .child(
                 base::Tabs::new(child("list"))
                     .flex()

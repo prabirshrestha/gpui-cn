@@ -5,13 +5,15 @@ use std::{cell::Cell, rc::Rc};
 use gpui_kit::{
     AnyElement, App, Bounds, ElementId, FocusHandle, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, StyleRefinement, Styled, Window,
-    base::{self, Align, Placement, Selectable, StyledExt as _, TestSupportExt as _},
+    base::{
+        self, Align, ElementExt as _, Placement, Selectable, StyledExt as _, TestSupportExt as _,
+    },
     div,
 };
 
 use crate::{
     ActiveTheme as _,
-    menu::{MenuLook, MenuMotion, corner, measure, placement},
+    menu::{MenuLook, MenuMotion, corner, placement},
 };
 
 type TriggerBuilder = Box<dyn FnOnce(bool) -> AnyElement>;
@@ -158,7 +160,7 @@ impl RenderOnce for Popover {
             .trigger_with(move |open, _, _| {
                 div()
                     .relative()
-                    .child(measure(move |bounds| trigger_bounds.set(bounds)))
+                    .on_prepaint(move |bounds, _, _| trigger_bounds.set(bounds))
                     .children(self.trigger.map(|trigger| trigger(open)))
                     .into_any_element()
             })
