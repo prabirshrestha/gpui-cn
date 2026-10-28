@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-vt"
-version = "0.7.2+ghostty.1.4.0-main.83fb956"
+version = "0.8.0+ghostty.1.4.0-main.83fb956"
 dependencies = [
  "bitflags 2.13.2",
  "crossterm",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-vt-sys"
-version = "0.7.2+ghostty.1.4.0-main.83fb956"
+version = "0.8.0+ghostty.1.4.0-main.83fb956"
 dependencies = [
  "bindgen",
  "flate2",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-cn"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "damascene-fonts-jetbrains-mono",
  "ghostty-vt",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-cn-story"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "gpui-cn",
  "gpui-fps",
