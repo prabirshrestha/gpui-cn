@@ -30,9 +30,6 @@ default features:
 gpui-cn = { version = "0.1", default-features = false }
 ```
 
-An application that also uses `gpui-webview` turns on that crate's
-`gpui-fast` feature as well.
-
 ## Show a button
 
 ```rust
