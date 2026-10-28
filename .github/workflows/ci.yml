@@ -19,7 +19,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
@@ -76,7 +76,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: rui314/setup-mold@v1
       - name: Install Linux dependencies
@@ -97,7 +97,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: aarch64-apple-ios-sim
@@ -112,7 +112,7 @@ jobs:
           submodules: false
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: test ! -f third_party/ghostty/build.zig
       - run: cargo test -p ghostty-vt-sys -p ghostty-vt --all-features --locked
@@ -126,7 +126,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Fetch the Zig packages once and extract them for --system
         run: |
@@ -147,7 +147,7 @@ jobs:
           submodules: false
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # Packages ghostty-vt-sys, ghostty-vt and gpui-cn together, so
       # gpui-cn's optional dependency on ghostty-vt resolves before

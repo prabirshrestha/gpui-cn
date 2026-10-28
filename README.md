@@ -109,7 +109,7 @@ new.
 cargo add gpui-cn --features ghostty
 ```
 
-Building it needs [Zig](https://ziglang.org/download/) 0.16 on `PATH` (or
+Building it needs [Zig](https://ziglang.org/download/) 0.17 on `PATH` (or
 in `ZIG`). The first build downloads Ghostty's pinned source, about 4 MB,
 and the Zig packages it fetches, about 30 MB, into Zig's cache. For an
 offline build, set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout or the
@@ -144,7 +144,7 @@ cargo run
 ```
 
 The Terminal story runs your shell through Ghostty's terminal engine, so
-building the gallery needs [Zig](https://ziglang.org/download/) 0.16. Run
+building the gallery needs [Zig](https://ziglang.org/download/) 0.17. Run
 `mise install`; the build finds the repository version through mise even
 when another `zig` is first on `PATH`. Without the submodule, the first
 build downloads the pinned Ghostty source instead.

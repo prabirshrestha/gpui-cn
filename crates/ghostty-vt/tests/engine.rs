@@ -443,7 +443,7 @@ fn search_finds_matches_in_screen_and_scrollback() {
 }
 
 #[test]
-fn search_survives_the_terminal_being_dropped_first() {
+fn search_reads_survive_the_terminal_being_dropped_first() {
     let mut terminal = common::terminal(20, 2);
     terminal.vt_write(b"abc");
     let mut search = Search::new(&terminal).unwrap();
@@ -451,7 +451,8 @@ fn search_survives_the_terminal_being_dropped_first() {
     search.run(&terminal).unwrap();
     drop(terminal);
     assert_eq!(search.total_matches().unwrap(), 1);
-    assert!(search.tick().is_ok());
+    // Ghostty 1.4 refuses to tick once the terminal is freed.
+    assert!(search.tick().is_err());
 }
 
 #[test]

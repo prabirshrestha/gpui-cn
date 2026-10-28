@@ -249,16 +249,20 @@ impl Terminal {
     /// ground), or `Ok(None)` when the full slice was consumed without reaching
     /// ground.
     pub fn vt_write_until_ground(&mut self, data: &[u8]) -> Result<Option<usize>> {
-        let mut consumed = 0usize;
+        let mut stop = ffi::TerminalWriteStop {
+            size: std::mem::size_of::<ffi::TerminalWriteStop>(),
+            ..Default::default()
+        };
         let result = unsafe {
-            ffi::ghostty_terminal_vt_write_until_ground(
+            ffi::ghostty_terminal_vt_write_until(
                 self.inner.as_ptr(),
                 data.as_ptr(),
                 data.len(),
-                &raw mut consumed,
+                ffi::TerminalBoundary::GROUND as u32,
+                &raw mut stop,
             )
         };
-        crate::error::from_optional_result_with_len(result, consumed)
+        crate::error::from_optional_result_with_len(result, stop.consumed)
     }
 
     /// Drain the events queued since the last drain.

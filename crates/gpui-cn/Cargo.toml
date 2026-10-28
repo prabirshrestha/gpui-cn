@@ -27,7 +27,7 @@ jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
 # The terminal in `gpui_cn::terminal`, on libghostty-vt: the element, the
 # engine, a local shell in a pty on desktop targets, any other byte source,
 # and parking of idle terminals, which is on by default at runtime.
-# Building it needs Zig 0.16; see the `ghostty-vt-sys` crate.
+# Building it needs Zig 0.17; see the `ghostty-vt-sys` crate.
 ghostty = ["dep:ghostty-vt", "dep:portable-pty", "dep:windows-sys"]
 # Headless UI testing through `gpui_kit::test`.
 test-support = ["gpui-kit/test-support"]
