@@ -15,7 +15,7 @@ fn setup(cx: &mut TestAppContext) -> (WindowHandle<gpui_kit::base::Root>, Entity
         Theme::update(cx, |theme| theme.reduce_motion = ReduceMotion::On);
     });
     let mut gallery = None;
-    let handle = cx.open_window(size(px(1100.), px(900.)), |window, cx| {
+    let handle = cx.open_window(size(px(1100.), px(1000.)), |window, cx| {
         let view = cx.new(|cx| Gallery::new(window, cx));
         gallery = Some(view.clone());
         gpui_kit::base::Root::new(view, window, cx)

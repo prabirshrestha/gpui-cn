@@ -202,6 +202,10 @@ pub fn stories() -> Vec<StoryEntry> {
     entries.push(StoryEntry::of::<stories::TerminalStory>(
         StorySection::FeedbackAndDisplay,
     ));
+    #[cfg(feature = "webview")]
+    entries.push(StoryEntry::of::<stories::WebViewStory>(
+        StorySection::FeedbackAndDisplay,
+    ));
     entries.sort_by_key(|entry| (entry.section.rank(), entry.title.to_lowercase()));
     entries
 }
@@ -1016,7 +1020,8 @@ mod tests {
         let count = titles.len();
         titles.dedup();
         assert_eq!(titles.len(), count, "a title is registered twice");
-        let terminal = usize::from(cfg!(feature = "terminal"));
+        let terminal =
+            usize::from(cfg!(feature = "terminal")) + usize::from(cfg!(feature = "webview"));
         assert_eq!(
             count,
             30 + terminal,
