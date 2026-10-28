@@ -890,8 +890,14 @@ pub fn section(title: &'static str, content: impl IntoElement) -> impl IntoEleme
 }
 
 /// A story page: sections stacked with room between them.
+///
+/// The page is the root of its story's view, and it states its width. GPUI
+/// Fast lays a view out again as a layout root when it rebuilds the view
+/// inside a parent it kept, and a root with an auto width shrinks to its
+/// content. Without the width, the page drew one frame at its content width
+/// when a page change settled.
 pub fn page(sections: impl IntoIterator<Item = impl IntoElement>) -> impl IntoElement {
-    div().flex().flex_col().gap_8().children(sections)
+    div().w_full().flex().flex_col().gap_8().children(sections)
 }
 
 /// A bordered box a story shows a layout in, so a component that fills
