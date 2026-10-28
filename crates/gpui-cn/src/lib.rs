@@ -81,6 +81,8 @@ mod title_bar;
 mod tooltip;
 mod tooltip_host;
 mod touch_selection;
+#[cfg(feature = "webview")]
+pub mod webview;
 
 pub use avatar::{Avatar, AvatarGroup, AvatarSize};
 pub use badge::Badge;
@@ -149,6 +151,8 @@ pub use theme_mode_picker::ThemeModePicker;
 pub use title_bar::TitleBar;
 pub use tooltip::{Tooltip, TooltipExt, TooltipTrigger};
 pub use tooltip_host::TooltipHost;
+#[cfg(feature = "webview")]
+pub use webview::{BrowserEvent, BrowserState, WebFrame};
 
 use gpui_kit::{App, Global};
 
@@ -163,6 +167,8 @@ pub mod prelude {
     pub use crate::terminal::{
         Terminal, TerminalAppearance, TerminalColors, TerminalConfig, TerminalEvent, TerminalState,
     };
+    #[cfg(feature = "webview")]
+    pub use crate::webview::{BrowserState, WebFrame, WebView};
     pub use crate::{
         ActiveTheme, Avatar, AvatarGroup, AvatarSize, Badge, Button, ButtonSize, ButtonVariant,
         Command, CommandDialog, CommandEntry, CommandGroup, CommandItem, CommandState, ContextMenu,

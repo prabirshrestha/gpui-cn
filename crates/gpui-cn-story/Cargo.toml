@@ -12,12 +12,15 @@ license.workspace = true
 workspace = true
 
 [features]
-default = ["gpui-fast", "terminal"]
+default = ["gpui-fast", "terminal", "webview"]
 # GPUI Fast as the backend, for the gallery and the FPS HUD.
 gpui-fast = ["gpui-cn/gpui-fast", "gpui-fps?/gpui-fast"]
 # The Terminal story: a shell in a pty through `gpui_cn::terminal`.
 # Building it needs Zig 0.16.
 terminal = ["gpui-cn/ghostty"]
+# The Browser story: native web views through `gpui_cn::BrowserState`. It
+# needs a real window, so the snapshot binary does not list it.
+webview = ["gpui-cn/webview"]
 # `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
 snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image", "dep:libc"]
 # `fps`: the gpui-fps HUD, toggled with Cmd-Shift-P (Ctrl-Shift-P).
