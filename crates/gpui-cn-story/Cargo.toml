@@ -16,7 +16,7 @@ default = ["gpui-fast", "terminal"]
 # GPUI Fast as the backend, for the gallery and the FPS HUD.
 gpui-fast = ["gpui-cn/gpui-fast", "gpui-fps?/gpui-fast"]
 # The Terminal story: a shell in a pty through `gpui_cn::terminal`.
-# Building it needs Zig 0.16.
+# Building it needs Zig 0.17.
 terminal = ["gpui-cn/ghostty"]
 # `snapshot`: render the gallery offscreen (Metal, macOS) to PNG files.
 snapshot = ["gpui-kit/test-support", "gpui-cn/test-support", "dep:image", "dep:libc"]

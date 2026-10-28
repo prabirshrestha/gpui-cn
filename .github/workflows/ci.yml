@@ -19,7 +19,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
@@ -76,7 +76,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: rui314/setup-mold@v1
       - name: Install Linux dependencies
@@ -97,7 +97,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: aarch64-apple-ios-sim
@@ -112,7 +112,7 @@ jobs:
           submodules: false
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: test ! -f third_party/ghostty/build.zig
       - run: cargo test -p ghostty-vt-sys -p ghostty-vt --all-features --locked
@@ -126,17 +126,13 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Fetch the Zig packages once and extract them for --system
-        run: |
-          cd third_party/ghostty
-          zig build -Demit-lib-vt -Doptimize=ReleaseFast --global-cache-dir "$RUNNER_TEMP/zig-global" --prefix "$RUNNER_TEMP/zig-out" >/dev/null
-          mkdir -p "$RUNNER_TEMP/zig-pkg"
-          for pkg in "$RUNNER_TEMP"/zig-global/p/*.tar.gz; do tar xzf "$pkg" -C "$RUNNER_TEMP/zig-pkg"; done
+      - name: Fetch the Zig packages into zig-pkg for --system
+        run: cd third_party/ghostty && zig build --fetch=all
       - run: cargo build -p ghostty-vt-sys --locked
         env:
-          GHOSTTY_ZIG_SYSTEM_DIR: ${{ runner.temp }}/zig-pkg
+          GHOSTTY_ZIG_SYSTEM_DIR: ${{ github.workspace }}/third_party/ghostty/zig-pkg
 
   publish-dry-run:
     name: Publish dry run
@@ -147,7 +143,7 @@ jobs:
           submodules: false
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # Packages ghostty-vt-sys, ghostty-vt and gpui-cn together, so
       # gpui-cn's optional dependency on ghostty-vt resolves before

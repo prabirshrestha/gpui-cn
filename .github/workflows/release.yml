@@ -56,7 +56,7 @@ jobs:
             grep -qx true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Check the Ghostty crate versions
         run: scripts/check-ghostty-version.sh

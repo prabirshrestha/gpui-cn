@@ -11,7 +11,7 @@
 # published tarball and `git archive`), crate versions, bindings, terminfo
 # (source plus `tic -x` output), shell integration scripts.
 #
-# Needs: git, curl, shasum, tar, zig 0.16, tic, rsync, cargo, Homebrew llvm@22
+# Needs: git, curl, shasum, tar, zig 0.17, tic, rsync, cargo, Homebrew llvm@22
 # (for bindgen). Run on macOS, where the bindings are generated.
 set -euo pipefail
 
@@ -99,7 +99,6 @@ url = $url
 sha256 = $sha
 root = $tarroot
 EOF
-cp "$lock" third_party/GHOSTTY.lock
 
 set_package_version() {
   local manifest=$1

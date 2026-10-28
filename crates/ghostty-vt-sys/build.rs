@@ -401,7 +401,7 @@ fn resolve_zig() -> PathBuf {
 
     let path_zig = PathBuf::from("zig");
     let path_result = zig_version(&path_zig);
-    if matches!(&path_result, Ok(version) if version.starts_with("0.16.")) {
+    if matches!(&path_result, Ok(version) if version.starts_with("0.17.")) {
         return path_zig;
     }
 
@@ -421,12 +421,12 @@ fn resolve_zig() -> PathBuf {
 
     match path_result {
         Ok(version) => panic!(
-            "ghostty-vt-sys needs Zig 0.16.x, found `{version}` at `zig`.\n\
-             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary."
+            "ghostty-vt-sys needs Zig 0.17.x, found `{version}` at `zig`.\n\
+             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.17 binary."
         ),
         Err(error) => panic!(
-            "ghostty-vt-sys could not find Zig 0.16.x: {error}\n\
-             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary."
+            "ghostty-vt-sys could not find Zig 0.17.x: {error}\n\
+             Install it with `mise install`, activate mise, or set ZIG to the Zig 0.17 binary."
         ),
     }
 }
@@ -434,9 +434,9 @@ fn resolve_zig() -> PathBuf {
 fn check_zig_version(zig: &Path) {
     let version = zig_version(zig).unwrap_or_else(|error| panic!("{error}"));
     assert!(
-        version.starts_with("0.16."),
-        "ghostty-vt-sys needs Zig 0.16.x, found `{version}` at `{}`.\n\
-         Install it with `mise install`, activate mise, or set ZIG to the Zig 0.16 binary.",
+        version.starts_with("0.17."),
+        "ghostty-vt-sys needs Zig 0.17.x, found `{version}` at `{}`.\n\
+         Install it with `mise install`, activate mise, or set ZIG to the Zig 0.17 binary.",
         zig.display()
     );
 }

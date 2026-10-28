@@ -20,7 +20,7 @@ that this repository does not name. The workspace has four crates:
   macOS. `cargo run` at the root opens it. Its default `terminal` feature
   adds the Terminal story.
 - `crates/ghostty-vt-sys` builds libghostty-vt from the pinned Ghostty
-  source with Zig 0.16 and holds its raw bindings, which are generated and
+  source with Zig 0.17 and holds its raw bindings, which are generated and
   committed. `crates/ghostty-vt` is the safe API on it. They have no GPUI
   in them. Their SemVer core normally follows gpui-cn, and their build
   metadata records the pinned Ghostty version and short commit. An
@@ -166,7 +166,7 @@ RUSTDOCFLAGS='-D warnings' cargo doc -p gpui-cn -p ghostty-vt -p ghostty-vt-sys 
 cargo deny check licenses
 ```
 
-These need Zig 0.16 on `PATH` (see `mise.toml`) and, for a build without
+These need Zig 0.17 on `PATH` (see `mise.toml`) and, for a build without
 network, the `third_party/ghostty` submodule checked out.
 
 `deny.toml` lists the licenses this repository accepts. A crate that is

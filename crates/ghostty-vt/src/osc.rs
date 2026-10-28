@@ -138,7 +138,8 @@ impl<'p> Command<'p> {
             Type::KITTY_CLIPBOARD_PROTOCOL => CommandType::KittyClipboardProtocol,
             Type::KITTY_DESKTOP_NOTIFICATION => CommandType::KittyDesktopNotification,
             Type::KITTY_DND_PROTOCOL => CommandType::KittyDndProtocol,
-            Type::CONTEXT_SIGNAL => CommandType::ContextSignal,
+            Type::HIERARCHICAL_CONTEXT => CommandType::HierarchicalContext,
+            Type::PROGRAM_STATUS => CommandType::ProgramStatus,
 
             _ => return None,
         })
@@ -194,5 +195,6 @@ pub enum CommandType<'p> {
     KittyClipboardProtocol,
     KittyDesktopNotification,
     KittyDndProtocol,
-    ContextSignal,
+    HierarchicalContext,
+    ProgramStatus,
 }

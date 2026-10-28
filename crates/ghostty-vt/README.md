@@ -3,7 +3,7 @@
 Safe Rust API for [libghostty-vt](https://ghostty.org), the terminal
 emulation library extracted from the Ghostty terminal emulator. The
 underlying library is built from Ghostty's official source tarball by
-[`ghostty-vt-sys`](https://crates.io/crates/ghostty-vt-sys) with Zig 0.16.
+[`ghostty-vt-sys`](https://crates.io/crates/ghostty-vt-sys) with Zig 0.17.
 
 The crate version normally follows gpui-cn and records its Ghostty source as
 build metadata. For example, `0.5.0+ghostty.1.3.2-main.b40acce` uses Ghostty
@@ -45,7 +45,7 @@ fish, elvish and nushell integration scripts and returns the path for
 
 ## Requirements and environment
 
-See the sys crate: Zig 0.16 on `PATH`, network or `GHOSTTY_SOURCE_DIR` on
+See the sys crate: Zig 0.17 on `PATH`, network or `GHOSTTY_SOURCE_DIR` on
 the first build, `GHOSTTY_ZIG_SYSTEM_DIR` for offline package resolution.
 
 ## License
