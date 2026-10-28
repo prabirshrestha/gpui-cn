@@ -3,9 +3,10 @@
 use gpui_cn::ScrollArea;
 use gpui_kit::base::Root;
 use gpui_kit::{
-    AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    PlatformInput, Render, ScrollDelta, ScrollEvent, Styled as _, TestAppContext, TouchPhase,
-    Window, base::TestSupportExt as _, div, point, px, size, test::TestWindowExt as _,
+    AppContext as _, Context, Focusable as _, InteractiveElement as _, IntoElement,
+    ParentElement as _, PlatformInput, Render, ScrollDelta, ScrollEvent, Styled as _,
+    TestAppContext, TouchPhase, Window, base::TestSupportExt as _, div, point, px, size,
+    test::TestWindowExt as _,
 };
 
 /// A 200px viewport over forty 30px rows.
@@ -233,6 +234,173 @@ fn the_scrollbar_shows_after_a_wheel_step_and_drags_the_content(cx: &mut TestApp
         window.render_frame(cx);
         let row = window.find(("row", 0usize)).bounds().origin.y;
         assert!(row < px(-200.), "the thumb dragged the rows to {row:?}");
+    })
+    .unwrap();
+}
+
+/// A field above a 200px region over a field, 600px of filler, and a
+/// second field.
+struct Form {
+    outside: gpui_kit::Entity<gpui_cn::InputState>,
+    top: gpui_kit::Entity<gpui_cn::InputState>,
+    bottom: gpui_kit::Entity<gpui_cn::InputState>,
+}
+
+impl Render for Form {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(gpui_cn::Input::new(&self.outside).id("outside"))
+            .child(
+                div().h(px(200.)).child(
+                    ScrollArea::new("form")
+                        .size_full()
+                        .child(gpui_cn::Input::new(&self.top).id("top"))
+                        .child(div().h(px(600.)))
+                        .child(gpui_cn::Input::new(&self.bottom).id("bottom")),
+                ),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn focusing_a_field_scrolls_it_into_view(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let mut fields = None;
+    let handle = cx.open_window(size(px(400.), px(400.)), |window, cx| {
+        let outside = cx.new(|cx| gpui_cn::InputState::new(window, cx));
+        let top = cx.new(|cx| gpui_cn::InputState::new(window, cx));
+        let bottom = cx.new(|cx| gpui_cn::InputState::new(window, cx));
+        fields = Some((outside.clone(), top.clone(), bottom.clone()));
+        let form = cx.new(|_| Form {
+            outside,
+            top,
+            bottom,
+        });
+        Root::new(form, window, cx)
+    });
+    let (outside, top, bottom) = fields.unwrap();
+    let settle = |cx: &mut TestAppContext| {
+        for _ in 0..3 {
+            cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    };
+    settle(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let region = window.find("form").bounds();
+        assert!(
+            window.find("bottom").bounds().top() > region.bottom(),
+            "starts below the fold"
+        );
+        top.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    settle(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(
+            window.find("top").bounds().top(),
+            window.find("form").bounds().top(),
+            "a field in view does not scroll the region"
+        );
+        bottom.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    settle(cx);
+    let revealed = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let region = window.find("form").bounds();
+            let field = window.find("bottom").bounds();
+            assert!(
+                field.top() >= region.top() && field.bottom() <= region.bottom(),
+                "the focused field is inside the region: {field:?} in {region:?}"
+            );
+            outside.read(cx).focus_handle(cx).focus(window, cx);
+            field.top()
+        })
+        .unwrap();
+    settle(cx);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert_eq!(
+            window.find("bottom").bounds().top(),
+            revealed,
+            "a field outside the region does not scroll it"
+        );
+    })
+    .unwrap();
+}
+
+/// A 200px region that holds 400px of filler and a 100px region with
+/// 300px of filler and a field.
+struct NestedForm {
+    deep: gpui_kit::Entity<gpui_cn::InputState>,
+}
+
+impl Render for NestedForm {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w_full().flex().flex_col().child(
+            div().h(px(200.)).child(
+                ScrollArea::new("outer")
+                    .size_full()
+                    .child(div().id("filler").test_support().h(px(400.)))
+                    .child(
+                        div().h(px(100.)).child(
+                            ScrollArea::new("inner")
+                                .size_full()
+                                .child(div().h(px(300.)))
+                                .child(gpui_cn::Input::new(&self.deep).id("deep")),
+                        ),
+                    ),
+            ),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn nested_regions_both_scroll_to_reveal_a_field(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let mut fields = None;
+    let handle = cx.open_window(size(px(400.), px(400.)), |window, cx| {
+        let deep = cx.new(|cx| gpui_cn::InputState::new(window, cx));
+        fields = Some(deep.clone());
+        let nested = cx.new(|_| NestedForm { deep });
+        Root::new(nested, window, cx)
+    });
+    let deep = fields.unwrap();
+    let settle = |cx: &mut TestAppContext| {
+        for _ in 0..3 {
+            cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    };
+    settle(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        deep.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    settle(cx);
+    cx.update_window(handle.into(), |_, window, _| {
+        let field = window.find("deep").bounds();
+        let outer = window.find("outer").bounds();
+        let inner = window.find("inner").bounds();
+        assert!(
+            field.top() >= inner.top() && field.bottom() <= inner.bottom(),
+            "the inner region shows the field: {field:?} in {inner:?}"
+        );
+        assert!(
+            field.top() >= outer.top() && field.bottom() <= outer.bottom(),
+            "the outer region shows the field: {field:?} in {outer:?}"
+        );
     })
     .unwrap();
 }

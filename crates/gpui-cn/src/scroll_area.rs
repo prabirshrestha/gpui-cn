@@ -1,12 +1,18 @@
 //! A vertical scroll region that stretches past its ends and springs
 //! back, on every platform, with an overlay scrollbar.
 
+use std::{cell::Cell, rc::Rc};
+
 use gpui_kit::{
-    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ListSizingBehavior,
+    AnyElement, App, Bounds, ElementId, InteractiveElement as _, IntoElement, ListSizingBehavior,
     ListState, ParentElement, Pixels, RenderOnce, ScrollHandle, StatefulInteractiveElement as _,
     StyleRefinement, Styled, Window,
-    base::{self, ScrollBounce, ScrollbarHandle, StyledExt as _, TestSupportExt as _},
-    div, list,
+    base::{
+        self, ElementExt as _, ScrollBounce, ScrollbarHandle, StyledExt as _, TestSupportExt as _,
+    },
+    div, list, point,
+    prelude::FluentBuilder as _,
+    px,
 };
 
 type RenderItem = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
@@ -37,6 +43,9 @@ enum Content {
 /// shows while the region scrolls, fades when it rests, and drags. Its
 /// look comes from the theme, which projects it onto base for every
 /// scrolling element.
+///
+/// A focused field inside the region asks GPUI to reveal it, and the
+/// region scrolls until the field is in view, as GPUI's `list` does.
 ///
 /// The region fills its parent. Give it a sized parent, and put fixed
 /// chrome such as a toolbar outside it.
@@ -170,6 +179,7 @@ impl RenderOnce for ScrollArea {
         // direction, gap, colors).
         let (frame_style, viewport_style) = split_style(self.style);
         let on_scroll = self.on_scroll;
+        let mut revealer = None;
         let (bounce, scrollbar) = match self.content {
             Content::Children(children) => {
                 let handle = match self.handle {
@@ -191,6 +201,7 @@ impl RenderOnce for ScrollArea {
                     .track_scroll(&handle)
                     .refine_style(&viewport_style)
                     .children(children);
+                revealer = Some(handle.clone());
                 chrome(&self.id, &handle, viewport, on_scroll)
             }
             Content::List {
@@ -229,6 +240,11 @@ impl RenderOnce for ScrollArea {
                 chrome(&self.id, &state, viewport, on_scroll)
             }
         };
+        // GPUI's `list` takes a reveal request itself. For children, the
+        // request made before the content prepaints belongs to something
+        // outside, so it is set aside and put back unless the content made
+        // its own.
+        let outside = Rc::new(Cell::new(None));
         // The bounce owns the wheel: the innermost region under the
         // pointer with room to scroll takes the step in the capture phase
         // and stops it there, and a region whose content fits passes it on.
@@ -236,8 +252,53 @@ impl RenderOnce for ScrollArea {
             .id(ElementId::NamedChild(self.id.into(), "frame".into()))
             .relative()
             .refine_style(&frame_style)
+            .when(revealer.is_some(), |this| {
+                let outside = outside.clone();
+                this.on_prepaint(move |_, window, _| outside.set(window.take_autoscroll()))
+            })
             .child(bounce)
             .child(scrollbar)
+            .when_some(revealer, |this, handle| {
+                this.on_prepaint(move |visible, window, _| match window.take_autoscroll() {
+                    Some(request) => reveal(&handle, request, visible, window),
+                    None => {
+                        if let Some(request) = outside.take() {
+                            window.request_autoscroll(request);
+                        }
+                    }
+                })
+            })
+    }
+}
+
+/// Scrolls `handle` so `request`, an area a focused element inside the
+/// region asked to see, lies inside `visible`, the region's bounds. An
+/// area taller than the region shows from its top. The part that shows
+/// is asked of the region outside, so nested regions reveal it in turn.
+fn reveal(
+    handle: &ScrollHandle,
+    request: Bounds<Pixels>,
+    visible: Bounds<Pixels>,
+    window: &mut Window,
+) {
+    let offset = handle.offset();
+    let shift = if request.top() < visible.top() || request.size.height > visible.size.height {
+        visible.top() - request.top()
+    } else if request.bottom() > visible.bottom() {
+        visible.bottom() - request.bottom()
+    } else {
+        px(0.)
+    };
+    let y = (offset.y + shift).clamp(-handle.max_offset().y, px(0.));
+    let moved = y - offset.y;
+    if moved != px(0.) {
+        handle.set_offset(point(offset.x, y));
+        window.request_animation_frame();
+    }
+    let shown =
+        Bounds::new(request.origin + point(px(0.), moved), request.size).intersect(&visible);
+    if shown.size.height > px(0.) {
+        window.request_autoscroll(shown);
     }
 }
 
