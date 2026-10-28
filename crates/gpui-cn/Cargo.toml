@@ -62,4 +62,7 @@ windows-sys = { version = "0.61", optional = true, features = [
 ] }
 
 [dev-dependencies]
+# The tests read state that only `test-support` puts in the frame, such as
+# a text field's value, so they always build with it.
+gpui-cn = { path = ".", features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }

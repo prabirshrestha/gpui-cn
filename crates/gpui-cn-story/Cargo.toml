@@ -31,10 +31,20 @@ gpui-fps = { version = "0.8.1", optional = true }
 # The benchmark reads this process' CPU time.
 libc = { version = "0.2", optional = true }
 
+# The tests drive headless windows and find elements by id.
+[dev-dependencies]
+gpui-cn = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
+
 [[bin]]
 name = "snapshot"
 required-features = ["snapshot"]
 
 [[bin]]
 name = "bench"
+required-features = ["snapshot"]
+
+# The story lists a fixed set of files only in the snapshot build.
+[[test]]
+name = "file_picker_story"
 required-features = ["snapshot"]

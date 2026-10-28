@@ -2265,6 +2265,7 @@ version = "0.7.2"
 dependencies = [
  "damascene-fonts-jetbrains-mono",
  "ghostty-vt",
+ "gpui-cn",
  "gpui-kit",
  "libc",
  "nucleo-matcher",
