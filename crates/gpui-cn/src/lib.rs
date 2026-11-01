@@ -36,6 +36,7 @@
 //! }
 //! ```
 
+mod assets;
 mod avatar;
 mod badge;
 mod button;
@@ -63,6 +64,7 @@ mod progress;
 mod radio;
 pub mod remote;
 mod root;
+mod rule_builder;
 mod scroll_area;
 mod select;
 pub mod shell;
@@ -84,6 +86,7 @@ mod touch_selection;
 #[cfg(feature = "webview")]
 pub mod webview;
 
+pub use assets::CnAssets;
 pub use avatar::{Avatar, AvatarGroup, AvatarSize};
 pub use badge::Badge;
 pub use button::{Button, ButtonSize, ButtonVariant};
@@ -94,9 +97,9 @@ pub use command::{
 pub use command_dialog::CommandDialog;
 pub use composer::{
     Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile, Composer,
-    ComposerAssets, ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS,
-    EffortMenu, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,
-    ModelView, PermissionEvent, PermissionMenu, PermissionMode, PermissionState, PermissionTone,
+    ComposerEvent, ComposerState, ComposerStatusTab, ContextMeter, EFFORT_LABELS, EffortMenu,
+    ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider, ModelView,
+    PermissionEvent, PermissionMenu, PermissionMode, PermissionState, PermissionTone,
     SEARCH_MIN_OPTIONS, StatusOption, StatusSelect, StatusSelectEvent, StatusSelectState,
 };
 pub use dialog::Dialog;
@@ -128,6 +131,10 @@ pub use path_browser::{CreateFolderError, ListError, PathStyle, SourcePath};
 pub use popover::Popover;
 pub use progress::Progress;
 pub use radio::{Radio, RadioGroup, RadioMark};
+pub use rule_builder::{
+    Combinator, Condition, Rule, RuleBuilder, RuleBuilderEvent, RuleBuilderState, RuleEditor,
+    RuleField, RuleGroup, RuleId, RuleOperator, RuleValue,
+};
 pub use scroll_area::ScrollArea;
 pub use select::{
     SearchHandler, Select, SelectEntry, SelectEvent, SelectItem, SelectRow, SelectState,
@@ -175,12 +182,13 @@ pub mod prelude {
         Dialog, DockSkin, DropdownMenu, Field, FilePicker, FilePickerState, FolderPicker,
         FolderPickerState, Icon, Input, InputState, Label, MenuBar, MenuBarMenu, MenuBarState,
         MenuEntry, MenuItem, MenuState, MenuSubmenu, NavButtons, NavMotion, NavStack, NavStackExt,
-        NavStackState, Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, ScrollArea,
-        Select, SelectEntry, SelectItem, SelectState, Sidebar, SidebarCollapsible, SidebarGroup,
-        SidebarLayout, SidebarMenuButton, SidebarMenuSub, SidebarSeparator, SidebarSide,
-        SidebarState, SidebarTrigger, Slider, SliderEvent, SliderState, SliderValue, Spinner,
-        Switch, Tab, Tabs, TabsEvent, TabsState, Tag, TagVariant, Textarea, TextareaState, Theme,
-        ThemeMode, ThemeModePicker, ThemeScope, TitleBar, TooltipExt,
+        NavStackState, Popover, Progress, Radio, RadioGroup, RadioMark, ReduceMotion, RuleBuilder,
+        RuleBuilderState, ScrollArea, Select, SelectEntry, SelectItem, SelectState, Sidebar,
+        SidebarCollapsible, SidebarGroup, SidebarLayout, SidebarMenuButton, SidebarMenuSub,
+        SidebarSeparator, SidebarSide, SidebarState, SidebarTrigger, Slider, SliderEvent,
+        SliderState, SliderValue, Spinner, Switch, Tab, Tabs, TabsEvent, TabsState, Tag,
+        TagVariant, Textarea, TextareaState, Theme, ThemeMode, ThemeModePicker, ThemeScope,
+        TitleBar, TooltipExt,
     };
     pub use gpui_kit::base::{Disableable, Placement, Selectable, StyledExt};
     pub use gpui_kit::prelude::FluentBuilder;
