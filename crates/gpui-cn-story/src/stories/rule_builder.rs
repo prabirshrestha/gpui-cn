@@ -1,7 +1,8 @@
 use gpui_cn::{
-    ActiveTheme as _, Condition, InputEvent, Rule, RuleBuilder, RuleBuilderState, RuleEditor,
-    RuleField, RuleGroup, RuleOperator, RuleValue, RuleValueSlot, Select, SelectItem, SelectState,
-    Switch, Tag, TagVariant, Textarea, TextareaState, gpui_kit::assets::IconName,
+    ActiveTheme as _, Button, ButtonSize, Condition, InputEvent, Rule, RuleBuilder,
+    RuleBuilderState, RuleEditor, RuleField, RuleGroup, RuleOperator, RuleValue, RuleValueSlot,
+    Select, SelectItem, SelectState, Switch, Tag, TagVariant, Textarea, TextareaState,
+    gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _,
@@ -18,6 +19,7 @@ pub struct RuleBuilderStory {
     enabled: bool,
     trigger: Entity<SelectState<&'static str>>,
     conditions: Entity<RuleBuilderState>,
+    custom: Entity<RuleBuilderState>,
     actions: Entity<RuleBuilderState>,
     otherwise: Entity<RuleBuilderState>,
 }
@@ -253,7 +255,17 @@ impl RuleBuilderStory {
                     cx,
                 )
         });
-        for state in [&conditions, &actions, &otherwise] {
+        let custom = cx.new(|cx| {
+            RuleBuilderState::new(condition_fields(), window, cx).with_query(
+                RuleGroup::or([
+                    Condition::new("agent"),
+                    Condition::new("repository").with_operator("ne"),
+                ]),
+                window,
+                cx,
+            )
+        });
+        for state in [&conditions, &custom, &actions, &otherwise] {
             cx.observe(state, |_, _, cx| cx.notify()).detach();
         }
         cx.observe(&trigger, |_, _, cx| cx.notify()).detach();
@@ -261,6 +273,7 @@ impl RuleBuilderStory {
             enabled: true,
             trigger,
             conditions,
+            custom,
             actions,
             otherwise,
         }
@@ -299,6 +312,45 @@ fn describe(group: &RuleGroup, fields: &[RuleField]) -> String {
         })
         .collect::<Vec<_>>()
         .join(&joiner)
+}
+
+impl RuleBuilderStory {
+    /// The same builder with parts of the application's own: the
+    /// combinator as an "all of" or "any of" button above the rules, and
+    /// a duplicate control at the end of each row.
+    fn custom_parts(&self) -> impl IntoElement {
+        RuleBuilder::new("custom-parts", &self.custom)
+            .render_combinator(|part, _, cx| {
+                let state = part.state().clone();
+                let group = part.rule();
+                let any = state.read(cx).combinator(group) == Some(gpui_cn::Combinator::Or);
+                Some(
+                    Button::new(part.element_id().clone())
+                        .outline()
+                        .size(ButtonSize::Xs)
+                        .label(if any { "Any" } else { "All" })
+                        .on_click(move |_, _, cx| {
+                            state.update(cx, |state, cx| state.toggle_combinator(group, cx));
+                        }),
+                )
+            })
+            .render_row_end(|part, _, _| {
+                let state = part.state().clone();
+                let rule = part.rule();
+                Some(
+                    Button::new(part.element_id().clone())
+                        .ghost()
+                        .size(ButtonSize::Sm)
+                        .icon(IconName::Copy)
+                        .accessibility_label("Duplicate")
+                        .on_click(move |_, window, cx| {
+                            state.update(cx, |state, cx| {
+                                state.duplicate(rule, window, cx);
+                            });
+                        }),
+                )
+            })
+    }
 }
 
 impl Render for RuleBuilderStory {
@@ -412,6 +464,7 @@ impl Render for RuleBuilderStory {
                     .child(query),
             )
             .into_any_element(),
+            section("Your own parts", self.custom_parts()).into_any_element(),
             note(
                 "Drag a grip to move a rule before another or to the end of a group. Click And or Or to switch it. Type a value in a list and press Enter to add it.",
                 cx,

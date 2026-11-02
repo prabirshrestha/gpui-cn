@@ -794,3 +794,26 @@ fn on_touch_the_grip_and_combinator_are_hit_targets(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn duplicate_copies_a_rule_or_group_just_after_it_with_new_ids(cx: &mut TestAppContext) {
+    let setup = setup(cx, query());
+    let (top, nested) = ids(&setup, cx);
+    let copy = cx
+        .update_window(setup.handle.into(), |_, window, cx| {
+            setup
+                .state
+                .update(cx, |state, cx| state.duplicate(top[1], window, cx))
+        })
+        .unwrap()
+        .unwrap();
+    setup.state.read_with(cx, |state, _| {
+        let after = state.children(state.root());
+        assert_eq!(after, vec![top[0], top[1], copy]);
+        let copied = state.children(copy);
+        assert_eq!(copied.len(), 2);
+        assert!(copied.iter().all(|id| !nested.contains(id)), "new ids");
+        let rules = state.query();
+        assert_eq!(rules.rules()[1], rules.rules()[2]);
+    });
+}

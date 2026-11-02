@@ -373,6 +373,32 @@ impl RuleBuilderState {
         Some(id)
     }
 
+    /// Adds a copy of a rule, with new ids, just after it. Returns the
+    /// copy's id.
+    pub fn duplicate(
+        &mut self,
+        id: RuleId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<RuleId> {
+        let (group, index) = self.root.parent_of(id)?;
+        let node = match self.root.find(id)?.to_rule() {
+            Rule::Condition(condition) => self.build_condition(condition, window, cx)?,
+            Rule::Group(rules) => {
+                let copy = self.next();
+                let depth = self.depth(id);
+                self.build_group(copy, &rules, depth, window, cx)
+            }
+        };
+        let copy = node.id;
+        self.root
+            .find_mut(group)?
+            .children_mut()?
+            .insert(index + 1, node);
+        self.changed(cx);
+        Some(copy)
+    }
+
     /// Removes a rule. A nested group left empty goes with it.
     pub fn remove(&mut self, id: RuleId, cx: &mut Context<Self>) {
         if self.take(id).is_some() {
