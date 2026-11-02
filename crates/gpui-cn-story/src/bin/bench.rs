@@ -25,7 +25,7 @@ fn main() {
 mod macos {
     use std::{sync::Arc, time::Instant};
 
-    use gpui_cn::{ComposerAssets, ReduceMotion, Theme};
+    use gpui_cn::{ReduceMotion, Theme};
     use gpui_cn_story::Gallery;
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, PlatformInput, ScrollDelta,
@@ -95,7 +95,7 @@ mod macos {
             .unwrap_or(200);
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(ComposerAssets),
+            Arc::new(gpui_cn_story::StoryAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         let start = Instant::now();

@@ -425,6 +425,16 @@ pub struct MetricTokens {
     pub tag_height: Pixels,
     /// The size of an icon in a tag: 12px, shadcn's badge `size-3`.
     pub tag_icon: Pixels,
+    /// The least height of a rule builder row: a default control plus
+    /// 16px, 44px at the default font size and 60px on touch. The
+    /// reference app has no rule builder, so the value is measured from
+    /// the rule builder post the component follows (a 720px capture at
+    /// twice the scale).
+    pub rule_row: Pixels,
+    /// The gutter left of a rule group's rows, which holds the bracket and
+    /// the combinator pill: 44px at the default font size, measured from
+    /// the same post.
+    pub rule_rail: Pixels,
     /// The height and least width of a badge count: 16px, gpui-kit's
     /// medium badge.
     pub badge_count: Pixels,
@@ -583,6 +593,8 @@ impl MetricTokens {
             tab_close: control_xs,
             tag_height: scaled(20.),
             tag_icon: scaled(12.),
+            rule_row: control_md + scaled(16.),
+            rule_rail: scaled(44.),
             badge_count: scaled(16.),
             badge_count_text: scaled(10.),
             badge_count_offset: scaled(4.),
@@ -1436,6 +1448,8 @@ mod tests {
         assert_eq!(default.metrics.avatar_md, px(32.));
         assert_eq!(default.metrics.tag_height, px(20.));
         assert_eq!(large.metrics.tag_height, px(25.));
+        assert_eq!(default.metrics.rule_row, px(44.));
+        assert_eq!(default.metrics.rule_rail, px(44.));
         assert_eq!(default.metrics.badge_count, px(16.));
         assert_eq!(default.metrics.badge_dot, px(6.));
         assert_eq!(large.metrics.avatar_md, px(40.));

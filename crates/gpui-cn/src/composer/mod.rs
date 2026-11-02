@@ -3,7 +3,6 @@
 
 mod attachment;
 mod effort;
-mod icons;
 mod model_picker;
 mod permission;
 mod prompt;
@@ -14,7 +13,6 @@ pub use attachment::{
     Attachment, AttachmentKind, AttachmentStatus, AttachmentStrip, AttachmentTile,
 };
 pub use effort::EffortMenu;
-pub use icons::ComposerAssets;
 pub(crate) use model_picker::init as init_model_picker;
 pub use model_picker::{
     EFFORT_LABELS, ModelEntry, ModelPicker, ModelPickerEvent, ModelPickerState, ModelProvider,
