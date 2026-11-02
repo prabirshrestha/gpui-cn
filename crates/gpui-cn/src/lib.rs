@@ -132,9 +132,9 @@ pub use popover::Popover;
 pub use progress::Progress;
 pub use radio::{Radio, RadioGroup, RadioMark};
 pub use rule_builder::{
-    Combinator, Condition, Rule, RuleBuilder, RuleBuilderEvent, RuleBuilderState, RuleEditor,
-    RuleEditorBuilder, RuleField, RuleGroup, RuleId, RuleOperator, RulePart, RulePartRenderer,
-    RuleValue, RuleValueSlot,
+    Combinator, Condition, MoveRuleDown, MoveRuleUp, Rule, RuleBuilder, RuleBuilderEvent,
+    RuleBuilderState, RuleEditor, RuleEditorBuilder, RuleField, RuleGroup, RuleId, RuleOperator,
+    RulePart, RulePartRenderer, RuleValue, RuleValueSlot,
 };
 pub use scroll_area::ScrollArea;
 pub use select::{
@@ -229,6 +229,7 @@ pub fn init(cx: &mut App) {
     root::init(cx);
     select::init(cx);
     menu::init(cx);
+    rule_builder::init(cx);
     command::init(cx);
     composer::init_model_picker(cx);
     path_browser::init(cx);

@@ -631,3 +631,166 @@ fn render_hooks_replace_and_add_parts_for_the_rules_they_choose(cx: &mut TestApp
         "an added control drives the state"
     );
 }
+
+#[gpui_kit::test]
+fn alt_arrows_on_a_grip_move_the_rule_and_a_group_drags_by_its_header(cx: &mut TestAppContext) {
+    let setup = setup(cx, query());
+    let (top, nested) = ids(&setup, cx);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        // A press does not move focus; Tab reaches the grip.
+        let grip = ElementId::NamedChild(rule(nested[0]).into(), "grip-button".into());
+        for _ in 0..80 {
+            if window.find(grip.clone()).focused() == Some(true) {
+                break;
+            }
+            window.press("tab", cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find(grip).focused(), Some(true));
+        window.press("alt-down", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(ids(&setup, cx).1, vec![nested[1], nested[0]]);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.press("alt-down", cx);
+        window.press("alt-up", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        ids(&setup, cx).1,
+        vec![nested[0], nested[1]],
+        "stops at the end"
+    );
+    // The group moves before the first rule by the grip in its header.
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.drag_to(part(top[1], "grip"), rule(top[0]), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(ids(&setup, cx).0, vec![top[1], top[0]]);
+}
+
+#[gpui_kit::test]
+fn repeated_list_values_collapse_and_max_depth_flattens_rules_already_held(
+    cx: &mut TestAppContext,
+) {
+    let setup = setup(
+        cx,
+        RuleGroup::and([
+            Rule::from(Condition::new("command").with_list(["a", "a", " ", "b"])),
+            Rule::from(RuleGroup::or([Condition::new("agent")])),
+        ]),
+    );
+    let (top, _) = ids(&setup, cx);
+    let list = setup.state.read_with(cx, |state, _| {
+        state.condition(top[0]).unwrap().value().clone()
+    });
+    assert_eq!(list, RuleValue::List(vec!["a".into(), "b".into()]));
+
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn max_depth_after_a_query_flattens_and_a_slot_writes_only_what_fits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let mut fields = fields();
+    fields.push(
+        RuleField::new("script", "Script").editor(RuleEditor::custom(
+            RuleValue::Text("".into()),
+            |_, slot, _, cx| {
+                // Reporting while built must not panic.
+                slot.set(RuleValue::Text("seeded".into()), cx);
+                cx.new(|_| Slotted { slot }).into()
+            },
+        )),
+    );
+    let mut rules = None;
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let state = cx.new(|cx| {
+            RuleBuilderState::new(fields, window, cx)
+                .with_query(
+                    RuleGroup::and([
+                        Rule::from(Condition::new("agent")),
+                        Rule::from(RuleGroup::or([Condition::new("branch")])),
+                    ]),
+                    window,
+                    cx,
+                )
+                .with_max_depth(1)
+        });
+        rules = Some(state.clone());
+        let harness = cx.new(|_| Harness { state });
+        Root::new(harness, window, cx)
+    });
+    let state = rules.unwrap();
+    cx.run_until_parked();
+    let (root, top) = state.read_with(cx, |state, _| (state.root(), state.children(state.root())));
+    assert_eq!(top.len(), 2, "the nested group gave its rule to the root");
+    assert!(
+        top.iter()
+            .all(|id| state.read_with(cx, |s, _| s.combinator(*id).is_none()))
+    );
+
+    let script = cx
+        .update_window(handle.into(), |_, window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_field(top[0], "script".into(), window, cx)
+            });
+            top[0]
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        state.read_with(cx, |s, _| s.condition(script).unwrap().value().clone()),
+        RuleValue::Text("seeded".into()),
+        "a write made while building lands after the update"
+    );
+    // A slot kept past a field change writes nothing.
+    let slot = cx
+        .update_window(handle.into(), |_, window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_field(script, "agent".into(), window, cx);
+            });
+        })
+        .map(|_| ());
+    let _ = (slot, root);
+    cx.run_until_parked();
+    assert_eq!(
+        state.read_with(cx, |s, _| s.condition(script).unwrap().value().clone()),
+        RuleValue::Choice("codex".into())
+    );
+}
+
+/// A custom view that only holds its slot.
+struct Slotted {
+    #[allow(dead_code)]
+    slot: gpui_cn::RuleValueSlot,
+}
+
+impl Render for Slotted {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+#[gpui_kit::test]
+fn on_touch_the_grip_and_combinator_are_hit_targets(cx: &mut TestAppContext) {
+    let setup = setup(cx, query());
+    cx.update(|cx| Theme::update(cx, |theme| theme.touch = true));
+    let root = setup.state.read_with(cx, |state, _| state.root());
+    let (top, _) = ids(&setup, cx);
+    let target = cx.update(|cx| gpui_cn::ActiveTheme::theme(cx).metrics.control_md);
+    cx.update_window(setup.handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let grip = window.find(part(top[0], "grip")).bounds();
+        let pill = window.find(part(root, "combinator")).bounds();
+        assert!(grip.size.height >= target && grip.size.width >= target);
+        assert!(pill.size.height >= target);
+    })
+    .unwrap();
+}

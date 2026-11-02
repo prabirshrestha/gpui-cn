@@ -46,16 +46,15 @@ impl RuleValueSlot {
 
     /// Stores `value` as the row's value and emits
     /// [`RuleBuilderEvent::Changed`]. The editor's view stays as it is.
-    /// Does nothing once the row or the state is gone.
+    ///
+    /// The write happens once the current update ends, so a view may call
+    /// it while it is built. It does nothing once the row or the state is
+    /// gone, or once the row's field or operator no longer uses a custom
+    /// editor that takes `value`.
     pub fn set(&self, value: RuleValue, cx: &mut App) {
-        let id = self.id;
-        let _ = self.state.update(cx, |state, cx| {
-            if let Some(current) = state.value_mut(id)
-                && *current != value
-            {
-                *current = value;
-                state.changed(cx);
-            }
+        let (state, id) = (self.state.clone(), self.id);
+        cx.defer(move |cx| {
+            let _ = state.update(cx, |state, cx| state.store_custom_value(id, value, cx));
         });
     }
 }
@@ -139,6 +138,31 @@ impl Node {
             NodeKind::Group { children, .. } => Some(children),
             NodeKind::Condition { .. } => None,
         }
+    }
+
+    /// Moves the rules of each group that would sit `max` levels deep or
+    /// more into the group above it. `depth` is this node's depth.
+    fn limit_depth(&mut self, depth: usize, max: usize) {
+        let NodeKind::Group { children, .. } = &mut self.kind else {
+            return;
+        };
+        let mut kept = Vec::with_capacity(children.len());
+        for mut child in std::mem::take(children) {
+            let group = matches!(child.kind, NodeKind::Group { .. });
+            if group && depth + 1 >= max {
+                child.limit_depth(depth, max);
+                if let NodeKind::Group {
+                    children: inner, ..
+                } = child.kind
+                {
+                    kept.extend(inner);
+                }
+            } else {
+                child.limit_depth(depth + 1, max);
+                kept.push(child);
+            }
+        }
+        *children = kept;
     }
 
     /// How many group levels the subtree has below and including this node.
@@ -232,8 +256,14 @@ impl RuleBuilderState {
 
     /// How many group levels the tree may have, the root included: 1 keeps
     /// it flat, as in a list of actions. The default is 2.
+    ///
+    /// A group deeper than this, in the rules already held or in a later
+    /// [`with_query`](Self::with_query), gives its rules to the group
+    /// above it. Where the two combinators differ, that changes what the
+    /// query means.
     pub fn with_max_depth(mut self, depth: usize) -> Self {
         self.max_depth = depth.max(1);
+        self.root.limit_depth(0, self.max_depth);
         self
     }
 
@@ -499,6 +529,9 @@ impl RuleBuilderState {
     }
 
     /// Sets a condition's value, if its editor takes that kind of value.
+    /// The row's value editor is built again with the new value, so a
+    /// field that had focus loses it; a custom editor's view reports its
+    /// own edits through its [`RuleValueSlot`] instead.
     pub fn set_value(
         &mut self,
         id: RuleId,
@@ -525,6 +558,7 @@ impl RuleBuilderState {
             return;
         }
         condition.set_value(value);
+        condition.value_mut().dedupe();
         let condition = condition.clone();
         self.rebuild_rest(id, &field, &condition, window, cx);
         self.changed(cx);
@@ -553,6 +587,39 @@ impl RuleBuilderState {
             if values.len() != before {
                 self.changed(cx);
             }
+        }
+    }
+
+    /// Moves a rule `step` places within its group, such as -1 for one up.
+    /// Returns whether it moved; a rule at the end it moves toward stays.
+    pub fn move_by(&mut self, id: RuleId, step: isize, cx: &mut Context<Self>) -> bool {
+        let Some((group, index)) = self.root.parent_of(id) else {
+            return false;
+        };
+        let len = self.children(group).len();
+        match index.checked_add_signed(step) {
+            Some(target) if target < len => self.move_rule(id, group, target, cx),
+            _ => false,
+        }
+    }
+
+    /// The write behind [`RuleValueSlot::set`].
+    fn store_custom_value(&mut self, id: RuleId, value: RuleValue, cx: &mut Context<Self>) {
+        let Some(condition) = self.condition(id) else {
+            return;
+        };
+        let Some(field) = self.field(condition.field()) else {
+            return;
+        };
+        let editor = field.editor_for(condition.operator().map(|op| op.as_ref()));
+        if !matches!(editor, RuleEditor::Custom { .. }) || !editor.accepts(&value) {
+            return;
+        }
+        if let Some(current) = self.value_mut(id)
+            && *current != value
+        {
+            *current = value;
+            self.changed(cx);
         }
     }
 

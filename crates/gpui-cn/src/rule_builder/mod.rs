@@ -48,8 +48,9 @@ struct Look {
     radius: Pixels,
     row_height: Pixels,
     rail: Pixels,
-    icon: Pixels,
     pill: Pixels,
+    grip: Pixels,
+    touch: bool,
     text: Pixels,
     small_text: Pixels,
     mono: SharedString,
@@ -69,8 +70,18 @@ impl Look {
             radius: theme.radius_lg(),
             row_height: theme.metrics.rule_row,
             rail: theme.metrics.rule_rail,
-            icon: theme.metrics.tag_icon,
-            pill: theme.metrics.tag_height,
+            // A tag's height on a pointer; the touch hit target on touch.
+            pill: if theme.touch {
+                theme.metrics.control_md
+            } else {
+                theme.metrics.tag_height
+            },
+            grip: if theme.touch {
+                theme.metrics.control_md
+            } else {
+                theme.metrics.control_xs
+            },
+            touch: theme.touch,
             text: theme.text_control.size,
             small_text: theme.base.typography.xs.size,
             mono: theme.mono_font_family().clone(),
@@ -91,6 +102,27 @@ struct DraggedRule {
     state: gpui_kit::EntityId,
     id: RuleId,
     label: SharedString,
+}
+
+/// The key context of a rule's grip, where Alt+Up and Alt+Down move the
+/// rule.
+const GRIP_CONTEXT: &str = "GpuiCnRuleGrip";
+
+gpui_kit::actions!(
+    gpui_cn_rule_builder,
+    [
+        /// Moves the rule whose grip has focus one place up in its group.
+        MoveRuleUp,
+        /// Moves the rule whose grip has focus one place down in its group.
+        MoveRuleDown
+    ]
+);
+
+pub(crate) fn init(cx: &mut App) {
+    cx.bind_keys([
+        gpui_kit::KeyBinding::new("alt-up", MoveRuleUp, Some(GRIP_CONTEXT)),
+        gpui_kit::KeyBinding::new("alt-down", MoveRuleDown, Some(GRIP_CONTEXT)),
+    ]);
 }
 
 /// What a render hook on [`RuleBuilder`] is told about the part it draws:
@@ -235,8 +267,10 @@ impl RuleBuilder {
         }
     }
 
-    /// Draws the inside of a row's drag handle, in place of the grip icon.
-    /// The handle around it still starts the drag.
+    /// Draws the inside of a rule's drag handle, in place of the grip
+    /// button. The handle around it keeps the `grip` id, starts the drag,
+    /// and moves the rule on Alt+Up and Alt+Down while focus is inside it;
+    /// the replacement takes the `grip-content` id it is given.
     pub fn render_drag_handle<E: IntoElement>(
         mut self,
         render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
@@ -352,10 +386,14 @@ impl RuleBuilder {
 
     /// The id of the element that shows `rule` in the builder with id
     /// `builder`: a condition's row or a group's card. Its parts are named
-    /// children of it: `grip`, `field`, `operator`, `value`, and `remove`
-    /// on a row, and `combinator`, `add-condition`, `add-group`, and
-    /// `remove` on a group. The root group's parts hang off the id of the
-    /// root.
+    /// children of it. A row has `grip` (with `grip-button` or
+    /// `grip-content` inside), `field`, `operator`, `value`, `add-value`
+    /// for a list, `end` for [`RuleBuilder::render_row_end`], and
+    /// `remove`; a list's chips are named children of `value` by their
+    /// text, each with its own `remove`. A group has `header`,
+    /// `header-drop`, `grip`, `remove`, `combinator`, `footer`,
+    /// `add-controls`, `add-condition`, and `add-group`. The root group's
+    /// parts hang off the id of the root.
     pub fn rule_element_id(builder: impl Into<ElementId>, rule: RuleId) -> ElementId {
         ElementId::NamedChild(builder.into().into(), format!("rule-{}", rule.get()).into())
     }
@@ -448,39 +486,44 @@ impl RuleBuilder {
             window,
             cx,
         );
-        let remove = self.remove(&element_id, id, window, cx);
-        let header = custom_header.unwrap_or_else(|| {
-            h_flex()
-                .gap_2()
-                .items_center()
-                .px_2()
-                .child(
-                    div()
-                        .text_size(look.text)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(look.foreground)
-                        .child(self.group_label.clone()),
-                )
-                .child(label)
-                .child(div().flex_1())
-                .child(remove)
-                .into_any_element()
-        });
+        let header = match custom_header {
+            Some(header) => header,
+            None => {
+                let remove = self.remove(&element_id, id, window, cx);
+                let dragged = DraggedRule {
+                    state: self.state.entity_id(),
+                    id,
+                    label: self.group_label.clone(),
+                };
+                let grip = self.grip(look, &element_id, dragged, window, cx);
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(grip)
+                    .child(
+                        div()
+                            .text_size(look.text)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(look.foreground)
+                            .child(self.group_label.clone()),
+                    )
+                    .child(label)
+                    .child(div().flex_1())
+                    .child(remove)
+                    .into_any_element()
+            }
+        };
         let state_id = self.state.entity_id();
         let target = id;
         let entity = self.state.clone();
-        v_flex()
-            .id(element_id)
-            .test_support()
-            .gap_2()
-            .p_2()
+        // The header, not the card, takes a drop before the group: the
+        // card holds the rows, which take their own drops.
+        let header = div()
+            .id(part(&element_id, "header-drop"))
             .rounded(look.radius)
             .border_1()
-            .border_color(look.border)
-            .bg(look.card)
+            .border_color(gpui_kit::transparent_black())
             .child(header)
-            .child(body)
-            .child(footer)
             .drag_over::<DraggedRule>({
                 let drop = look.drop;
                 move |style, dragged, _, _| {
@@ -498,7 +541,19 @@ impl RuleBuilder {
                     });
                     cx.stop_propagation();
                 }
-            })
+            });
+        v_flex()
+            .id(element_id)
+            .test_support()
+            .gap_2()
+            .p_2()
+            .rounded(look.radius)
+            .border_1()
+            .border_color(look.border)
+            .bg(look.card)
+            .child(header)
+            .child(body)
+            .child(footer)
             .into_any_element()
     }
 
@@ -677,32 +732,7 @@ impl RuleBuilder {
             id,
             label: field.label().clone(),
         };
-        let custom_grip = self.hook(
-            &self.hooks.drag_handle,
-            id,
-            part(&row_id, "grip"),
-            window,
-            cx,
-        );
-        let grip = div()
-            .id(part(&row_id, "grip"))
-            .test_support()
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .size_5()
-            .cursor_grab()
-            .text_color(look.muted)
-            .when(custom_grip.is_none(), |this| {
-                this.child(Icon::from(IconName::GripVertical).size(look.icon))
-            })
-            .children(custom_grip)
-            .on_drag(dragged, |dragged, _, _, cx| {
-                cx.new(|_| DragPreview {
-                    label: dragged.label.clone(),
-                })
-            });
+        let grip = self.grip(look, &row_id, dragged, window, cx);
 
         let connector = field
             .connector_text()
@@ -815,6 +845,61 @@ impl RuleBuilder {
             .into_any_element()
     }
 
+    /// A rule's grip: it starts a drag, and its button takes focus, where
+    /// Alt+Up and Alt+Down move the rule in its group.
+    fn grip(
+        &self,
+        look: &Look,
+        element_id: &ElementId,
+        dragged: DraggedRule,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let id = dragged.id;
+        let custom = self.hook(
+            &self.hooks.drag_handle,
+            id,
+            part(element_id, "grip-content"),
+            window,
+            cx,
+        );
+        let content = custom.unwrap_or_else(|| {
+            Button::new(part(element_id, "grip-button"))
+                .ghost()
+                .size(ButtonSize::Xs)
+                .icon(Icon::from(IconName::GripVertical))
+                .accessibility_label("Move rule; Alt+Up or Alt+Down")
+                .w(look.grip)
+                .h(look.grip)
+                .text_color(look.muted)
+                .into_any_element()
+        });
+        let (up, down) = (self.state.clone(), self.state.clone());
+        div()
+            .id(part(element_id, "grip"))
+            .test_support()
+            .key_context(GRIP_CONTEXT)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(look.grip)
+            .cursor_grab()
+            .child(content)
+            .on_action(move |_: &MoveRuleUp, _, cx| {
+                up.update(cx, |state, cx| state.move_by(id, -1, cx));
+            })
+            .on_action(move |_: &MoveRuleDown, _, cx| {
+                down.update(cx, |state, cx| state.move_by(id, 1, cx));
+            })
+            .on_drag(dragged, |dragged, _, _, cx| {
+                cx.new(|_| DragPreview {
+                    label: dragged.label.clone(),
+                })
+            })
+            .into_any_element()
+    }
+
     /// A list value: a chip per value with a remove control, and a field
     /// to type the next one in.
     #[allow(clippy::too_many_arguments)]
@@ -846,7 +931,7 @@ impl RuleBuilder {
                         .on_click(move |_, _, cx| {
                             state.update(cx, |state, cx| state.remove_list_value(id, &text, cx));
                         })
-                        .size_4()
+                        .when(!look.touch, |button| button.size_4())
                         .text_color(look.muted),
                 )
         });

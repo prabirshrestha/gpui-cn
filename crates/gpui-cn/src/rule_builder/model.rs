@@ -143,7 +143,8 @@ impl RuleEditor {
             Self::None => RuleValue::None,
             Self::Text { .. } => RuleValue::Text(SharedString::default()),
             Self::Choice(items) => items
-                .first()
+                .iter()
+                .find(|item| !item.is_disabled())
                 .map(|item| RuleValue::Choice(item.value().clone()))
                 .unwrap_or(RuleValue::None),
             Self::List { .. } => RuleValue::List(Vec::new()),
@@ -166,6 +167,23 @@ impl RuleEditor {
                 items.iter().any(|item| item.value() == key)
             }
             _ => false,
+        }
+    }
+}
+
+impl RuleValue {
+    /// Drops blank and repeated values from a list, keeping the first of
+    /// each, so every chip has its own text.
+    pub(crate) fn dedupe(&mut self) {
+        if let Self::List(values) = self {
+            let mut seen = Vec::with_capacity(values.len());
+            values.retain(|value| {
+                let keep = !value.trim().is_empty() && !seen.contains(value);
+                if keep {
+                    seen.push(value.clone());
+                }
+                keep
+            });
         }
     }
 }
@@ -402,6 +420,7 @@ impl Condition {
         if !editor.accepts(&self.value) {
             self.value = editor.default_value();
         }
+        self.value.dedupe();
     }
 
     pub(crate) fn set_operator(&mut self, operator: Option<SharedString>) {

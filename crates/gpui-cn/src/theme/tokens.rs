@@ -425,13 +425,15 @@ pub struct MetricTokens {
     pub tag_height: Pixels,
     /// The size of an icon in a tag: 12px, shadcn's badge `size-3`.
     pub tag_icon: Pixels,
-    /// The least height of a rule builder row: a default control with
-    /// 8px above and below, 44px at the default font size, after the
-    /// rule builder post the component follows.
+    /// The least height of a rule builder row: a default control plus
+    /// 16px, 44px at the default font size and 60px on touch. The
+    /// reference app has no rule builder, so the value is measured from
+    /// the rule builder post the component follows (a 720px capture at
+    /// twice the scale).
     pub rule_row: Pixels,
     /// The gutter left of a rule group's rows, which holds the bracket and
-    /// the combinator pill: 44px at the default font size, after the same
-    /// post.
+    /// the combinator pill: 44px at the default font size, measured from
+    /// the same post.
     pub rule_rail: Pixels,
     /// The height and least width of a badge count: 16px, gpui-kit's
     /// medium badge.
