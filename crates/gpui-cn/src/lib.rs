@@ -133,7 +133,8 @@ pub use progress::Progress;
 pub use radio::{Radio, RadioGroup, RadioMark};
 pub use rule_builder::{
     Combinator, Condition, Rule, RuleBuilder, RuleBuilderEvent, RuleBuilderState, RuleEditor,
-    RuleField, RuleGroup, RuleId, RuleOperator, RuleValue,
+    RuleEditorBuilder, RuleField, RuleGroup, RuleId, RuleOperator, RulePart, RulePartRenderer,
+    RuleValue, RuleValueSlot,
 };
 pub use scroll_area::ScrollArea;
 pub use select::{

@@ -437,3 +437,197 @@ fn a_flat_state_lists_actions_without_groups(cx: &mut TestAppContext) {
     .unwrap();
     assert!(!state.read_with(cx, |state, _| state.can_nest(root)));
 }
+
+/// An application's own editor: a text field that reports each edit
+/// through the row's slot.
+struct CodeField {
+    input: Entity<gpui_cn::InputState>,
+    _changes: gpui_kit::Subscription,
+}
+
+impl Render for CodeField {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui_cn::Input::new(&self.input).id("code-field")
+    }
+}
+
+#[gpui_kit::test]
+fn a_custom_editor_renders_the_apps_view_and_reports_through_its_slot(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    let builds = Rc::new(std::cell::Cell::new(0));
+    let counted = builds.clone();
+    let mut fields = fields();
+    fields.push(
+        RuleField::new("script", "Script").editor(RuleEditor::custom(
+            RuleValue::Text("".into()),
+            move |value, slot, window, cx| {
+                counted.set(counted.get() + 1);
+                let text = match value {
+                    RuleValue::Text(text) => text.clone(),
+                    _ => SharedString::default(),
+                };
+                cx.new(|cx| {
+                    let input =
+                        cx.new(|cx| gpui_cn::InputState::new(window, cx).default_value(text));
+                    let changes =
+                        cx.subscribe(&input, move |_, input, event: &gpui_cn::InputEvent, cx| {
+                            if matches!(event, gpui_cn::InputEvent::Change) {
+                                slot.set(RuleValue::Text(input.read(cx).value()), cx);
+                            }
+                        });
+                    CodeField {
+                        input,
+                        _changes: changes,
+                    }
+                })
+                .into()
+            },
+        )),
+    );
+    let mut rules = None;
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let state = cx.new(|cx| {
+            RuleBuilderState::new(fields, window, cx).with_query(
+                RuleGroup::and([Condition::new("script")]),
+                window,
+                cx,
+            )
+        });
+        rules = Some(state.clone());
+        let harness = cx.new(|cx| {
+            cx.observe(&state, |_, _, cx| cx.notify()).detach();
+            Harness { state }
+        });
+        Root::new(harness, window, cx)
+    });
+    let state = rules.unwrap();
+    cx.update_window(handle.into(), |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    let row = state.read_with(cx, |state, _| state.children(state.root())[0]);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let value = window.find(part(row, "value")).bounds();
+        let field = window.find("code-field").bounds();
+        assert!(value.contains(&field.center()), "the view sits in the row");
+        window.click("code-field", cx);
+        window.input("abc", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        state.read_with(cx, |state, _| state.condition(row).unwrap().value().clone()),
+        RuleValue::Text("abc".into())
+    );
+    assert_eq!(builds.get(), 1, "an edit keeps the view");
+    cx.update_window(handle.into(), |_, window, cx| {
+        state.update(cx, |state, cx| {
+            state.set_field(row, "branch".into(), window, cx);
+            state.set_field(row, "script".into(), window, cx);
+        });
+    })
+    .unwrap();
+    assert_eq!(builds.get(), 2, "a new field builds a new view");
+    assert_eq!(
+        state.read_with(cx, |state, _| state.condition(row).unwrap().value().clone()),
+        RuleValue::Text("".into()),
+        "with the default value"
+    );
+}
+
+#[gpui_kit::test]
+fn render_hooks_replace_and_add_parts_for_the_rules_they_choose(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_cn::init(cx);
+    });
+    use gpui_kit::{InteractiveElement as _, base::TestSupportExt as _};
+    struct Hooked {
+        state: Entity<RuleBuilderState>,
+    }
+    impl Render for Hooked {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                RuleBuilder::new("rules", &self.state)
+                    // Only the branch rows get a plain label for a field.
+                    .render_field(|part, _, cx| {
+                        let state = part.state().read(cx);
+                        let branch = state
+                            .condition(part.rule())
+                            .is_some_and(|c| c.field().as_ref() == "branch");
+                        branch.then(|| {
+                            div()
+                                .id(part.element_id().clone())
+                                .test_support()
+                                .child("Branch")
+                        })
+                    })
+                    .render_row_end(|part, _, _| {
+                        let state = part.state().clone();
+                        let rule = part.rule();
+                        Some(
+                            gpui_cn::Button::new(part.element_id().clone())
+                                .label("Or")
+                                .on_click(move |_, _, cx| {
+                                    let group = state.read(cx).parent(rule).unwrap();
+                                    state
+                                        .update(cx, |state, cx| state.toggle_combinator(group, cx));
+                                }),
+                        )
+                    })
+                    .render_combinator(|part, _, _| {
+                        Some(
+                            div()
+                                .id(part.element_id().clone())
+                                .test_support()
+                                .child("custom"),
+                        )
+                    }),
+            )
+        }
+    }
+    let mut rules = None;
+    let handle = cx.open_window(size(px(900.), px(800.)), |window, cx| {
+        let state = cx
+            .new(|cx| RuleBuilderState::new(fields(), window, cx).with_query(query(), window, cx));
+        rules = Some(state.clone());
+        let view = cx.new(|cx| {
+            cx.observe(&state, |_, _, cx| cx.notify()).detach();
+            Hooked { state }
+        });
+        Root::new(view, window, cx)
+    });
+    let state = rules.unwrap();
+    cx.run_until_parked();
+    let (root, top, nested) = state.read_with(cx, |state, _| {
+        let top = state.children(state.root());
+        (state.root(), top.clone(), state.children(top[1]))
+    });
+    let field_trigger =
+        |id: RuleId| ElementId::NamedChild(part(id, "field").into(), "trigger".into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find(field_trigger(top[0])).is_some(),
+            "default kept"
+        );
+        assert!(
+            window.try_find(field_trigger(nested[0])).is_none(),
+            "replaced"
+        );
+        assert!(window.try_find(part(nested[0], "field")).is_some());
+        assert!(window.try_find(part(root, "combinator")).is_some());
+        window.click(part(top[0], "end"), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(
+        state.read_with(cx, |state, _| state.combinator(root)),
+        Some(Combinator::Or),
+        "an added control drives the state"
+    );
+}

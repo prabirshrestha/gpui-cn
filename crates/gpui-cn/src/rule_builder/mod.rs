@@ -10,6 +10,8 @@
 mod model;
 mod state;
 
+use std::rc::Rc;
+
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, RenderOnce,
@@ -21,9 +23,10 @@ use gpui_kit::{
 };
 
 pub use model::{
-    Combinator, Condition, Rule, RuleEditor, RuleField, RuleGroup, RuleOperator, RuleValue,
+    Combinator, Condition, Rule, RuleEditor, RuleEditorBuilder, RuleField, RuleGroup, RuleOperator,
+    RuleValue,
 };
-pub use state::{RuleBuilderEvent, RuleBuilderState, RuleId};
+pub use state::{RuleBuilderEvent, RuleBuilderState, RuleId, RuleValueSlot};
 
 use state::{NodeKind, ValueEditor};
 
@@ -90,6 +93,65 @@ struct DraggedRule {
     label: SharedString,
 }
 
+/// What a render hook on [`RuleBuilder`] is told about the part it draws:
+/// the state, the rule, and the element id the part takes, so tests and
+/// the builder's own drag and drop find it.
+///
+/// A replacement reads the rule through [`RulePart::state`] and changes it
+/// through the state's mutations, such as
+/// [`RuleBuilderState::set_field`] or
+/// [`RuleBuilderState::toggle_combinator`].
+#[derive(Clone)]
+pub struct RulePart {
+    state: Entity<RuleBuilderState>,
+    rule: RuleId,
+    element_id: ElementId,
+}
+
+impl RulePart {
+    /// The state the builder edits.
+    pub fn state(&self) -> &Entity<RuleBuilderState> {
+        &self.state
+    }
+
+    /// The rule the part belongs to: a condition, or a group for the
+    /// combinator, the group header, and the add controls.
+    pub fn rule(&self) -> RuleId {
+        self.rule
+    }
+
+    /// The id the default part uses, for the replacement to take.
+    pub fn element_id(&self) -> &ElementId {
+        &self.element_id
+    }
+}
+
+/// A render hook: draws a part of the builder in place of the default, or
+/// returns `None` to keep the default for that rule.
+pub type RulePartRenderer = Rc<dyn Fn(&RulePart, &mut Window, &mut App) -> Option<AnyElement>>;
+
+/// The render hooks of a [`RuleBuilder`], one per replaceable part.
+#[derive(Clone, Default)]
+struct Hooks {
+    drag_handle: Option<RulePartRenderer>,
+    field: Option<RulePartRenderer>,
+    operator: Option<RulePartRenderer>,
+    value: Option<RulePartRenderer>,
+    row_end: Option<RulePartRenderer>,
+    remove: Option<RulePartRenderer>,
+    combinator: Option<RulePartRenderer>,
+    group_header: Option<RulePartRenderer>,
+    add_controls: Option<RulePartRenderer>,
+}
+
+fn renderer<E: IntoElement>(
+    render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+) -> Option<RulePartRenderer> {
+    Some(Rc::new(move |part, window, cx| {
+        render(part, window, cx).map(IntoElement::into_any_element)
+    }))
+}
+
 /// What follows the pointer while a rule is dragged: its field's label on
 /// a menu surface.
 struct DragPreview {
@@ -134,6 +196,15 @@ impl Render for DragPreview {
 /// }
 /// ```
 ///
+/// Every part can be replaced. A field or an operator can name its own
+/// value editor, including the application's own view, through
+/// [`RuleEditor::custom`]. The `render_*` hooks replace a part of every
+/// row or group, or of the rules they choose: the drag handle, the field
+/// and operator menus, the value, the remove control, the combinator, a
+/// nested group's header, and the add controls, and
+/// [`RuleBuilder::render_row_end`] adds controls at the end of a row. The
+/// labels have their own builders.
+///
 /// The id must be stable and unique under the nearest stateful ancestor.
 /// A rule's elements derive their ids from it; see
 /// [`RuleBuilder::rule_element_id`].
@@ -146,6 +217,7 @@ pub struct RuleBuilder {
     add_group_label: SharedString,
     add_nested_label: SharedString,
     group_label: SharedString,
+    hooks: Hooks,
 }
 
 impl RuleBuilder {
@@ -159,7 +231,96 @@ impl RuleBuilder {
             add_group_label: "Add group".into(),
             add_nested_label: "Add condition".into(),
             group_label: "Group".into(),
+            hooks: Hooks::default(),
         }
+    }
+
+    /// Draws the inside of a row's drag handle, in place of the grip icon.
+    /// The handle around it still starts the drag.
+    pub fn render_drag_handle<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.drag_handle = renderer(render);
+        self
+    }
+
+    /// Draws a row's field picker, in place of the field menu.
+    pub fn render_field<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.field = renderer(render);
+        self
+    }
+
+    /// Draws a row's operator, in place of the operator menu or label.
+    pub fn render_operator<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.operator = renderer(render);
+        self
+    }
+
+    /// Draws a row's value, in place of its editor, for every field. A
+    /// single field's own editor is better named with
+    /// [`RuleEditor::custom`], which keeps its view across frames.
+    pub fn render_value<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.value = renderer(render);
+        self
+    }
+
+    /// Adds controls at the end of a row, before the remove control, such
+    /// as a duplicate or a lock button.
+    pub fn render_row_end<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.row_end = renderer(render);
+        self
+    }
+
+    /// Draws the remove control of a row or a nested group.
+    pub fn render_remove<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.remove = renderer(render);
+        self
+    }
+
+    /// Draws a group's combinator, in place of the pill on its bracket.
+    pub fn render_combinator<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.combinator = renderer(render);
+        self
+    }
+
+    /// Draws a nested group's header, in place of its title, count, and
+    /// remove control.
+    pub fn render_group_header<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.group_header = renderer(render);
+        self
+    }
+
+    /// Draws a group's add controls, in place of the add rule and add
+    /// group buttons. The row they sit in still takes a rule dropped at
+    /// the end of the group.
+    pub fn render_add_controls<E: IntoElement>(
+        mut self,
+        render: impl Fn(&RulePart, &mut Window, &mut App) -> Option<E> + 'static,
+    ) -> Self {
+        self.hooks.add_controls = renderer(render);
+        self
     }
 
     /// The label of the control that adds a rule to the root group. The
@@ -212,33 +373,62 @@ fn part(rule: &ElementId, name: &'static str) -> ElementId {
 }
 
 impl RuleBuilder {
-    fn group(&self, look: &Look, id: RuleId, cx: &App) -> AnyElement {
-        let state = self.state.read(cx);
-        let Some(node) = state.node(id) else {
-            return div().into_any_element();
+    /// Runs a hook for a part, if one is set.
+    fn hook(
+        &self,
+        hook: &Option<RulePartRenderer>,
+        rule: RuleId,
+        element_id: ElementId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let hook = hook.as_ref()?;
+        let part = RulePart {
+            state: self.state.clone(),
+            rule,
+            element_id,
         };
-        let NodeKind::Group {
-            combinator,
-            children,
-        } = &node.kind
-        else {
-            return div().into_any_element();
+        hook(&part, window, cx)
+    }
+
+    fn group(&self, look: &Look, id: RuleId, window: &mut Window, cx: &mut App) -> AnyElement {
+        let (combinator, children, root, can_nest) = {
+            let state = self.state.read(cx);
+            let Some(NodeKind::Group {
+                combinator,
+                children,
+            }) = state.node(id).map(|node| &node.kind)
+            else {
+                return div().into_any_element();
+            };
+            let children: Vec<(RuleId, bool)> = children
+                .iter()
+                .map(|child| (child.id, matches!(child.kind, NodeKind::Group { .. })))
+                .collect();
+            (
+                *combinator,
+                children,
+                id == state.root(),
+                state.can_nest(id),
+            )
         };
         let element_id = Self::rule_element_id(self.id.clone(), id);
-        let root = id == state.root();
         let rows: Vec<AnyElement> = children
             .iter()
-            .map(|child| match &child.kind {
-                NodeKind::Condition { .. } => self.condition(look, child.id, cx),
-                NodeKind::Group { .. } => self.group(look, child.id, cx),
+            .map(|(child, group)| {
+                if *group {
+                    self.group(look, *child, window, cx)
+                } else {
+                    self.condition(look, *child, window, cx)
+                }
             })
             .collect();
         let count = rows.len();
         let body = h_flex()
             .items_stretch()
-            .child(self.rail(look, &element_id, id, *combinator, count))
+            .child(self.rail(look, &element_id, id, combinator, count, window, cx))
             .child(v_flex().flex_1().min_w_0().gap_2().children(rows));
-        let footer = self.footer(look, &element_id, id, root, state.can_nest(id));
+        let footer = self.footer(look, &element_id, id, root, can_nest, window, cx);
 
         if root {
             return v_flex()
@@ -251,20 +441,31 @@ impl RuleBuilder {
         }
 
         let label = self.label(child_count_label(count), look.muted, look.small_text);
-        let header = h_flex()
-            .gap_2()
-            .items_center()
-            .px_2()
-            .child(
-                div()
-                    .text_size(look.text)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(look.foreground)
-                    .child(self.group_label.clone()),
-            )
-            .child(label)
-            .child(div().flex_1())
-            .child(self.remove_button(&element_id, id));
+        let custom_header = self.hook(
+            &self.hooks.group_header,
+            id,
+            part(&element_id, "header"),
+            window,
+            cx,
+        );
+        let remove = self.remove(&element_id, id, window, cx);
+        let header = custom_header.unwrap_or_else(|| {
+            h_flex()
+                .gap_2()
+                .items_center()
+                .px_2()
+                .child(
+                    div()
+                        .text_size(look.text)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(look.foreground)
+                        .child(self.group_label.clone()),
+                )
+                .child(label)
+                .child(div().flex_1())
+                .child(remove)
+                .into_any_element()
+        });
         let state_id = self.state.entity_id();
         let target = id;
         let entity = self.state.clone();
@@ -303,6 +504,7 @@ impl RuleBuilder {
 
     /// The gutter left of a group's rows, with the bracket and the
     /// combinator once the group has two rules.
+    #[allow(clippy::too_many_arguments)]
     fn rail(
         &self,
         look: &Look,
@@ -310,6 +512,8 @@ impl RuleBuilder {
         group: RuleId,
         combinator: Combinator,
         count: usize,
+        window: &mut Window,
+        cx: &mut App,
     ) -> AnyElement {
         let rail = div().relative().flex_none().w(look.rail);
         if count < 2 {
@@ -318,24 +522,34 @@ impl RuleBuilder {
         let inset = look.row_height / 2.;
         let (ink, tint) = look.combinator(combinator);
         let state = self.state.clone();
-        let pill = Button::new(part(group_id, "combinator"))
-            .ghost()
-            .size(ButtonSize::Xs)
-            .label(combinator.label())
-            .accessibility_label(format!(
-                "Rules combine with {}; switch to {}",
-                combinator.label(),
-                combinator.toggled().label()
-            ))
-            .on_click(move |_, _, cx| {
-                state.update(cx, |state, cx| state.toggle_combinator(group, cx));
-            })
-            .h(look.pill)
-            .px_2()
-            .rounded_full()
-            .bg(tint)
-            .text_color(ink)
-            .text_size(look.small_text);
+        let custom = self.hook(
+            &self.hooks.combinator,
+            group,
+            part(group_id, "combinator"),
+            window,
+            cx,
+        );
+        let pill = custom.unwrap_or_else(|| {
+            Button::new(part(group_id, "combinator"))
+                .ghost()
+                .size(ButtonSize::Xs)
+                .label(combinator.label())
+                .accessibility_label(format!(
+                    "Rules combine with {}; switch to {}",
+                    combinator.label(),
+                    combinator.toggled().label()
+                ))
+                .on_click(move |_, _, cx| {
+                    state.update(cx, |state, cx| state.toggle_combinator(group, cx));
+                })
+                .h(look.pill)
+                .px_2()
+                .rounded_full()
+                .bg(tint)
+                .text_color(ink)
+                .text_size(look.small_text)
+                .into_any_element()
+        });
         rail.child(
             div()
                 .absolute()
@@ -355,6 +569,7 @@ impl RuleBuilder {
 
     /// The add controls under a group's rows, which also take a rule
     /// dropped at the end of the group.
+    #[allow(clippy::too_many_arguments)]
     fn footer(
         &self,
         look: &Look,
@@ -362,7 +577,16 @@ impl RuleBuilder {
         group: RuleId,
         root: bool,
         can_nest: bool,
+        window: &mut Window,
+        cx: &mut App,
     ) -> AnyElement {
+        let custom = self.hook(
+            &self.hooks.add_controls,
+            group,
+            part(group_id, "add-controls"),
+            window,
+            cx,
+        );
         let add_condition = {
             let state = self.state.clone();
             let label = if root {
@@ -404,8 +628,10 @@ impl RuleBuilder {
             .rounded(look.radius)
             .border_1()
             .border_color(gpui_kit::transparent_black())
-            .child(add_condition)
-            .children(add_group)
+            .map(|this| match custom {
+                Some(custom) => this.child(custom),
+                None => this.child(add_condition).children(add_group),
+            })
             .drag_over::<DraggedRule>({
                 let drop = look.drop;
                 move |style, dragged, _, _| {
@@ -427,13 +653,22 @@ impl RuleBuilder {
             .into_any_element()
     }
 
-    fn condition(&self, look: &Look, id: RuleId, cx: &App) -> AnyElement {
-        let state = self.state.read(cx);
-        let (Some(condition), Some(editors)) = (state.condition(id), state.editors(id)) else {
-            return div().into_any_element();
-        };
-        let Some(field) = state.field(condition.field()) else {
-            return div().into_any_element();
+    fn condition(&self, look: &Look, id: RuleId, window: &mut Window, cx: &mut App) -> AnyElement {
+        let (condition, field, field_select, operator_select, value_editor) = {
+            let state = self.state.read(cx);
+            let (Some(condition), Some(editors)) = (state.condition(id), state.editors(id)) else {
+                return div().into_any_element();
+            };
+            let Some(field) = state.field(condition.field()) else {
+                return div().into_any_element();
+            };
+            (
+                condition.clone(),
+                field.clone(),
+                editors.field.clone(),
+                editors.operator.clone(),
+                editors.value.clone(),
+            )
         };
         let row_id = Self::rule_element_id(self.id.clone(), id);
         let state_id = self.state.entity_id();
@@ -442,6 +677,13 @@ impl RuleBuilder {
             id,
             label: field.label().clone(),
         };
+        let custom_grip = self.hook(
+            &self.hooks.drag_handle,
+            id,
+            part(&row_id, "grip"),
+            window,
+            cx,
+        );
         let grip = div()
             .id(part(&row_id, "grip"))
             .test_support()
@@ -452,7 +694,10 @@ impl RuleBuilder {
             .size_5()
             .cursor_grab()
             .text_color(look.muted)
-            .child(Icon::from(IconName::GripVertical).size(look.icon))
+            .when(custom_grip.is_none(), |this| {
+                this.child(Icon::from(IconName::GripVertical).size(look.icon))
+            })
+            .children(custom_grip)
             .on_drag(dragged, |dragged, _, _, cx| {
                 cx.new(|_| DragPreview {
                     label: dragged.label.clone(),
@@ -462,7 +707,15 @@ impl RuleBuilder {
         let connector = field
             .connector_text()
             .map(|text| self.label(text.clone(), look.muted, look.text));
-        let operator: Option<AnyElement> = match (&editors.operator, field.operators()) {
+        let custom_operator = self.hook(
+            &self.hooks.operator,
+            id,
+            part(&row_id, "operator"),
+            window,
+            cx,
+        );
+        let operator: Option<AnyElement> = match (&operator_select, field.operators()) {
+            _ if custom_operator.is_some() => custom_operator,
             (Some(select), _) => Some(
                 Select::new(part(&row_id, "operator"), select)
                     .accessibility_label("Operator")
@@ -475,7 +728,9 @@ impl RuleBuilder {
             (None, _) => None,
         };
         let editor = field.editor_for(condition.operator().map(|op| op.as_ref()));
-        let value: Option<AnyElement> = match (&editors.value, editor) {
+        let custom_value = self.hook(&self.hooks.value, id, part(&row_id, "value"), window, cx);
+        let value: Option<AnyElement> = match (&value_editor, editor) {
+            _ if custom_value.is_some() => custom_value,
             (ValueEditor::None, _) => None,
             (ValueEditor::Text(input), _) => Some(
                 Input::new(input)
@@ -497,8 +752,27 @@ impl RuleBuilder {
                 Some(self.list(look, &row_id, id, &values, *variant, *code, input))
             }
             (ValueEditor::List(_), _) => None,
+            (ValueEditor::Custom(view), _) => Some(
+                div()
+                    .id(part(&row_id, "value"))
+                    .test_support()
+                    .flex()
+                    .items_center()
+                    .min_w_0()
+                    .child(view.clone())
+                    .into_any_element(),
+            ),
         };
 
+        let field_part = self
+            .hook(&self.hooks.field, id, part(&row_id, "field"), window, cx)
+            .unwrap_or_else(|| {
+                Select::new(part(&row_id, "field"), &field_select)
+                    .accessibility_label("Field")
+                    .into_any_element()
+            });
+        let row_end = self.hook(&self.hooks.row_end, id, part(&row_id, "end"), window, cx);
+        let remove = self.remove(&row_id, id, window, cx);
         let entity = self.state.clone();
         h_flex()
             .id(row_id.clone())
@@ -513,12 +787,13 @@ impl RuleBuilder {
             .border_color(gpui_kit::transparent_black())
             .bg(look.row)
             .child(grip)
-            .child(Select::new(part(&row_id, "field"), &editors.field).accessibility_label("Field"))
+            .child(field_part)
             .children(connector)
             .children(operator)
             .children(value)
             .child(div().flex_1())
-            .child(self.remove_button(&row_id, id))
+            .children(row_end)
+            .child(remove)
             .drag_over::<DraggedRule>({
                 let drop = look.drop;
                 move |style, dragged, _, _| {
@@ -590,7 +865,22 @@ impl RuleBuilder {
             .into_any_element()
     }
 
-    fn remove_button(&self, element_id: &ElementId, id: RuleId) -> Button {
+    fn remove(
+        &self,
+        element_id: &ElementId,
+        id: RuleId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        if let Some(custom) = self.hook(
+            &self.hooks.remove,
+            id,
+            part(element_id, "remove"),
+            window,
+            cx,
+        ) {
+            return custom;
+        }
         let state = self.state.clone();
         Button::new(part(element_id, "remove"))
             .ghost()
@@ -598,6 +888,7 @@ impl RuleBuilder {
             .icon(IconName::Close)
             .accessibility_label("Remove")
             .on_click(move |_, _, cx| state.update(cx, |state, cx| state.remove(id, cx)))
+            .into_any_element()
     }
 
     fn label(&self, text: SharedString, color: Hsla, size: Pixels) -> gpui_kit::Div {
@@ -616,13 +907,13 @@ fn child_count_label(count: usize) -> SharedString {
 }
 
 impl RenderOnce for RuleBuilder {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::read(cx.theme());
         let root = self.state.read(cx).root();
         let style = self.style.clone();
         div()
             .w_full()
-            .child(self.group(&look, root, cx))
+            .child(self.group(&look, root, window, cx))
             .refine_style(&style)
     }
 }

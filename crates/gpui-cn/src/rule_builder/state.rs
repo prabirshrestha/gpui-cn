@@ -2,7 +2,8 @@
 //! select and text field entities of every condition row.
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Window,
+    AnyView, App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription,
+    WeakEntity, Window,
 };
 
 use super::model::{Combinator, Condition, Rule, RuleEditor, RuleField, RuleGroup, RuleValue};
@@ -29,13 +30,45 @@ pub enum RuleBuilderEvent {
     Changed,
 }
 
+/// Where a custom value editor reports a row's value: a weak handle on
+/// the state and the row's id. See [`RuleEditor::custom`].
+#[derive(Clone)]
+pub struct RuleValueSlot {
+    state: WeakEntity<RuleBuilderState>,
+    id: RuleId,
+}
+
+impl RuleValueSlot {
+    /// The row the slot reports for.
+    pub fn rule(&self) -> RuleId {
+        self.id
+    }
+
+    /// Stores `value` as the row's value and emits
+    /// [`RuleBuilderEvent::Changed`]. The editor's view stays as it is.
+    /// Does nothing once the row or the state is gone.
+    pub fn set(&self, value: RuleValue, cx: &mut App) {
+        let id = self.id;
+        let _ = self.state.update(cx, |state, cx| {
+            if let Some(current) = state.value_mut(id)
+                && *current != value
+            {
+                *current = value;
+                state.changed(cx);
+            }
+        });
+    }
+}
+
 /// The field that takes a condition's value.
+#[derive(Clone)]
 pub(crate) enum ValueEditor {
     None,
     Text(Entity<InputState>),
     Choice(Entity<SelectState<SharedString>>),
     /// The field a new list value is typed in.
     List(Entity<InputState>),
+    Custom(AnyView),
 }
 
 /// The controls of one condition row.
@@ -51,7 +84,7 @@ pub(crate) struct Editors {
 pub(crate) enum NodeKind {
     Condition {
         condition: Condition,
-        editors: Editors,
+        editors: Box<Editors>,
     },
     Group {
         combinator: Combinator,
@@ -529,7 +562,7 @@ impl RuleBuilderState {
 
     pub(crate) fn editors(&self, id: RuleId) -> Option<&Editors> {
         match self.root.find(id).map(|node| &node.kind) {
-            Some(NodeKind::Condition { editors, .. }) => Some(editors),
+            Some(NodeKind::Condition { editors, .. }) => Some(&**editors),
             _ => None,
         }
     }
@@ -655,11 +688,14 @@ impl RuleBuilderState {
         let field_subscription = cx.subscribe_in(
             &select,
             window,
-            move |this, _, event: &SelectEvent<SharedString>, window, cx| {
-                if let SelectEvent::Changed(values) = event
-                    && let Some(key) = values.first()
+            move |this, select, event: &SelectEvent<SharedString>, window, cx| {
+                // The menu's selection now, not the event's: `set_field`
+                // also selects in the menu, and acting on queued events
+                // in turn would swing the field back and forth.
+                if let SelectEvent::Changed(_) = event
+                    && let Some(key) = select.read(cx).selected_value().cloned()
                 {
-                    this.set_field(id, key.clone(), window, cx);
+                    this.set_field(id, key, window, cx);
                 }
             },
         );
@@ -668,13 +704,13 @@ impl RuleBuilderState {
             id,
             kind: NodeKind::Condition {
                 condition,
-                editors: Editors {
+                editors: Box::new(Editors {
                     field: select,
                     operator,
                     value,
                     _field: field_subscription,
                     _rest: rest,
-                },
+                }),
             },
         })
     }
@@ -805,6 +841,13 @@ impl RuleBuilderState {
                     },
                 ));
                 ValueEditor::List(input)
+            }
+            RuleEditor::Custom { build, .. } => {
+                let slot = RuleValueSlot {
+                    state: cx.entity().downgrade(),
+                    id,
+                };
+                ValueEditor::Custom(build(condition.value(), slot, window, cx))
             }
         };
         (operator, value, subscriptions)

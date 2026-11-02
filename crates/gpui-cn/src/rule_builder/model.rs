@@ -2,9 +2,17 @@
 //! operators and value editors, and the conditions and groups a query is
 //! made of.
 
-use gpui_kit::SharedString;
+use std::rc::Rc;
 
+use gpui_kit::{AnyView, App, SharedString, Window};
+
+use super::state::RuleValueSlot;
 use crate::{Icon, SelectItem, TagVariant};
+
+/// Builds a custom value editor's view for one condition row: given the
+/// row's current value and the slot to report new values to.
+pub type RuleEditorBuilder =
+    Rc<dyn Fn(&RuleValue, RuleValueSlot, &mut Window, &mut App) -> AnyView>;
 
 /// How the rules of a group combine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -57,6 +65,14 @@ pub enum RuleEditor {
         /// Whether the chips use the code font, for commands and paths.
         code: bool,
     },
+    /// The application's own view, such as a code editor. See
+    /// [`RuleEditor::custom`].
+    Custom {
+        /// Builds the view for a row.
+        build: RuleEditorBuilder,
+        /// The value a new condition starts with.
+        default: RuleValue,
+    },
 }
 
 impl RuleEditor {
@@ -90,6 +106,37 @@ impl RuleEditor {
         }
     }
 
+    /// An editor the application draws itself, such as a code editor or a
+    /// date picker. `build` runs once for each row that uses the editor,
+    /// when the row is created and again when its field or operator
+    /// changes. It returns a view the application owns, seeded with the
+    /// row's value, and the view reports each new value through the
+    /// [`RuleValueSlot`]. A custom editor takes a value of any kind; a row
+    /// with no value starts with `default`.
+    ///
+    /// ```no_run
+    /// use gpui_cn::{RuleEditor, RuleValue, TextareaState};
+    /// use gpui_kit::{AppContext as _, Render};
+    ///
+    /// # struct CodeEditor;
+    /// # impl Render for CodeEditor {
+    /// #     fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement { gpui_kit::div() }
+    /// # }
+    /// let _ = RuleEditor::custom(RuleValue::Text("".into()), |value, slot, window, cx| {
+    ///     let _ = (value, slot, window);
+    ///     cx.new(|_| CodeEditor).into()
+    /// });
+    /// ```
+    pub fn custom(
+        default: RuleValue,
+        build: impl Fn(&RuleValue, RuleValueSlot, &mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        Self::Custom {
+            build: Rc::new(build),
+            default,
+        }
+    }
+
     /// The value a new condition starts with.
     pub(crate) fn default_value(&self) -> RuleValue {
         match self {
@@ -100,12 +147,18 @@ impl RuleEditor {
                 .map(|item| RuleValue::Choice(item.value().clone()))
                 .unwrap_or(RuleValue::None),
             Self::List { .. } => RuleValue::List(Vec::new()),
+            Self::Custom { default, .. } => default.clone(),
         }
     }
 
     /// Whether `value` is the kind of value this editor edits.
     pub(crate) fn accepts(&self, value: &RuleValue) -> bool {
         match (self, value) {
+            // A custom editor takes any kind, but a missing value takes
+            // its default.
+            (Self::Custom { default, .. }, value) => {
+                *value != RuleValue::None || *default == RuleValue::None
+            }
             (Self::None, RuleValue::None)
             | (Self::Text { .. }, RuleValue::Text(_))
             | (Self::List { .. }, RuleValue::List(_)) => true,

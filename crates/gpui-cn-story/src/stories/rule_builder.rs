@@ -1,11 +1,12 @@
 use gpui_cn::{
-    ActiveTheme as _, Condition, Rule, RuleBuilder, RuleBuilderState, RuleEditor, RuleField,
-    RuleGroup, RuleOperator, RuleValue, Select, SelectItem, SelectState, Switch, Tag, TagVariant,
-    gpui_kit::assets::IconName,
+    ActiveTheme as _, Condition, InputEvent, Rule, RuleBuilder, RuleBuilderState, RuleEditor,
+    RuleField, RuleGroup, RuleOperator, RuleValue, RuleValueSlot, Select, SelectItem, SelectState,
+    Switch, Tag, TagVariant, Textarea, TextareaState, gpui_kit::assets::IconName,
 };
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Window, base::h_flex, div, prelude::FluentBuilder as _,
+    Render, SharedString, Styled as _, Subscription, Window, base::h_flex, div,
+    prelude::FluentBuilder as _,
 };
 
 use crate::{PAGE_WIDTH, Story, note, page, section};
@@ -41,6 +42,51 @@ impl Story for RuleBuilderStory {
 
 fn text(key: &'static str) -> SharedString {
     key.into()
+}
+
+/// A custom value editor: a code field in the code font, standing in for
+/// an application's own code editor. It reports its text through the
+/// row's slot on every edit.
+struct ScriptEditor {
+    input: Entity<TextareaState>,
+    _changes: Subscription,
+}
+
+impl ScriptEditor {
+    fn new(
+        value: &RuleValue,
+        slot: RuleValueSlot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let text = match value {
+            RuleValue::Text(text) => text.clone(),
+            _ => SharedString::default(),
+        };
+        let input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("return cmd.includes(\"--force\")")
+                .default_value(text)
+                .auto_grow(1, 4)
+        });
+        let changes = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                slot.set(RuleValue::Text(input.read(cx).value()), cx);
+            }
+        });
+        Self {
+            input,
+            _changes: changes,
+        }
+    }
+}
+
+impl Render for ScriptEditor {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Textarea::new(&self.input)
+            .w_80()
+            .font_family(cx.theme().mono_font_family().clone())
+    }
 }
 
 /// What a condition can test.
@@ -95,6 +141,16 @@ fn condition_fields() -> Vec<RuleField> {
             SelectItem::new(text("claude"), "Claude"),
             SelectItem::new(text("any"), "Any agent"),
         ])),
+        RuleField::new("script", "Script")
+            .icon(IconName::FileCode)
+            .connector("returns true for")
+            .editor(RuleEditor::custom(
+                RuleValue::Text(SharedString::default()),
+                |value, slot, window, cx| {
+                    cx.new(|cx| ScriptEditor::new(value, slot, window, cx))
+                        .into()
+                },
+            )),
     ]
 }
 
@@ -166,6 +222,10 @@ impl RuleBuilderStory {
                             .with_value(RuleValue::Text("main".into())),
                         Condition::new("files").with_list(["migrations/*"]),
                     ])),
+                    Rule::from(
+                        Condition::new("script")
+                            .with_value(RuleValue::Text("cmd.args.includes(\"--force\")".into())),
+                    ),
                 ]),
                 window,
                 cx,
