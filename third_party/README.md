@@ -4,7 +4,7 @@ The crates in this repository are Apache-2.0 (see `../LICENSE-APACHE`). The
 terminal engine crates and the `ghostty` feature of gpui-cn ship material
 derived from, and link native code built from, the projects below.
 `cargo deny check licenses` covers the Rust dependencies; the native code
-compiled into `libghostty-vt.a` is invisible to it and is listed here.
+compiled into libghostty-vt is invisible to it and is listed here.
 
 ## Shipped in the crates
 
@@ -15,12 +15,14 @@ compiled into `libghostty-vt.a` is invisible to it and is listed here.
 | [Muxy v2](https://github.com/muxy-app/muxy) (the Rust 2.x line) | MIT, Copyright (c) 2026 Muxy | Block element quads, decoration quads, the canvas structure and cell-aligned glyph positioning in `crates/gpui-cn/src/terminal`, from `crates/muxy-app/src/views/terminal/element.rs`. Every adapted file says so in its header. License text in `LICENSE-MUXY`. |
 | [libghostty-rs](https://github.com/Uzaaft/libghostty-rs) (`libghostty-vt`, `libghostty-vt-sys` 0.2.2) | MIT OR Apache-2.0, by Uzaaft and pluiedev | The safe crate is a fork; the sys crate's build script, `lib.rs` and bindgen tool are adapted from it. Every adapted file says "Adapted from libghostty-vt 0.2.2" or "Adapted from libghostty-vt-sys 0.2.2" in its header. The crates ship no license text of their own; the repository above has it. Used here under Apache-2.0. |
 
-## Linked into the static archive
+## Linked into the library
 
-`ghostty-vt-sys` builds `libghostty-vt` from Ghostty's official source
-tarball. The archive contains Ghostty's own Zig code (MIT) and these
-libraries, fetched by Zig from the sources named in Ghostty's
-`build.zig.zon` files and verified against the hashes there:
+`ghostty-vt-sys` links an official libghostty-vt release: the prebuilt
+library on macOS, iOS and Windows GNU (a DLL there), or one built from the
+release source tarball and its deps tarball elsewhere. The library
+contains Ghostty's own Zig code (MIT) and these libraries, from the sources
+named in Ghostty's `build.zig.zon` files and verified against the hashes
+there:
 
 | Project | License | Role |
 | --- | --- | --- |
@@ -35,6 +37,7 @@ libraries, fetched by Zig from the sources named in Ghostty's
 
 ## Build-time Rust dependencies
 
-`ghostty-vt-sys` downloads the source tarball with `ureq`. On Linux hosts
+`ghostty-vt-sys` downloads the release files with `ureq` and reads the
+prebuilt zip archives with `zip`. On Linux hosts
 that pulls in `webpki-roots`, whose root certificate data is under
 CDLA-Permissive-2.0; `deny.toml` carries an exception for it.

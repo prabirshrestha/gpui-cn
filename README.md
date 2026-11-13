@@ -117,12 +117,14 @@ new.
 cargo add gpui-cn --features ghostty
 ```
 
-Building it needs [Zig](https://ziglang.org/download/) 0.17 on `PATH` (or
-in `ZIG`). The first build downloads Ghostty's pinned source, about 4 MB,
-and the Zig packages it fetches, about 30 MB, into Zig's cache. For an
-offline build, set `GHOSTTY_SOURCE_DIR` to a Ghostty checkout or the
-extracted tarball and `GHOSTTY_ZIG_SYSTEM_DIR` to the unpacked Zig
-packages; `ghostty-vt-sys` describes both.
+On macOS, iOS and Windows GNU, the first build downloads the prebuilt
+libghostty-vt of the pinned release, about 16 MB, and needs no Zig. On
+Windows GNU the terminal links `ghostty-vt.dll`, which an application ships
+next to its executable. Linux and Windows MSVC build it from source, which
+needs [Zig](https://ziglang.org/download/) 0.17 on `PATH` (or in `ZIG`) and
+downloads the release source and its Zig packages, about 10 MB. For an
+offline build, set `GHOSTTY_RELEASE_DIR` to a directory with the release
+files; `ghostty-vt-sys` describes it.
 
 Everything else is decided at runtime: a local shell in a pty
 (`TerminalState::local`, on desktop targets), a remote session or any
@@ -147,17 +149,16 @@ is built from gpui-cn components, so it is also the first application that
 uses the library.
 
 ```bash
-git submodule update --init
 cargo run
 ```
 
-The Terminal story runs your shell through Ghostty's terminal engine, so
-building the gallery needs [Zig](https://ziglang.org/download/) 0.17. Run
-`mise install`; the build finds the repository version through mise even
-when another `zig` is first on `PATH`. Without the submodule, the first
-build downloads the pinned Ghostty source instead.
+The Terminal story runs your shell through Ghostty's terminal engine. On
+macOS it links the prebuilt libghostty-vt, so the gallery needs no Zig.
+On Linux it builds the engine with [Zig](https://ziglang.org/download/)
+0.17: run `mise install`, and the build finds the repository version
+through mise even when another `zig` is first on `PATH`.
 `cargo run --no-default-features --features gpui-fast` builds the gallery
-without the story and without Zig. Without `--features gpui-fast`, it also
+without the story. Without `--features gpui-fast`, it also
 runs on gpui-pre.
 
 Pick a story in the sidebar. Each story you pick is a page on the
@@ -223,14 +224,14 @@ cargo deny check licenses
 must follow.
 
 The workspace also holds the terminal engine that gpui-cn's `ghostty`
-feature uses: `ghostty-vt-sys` builds libghostty-vt from Ghostty's source
-with Zig and links it statically, and `ghostty-vt` is its safe API. The
-Ghostty pin is in `GHOSTTY.lock` and the `third_party/ghostty` submodule. To
-move it, which also regenerates the bindings, the terminfo database, and
-the shell integration scripts:
+feature uses: `ghostty-vt-sys` links a libghostty-vt release, prebuilt or
+built from source with Zig, and `ghostty-vt` is its safe API. The pin is in
+`GHOSTTY.lock` and the `third_party/ghostty` submodule. To move it, which
+also regenerates the bindings, the terminfo database, and the shell
+integration scripts:
 
 ```bash
-scripts/sync.sh <ghostty-commit>
+scripts/sync.sh vt-<version>
 ```
 
 The engine has two examples that need no GPUI:

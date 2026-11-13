@@ -10,21 +10,25 @@ Ghostty submodule or copy individual generated files.
 
 ## Choose the versions
 
-Require a full 40-character Ghostty commit. Read the Ghostty version from the
-official source tarball through `scripts/sync.sh`. Do not infer it from a branch
-or tag.
+Pin an official libghostty-vt release, a `vt-X.Y.Z` tag with files under
+`https://release.files.ghostty.org/libghostty-vt/X.Y.Z/`. Pin a bare
+40-character Ghostty commit only when the user asks for an unreleased
+commit; that tip mode has no prebuilt libraries, so every target then
+needs Zig.
 
 Both engine crates use one exact package version:
 
 ```text
-<crate-core>+ghostty.<ghostty-version>.<short-commit>
+<crate-core>+ghostty-vt.<release-version>
 ```
 
-For example, Ghostty `1.3.2-main+b40acce` and crate core `0.6.0` produce:
+For example, release `vt-1.0.1` and crate core `0.8.0` produce:
 
 ```text
-0.6.0+ghostty.1.3.2-main.b40acce
+0.8.0+ghostty-vt.1.0.1
 ```
+
+A tip pin uses `<crate-core>+ghostty.<ghostty-version>.<short-commit>`.
 
 The crate core defaults to `workspace.package.version`, which is gpui-cn's
 version. Pass a different core only when the user requests an independent
@@ -36,25 +40,35 @@ selection.
 
 ## Sync
 
-Start from a clean working tree. On macOS, put Zig 0.16 first on `PATH` and
-ensure Homebrew `llvm@22` is installed.
+Start from a clean working tree. Install `minisign` and Homebrew
+`llvm@22`; a release sync needs no Zig on macOS, because the verify build
+links the prebuilt library. If you install minisign only for the sync,
+remove it afterwards.
 
 Use the gpui-cn core:
 
 ```sh
-scripts/sync.sh <full-ghostty-commit>
+scripts/sync.sh vt-<version>
 ```
 
 Use an independent engine core:
 
 ```sh
-scripts/sync.sh <full-ghostty-commit> <major.minor.patch>
+scripts/sync.sh vt-<version> <major.minor.patch>
 ```
 
-The script updates the submodule, both lock files, both engine crate versions,
-their root dependency requirements, generated bindings, terminfo, and shell
-integration resources. It verifies the official tarball against a reproduced
-archive.
+For a release, the script checks `SHA256SUMS` against its minisign
+signature, checks every release file against `SHA256SUMS`, and checks that
+the tarball headers match the tag in the submodule. It updates the
+submodule gitlink, both lock files with every release file and its sha256,
+both engine crate versions, their root dependency requirements, generated
+bindings, terminfo, and shell integration resources. A tip sync verifies
+the official tarball against a reproduced archive instead.
+
+The C API passes many values through `void*` get and set keys, so the
+compiler does not catch a changed value type. Read the header diff and
+check every key the safe API uses against its documented input or output
+type.
 
 Inspect every changed path. Reject unrelated Ghostty source changes and
 dependency updates. Run:
