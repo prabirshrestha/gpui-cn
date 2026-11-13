@@ -23,12 +23,14 @@ use crate::{
 /// It is only valid for the duration of that callback.
 #[derive(Debug, Clone, Copy)]
 pub struct Allocator {
-    inner: ffi::Allocator,
+    /// The pointer libghostty gave the callback. libghostty supports the
+    /// allocator only through this pointer, never through a copy of it.
+    inner: *const ffi::Allocator,
 }
 
 impl Allocator {
     pub(crate) fn as_raw(&self) -> *const ffi::Allocator {
-        std::ptr::from_ref(&self.inner)
+        self.inner
     }
 
     /// # Safety
@@ -36,9 +38,7 @@ impl Allocator {
     /// `raw` must point to a valid allocator for as long as the returned
     /// value is used.
     pub(crate) unsafe fn from_raw(raw: *const ffi::Allocator) -> Self {
-        Self {
-            inner: unsafe { *raw },
-        }
+        Self { inner: raw }
     }
 }
 
@@ -127,6 +127,10 @@ impl Bytes {
 
 impl Drop for Bytes {
     fn drop(&mut self) {
+        // Empty output from libghostty has no allocation behind it.
+        if self.len == 0 {
+            return;
+        }
         // SAFETY: We own the bytes and they were allocated with `alloc`.
         unsafe { ffi::ghostty_free(self.alloc, self.ptr.as_ptr(), self.len) };
     }

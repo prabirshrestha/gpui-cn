@@ -27,6 +27,8 @@ pub enum Error {
     /// A safety check rejected the operation, for example pasted text that
     /// could inject commands. Nothing was done.
     Rejected,
+    /// The linked library was built without the feature this call needs.
+    Unsupported,
 }
 
 impl std::fmt::Display for Error {
@@ -40,6 +42,7 @@ impl std::fmt::Display for Error {
             Self::IoError => write!(f, "i/o error"),
             Self::LimitExceeded => write!(f, "limit exceeded"),
             Self::Rejected => write!(f, "rejected by a safety check"),
+            Self::Unsupported => write!(f, "not supported by this build of libghostty-vt"),
         }
     }
 }
@@ -53,6 +56,7 @@ fn other(code: ffi::Result::Type, required: usize) -> Error {
         ffi::Result::IO_ERROR => Error::IoError,
         ffi::Result::LIMIT_EXCEEDED => Error::LimitExceeded,
         ffi::Result::REJECTED => Error::Rejected,
+        ffi::Result::UNSUPPORTED => Error::Unsupported,
         _ => Error::InvalidValue,
     }
 }
@@ -100,4 +104,10 @@ pub(crate) fn from_optional_result_with_len(
         ffi::Result::NO_VALUE => Ok(None),
         code => Err(other(code, len)),
     }
+}
+
+/// Check the result of a call that cannot fail for valid arguments, such as
+/// a setter that takes a typed value.
+pub(crate) fn expect_success(code: ffi::Result::Type) {
+    debug_assert_eq!(code, ffi::Result::SUCCESS, "libghostty-vt call failed");
 }

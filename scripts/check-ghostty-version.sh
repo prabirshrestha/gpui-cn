@@ -32,14 +32,32 @@ if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-short=${commit:0:7}
-if [ "${ghostty_version##*+}" != "$short" ]; then
-  echo "$lock version '$ghostty_version' does not end in commit '$short'" >&2
-  exit 1
+tag=$(sed -n 's/^tag = //p' "$lock")
+if [ -n "$tag" ]; then
+  # A libghostty-vt release: vt-X.Y.Z with its prebuilt libraries.
+  if [ "$tag" != "vt-$ghostty_version" ]; then
+    echo "$lock tag '$tag' does not match version '$ghostty_version'" >&2
+    exit 1
+  fi
+  for field in url sha256 root release deps deps_sha256 deps_root xcframework \
+    xcframework_sha256 windows_x86_64 windows_x86_64_sha256 windows_aarch64 \
+    windows_aarch64_sha256; do
+    if ! grep -q "^$field = ." "$lock"; then
+      echo "$lock has no '$field' for release $tag" >&2
+      exit 1
+    fi
+  done
+  metadata="ghostty-vt.$ghostty_version"
+else
+  # A tip build of Ghostty's main branch.
+  short=${commit:0:7}
+  if [ "${ghostty_version##*+}" != "$short" ]; then
+    echo "$lock version '$ghostty_version' does not end in commit '$short'" >&2
+    exit 1
+  fi
+  upstream=${ghostty_version%+"$short"}
+  metadata="ghostty.${upstream//+/.}.$short"
 fi
-
-upstream=${ghostty_version%+"$short"}
-metadata="ghostty.${upstream//+/.}.$short"
 sys_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/ghostty-vt-sys/Cargo.toml)
 safe_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/ghostty-vt/Cargo.toml)
 sys_core=${sys_version%%+*}
@@ -87,4 +105,4 @@ if ! cmp -s "$lock" third_party/GHOSTTY.lock; then
   exit 1
 fi
 
-echo "ghostty-vt crates $sys_version pin Ghostty $ghostty_version ($commit), mode $version_mode"
+echo "ghostty-vt crates $sys_version pin libghostty-vt ${tag:-$ghostty_version} ($commit), mode $version_mode"

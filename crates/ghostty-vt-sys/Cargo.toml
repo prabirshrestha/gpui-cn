@@ -1,7 +1,7 @@
 [package]
 name = "ghostty-vt-sys"
 description = "Raw FFI bindings for libghostty-vt, built from Ghostty's official source tarball with Zig"
-version = "0.8.0+ghostty.1.4.0-main.83fb956"
+version = "0.8.0+ghostty-vt.1.0.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -38,6 +38,8 @@ flate2 = "1"
 pkg-config = { version = "0.3", optional = true }
 sha2 = "0.10"
 tar = "0.4"
+# Reads the prebuilt XCFramework and Windows zips.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # The download uses the OS TLS stack on macOS and Windows hosts (no C build,
 # no nasm) and rustls with ring on every other host (no OpenSSL headers).

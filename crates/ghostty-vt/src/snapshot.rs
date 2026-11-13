@@ -84,14 +84,31 @@ impl std::fmt::Debug for Decoder<'_> {
 
 /// Progress of one [`Decoder::next_page`] step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Progress {
-    /// The screen the decoded history page belongs to.
-    pub screen: Screen,
-    /// Rows prepended by the page. Zero means the page was validated but
-    /// could not be applied to the live terminal.
-    pub rows: usize,
-    /// Page records remaining in the same screen's history.
-    pub remaining: u32,
+pub enum Progress {
+    /// One history page, with the Kitty graphics placements pinned to it.
+    Page {
+        /// The screen the page belongs to.
+        screen: Screen,
+        /// Rows prepended by the page. Zero means the page was validated
+        /// but could not be applied to the live terminal.
+        rows: usize,
+        /// Page records remaining in the same screen's history.
+        remaining: u32,
+    },
+    /// The pixels of one Kitty graphics image or animation frame.
+    Image {
+        /// The screen the image belongs to.
+        screen: Screen,
+        /// The Kitty graphics image id.
+        id: u32,
+        /// The Kitty frame number: 1 is the image itself, and 2 and up are
+        /// its animation frames.
+        frame: u32,
+        /// Pixel bytes attached to the image. Zero means the pixels were
+        /// validated but dropped, for example because they did not fit the
+        /// storage limit.
+        bytes: usize,
+    },
 }
 
 impl<'a> Decoder<'a> {
@@ -226,7 +243,8 @@ impl<'a> Decoder<'a> {
         self.terminal.as_mut()
     }
 
-    /// Decode one history page into the terminal from [`Decoder::ready`].
+    /// Decode the next history page or Kitty image into the terminal from
+    /// [`Decoder::ready`].
     ///
     /// Returns `Ok(None)` once the snapshot's end marker was validated, and
     /// keeps returning it afterwards.
@@ -238,22 +256,36 @@ impl<'a> Decoder<'a> {
         match from_optional_result_uninit(result, MaybeUninit::new(()))? {
             None => Ok(None),
             Some(()) => {
+                use ffi::SnapshotDecoderData as Data;
                 let screen = self
-                    .get::<ffi::TerminalScreen::Type>(ffi::SnapshotDecoderData::PROGRESS_SCREEN)?
+                    .get::<ffi::TerminalScreen::Type>(Data::PROGRESS_SCREEN)?
                     .ok_or(Error::InvalidValue)?;
-                let rows = self
-                    .get::<usize>(ffi::SnapshotDecoderData::PROGRESS_ROWS)?
+                let screen = Screen::try_from(screen).map_err(|_| Error::InvalidValue)?;
+                let kind = self
+                    .get::<ffi::SnapshotDecoderProgressKind::Type>(Data::PROGRESS_KIND)?
                     .ok_or(Error::InvalidValue)?;
-                let remaining = self
-                    .get::<u32>(ffi::SnapshotDecoderData::PROGRESS_REMAINING)?
-                    .ok_or(Error::InvalidValue)?;
-                Ok(Some(Progress {
-                    screen: Screen::try_from(screen).map_err(|_| Error::InvalidValue)?,
-                    rows,
-                    remaining,
-                }))
+                let progress = match kind {
+                    ffi::SnapshotDecoderProgressKind::PAGE => Progress::Page {
+                        screen,
+                        rows: self.require(Data::PROGRESS_ROWS)?,
+                        remaining: self.require(Data::PROGRESS_REMAINING)?,
+                    },
+                    ffi::SnapshotDecoderProgressKind::IMAGE => Progress::Image {
+                        screen,
+                        id: self.require(Data::PROGRESS_IMAGE_ID)?,
+                        frame: self.require(Data::PROGRESS_IMAGE_FRAME)?,
+                        bytes: self.require(Data::PROGRESS_IMAGE_BYTES)?,
+                    },
+                    _ => return Err(Error::InvalidValue),
+                };
+                Ok(Some(progress))
             }
         }
+    }
+
+    /// A progress value that the current progress kind always has.
+    fn require<T>(&self, tag: ffi::SnapshotDecoderData::Type) -> Result<T> {
+        self.get::<T>(tag)?.ok_or(Error::InvalidValue)
     }
 
     /// Take the terminal produced by [`Decoder::ready`].

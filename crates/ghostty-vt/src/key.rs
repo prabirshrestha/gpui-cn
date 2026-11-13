@@ -19,7 +19,7 @@ use std::mem::MaybeUninit;
 use crate::{
     Error,
     alloc::Object,
-    error::{Result, from_result, from_result_with_len},
+    error::{Result, expect_success, from_result, from_result_with_len},
     ffi::{self, KeyEncoderOption as Opt},
     terminal::Terminal,
 };
@@ -42,7 +42,7 @@ impl Encoder {
         option: ffi::KeyEncoderOption::Type,
         value: *const std::ffi::c_void,
     ) {
-        unsafe { ffi::ghostty_key_encoder_setopt(self.0.as_raw(), option, value) }
+        expect_success(unsafe { ffi::ghostty_key_encoder_set(self.0.as_raw(), option, value) });
     }
 
     /// Encode a key event into a terminal escape sequence.
@@ -121,7 +121,7 @@ impl Encoder {
     /// Use [`Encoder::set_macos_option_as_alt`] to set it afterward if needed.
     pub fn set_options_from_terminal(&mut self, terminal: &Terminal) -> &mut Self {
         unsafe {
-            ffi::ghostty_key_encoder_setopt_from_terminal(self.0.as_raw(), terminal.as_raw());
+            ffi::ghostty_key_encoder_set_from_terminal(self.0.as_raw(), terminal.as_raw());
         }
         self
     }
@@ -231,7 +231,9 @@ impl Event {
 
     /// Set the key action (press, release, repeat).
     pub fn set_action(&mut self, action: Action) -> &mut Self {
-        unsafe { ffi::ghostty_key_event_set_action(self.inner.as_raw(), action.into()) }
+        expect_success(unsafe {
+            ffi::ghostty_key_event_set_action(self.inner.as_raw(), action.into())
+        });
         self
     }
 
@@ -244,7 +246,7 @@ impl Event {
 
     /// Set the physical key code.
     pub fn set_key(&mut self, key: Key) -> &mut Self {
-        unsafe { ffi::ghostty_key_event_set_key(self.inner.as_raw(), key.into()) }
+        expect_success(unsafe { ffi::ghostty_key_event_set_key(self.inner.as_raw(), key.into()) });
         self
     }
 
@@ -257,7 +259,9 @@ impl Event {
 
     /// Set the modifier keys bitmask.
     pub fn set_mods(&mut self, mods: Mods) -> &mut Self {
-        unsafe { ffi::ghostty_key_event_set_mods(self.inner.as_raw(), mods.bits()) }
+        expect_success(unsafe {
+            ffi::ghostty_key_event_set_mods(self.inner.as_raw(), mods.bits())
+        });
         self
     }
 
@@ -269,7 +273,9 @@ impl Event {
 
     /// Set the consumed modifiers bitmask.
     pub fn set_consumed_mods(&mut self, mods: Mods) -> &mut Self {
-        unsafe { ffi::ghostty_key_event_set_consumed_mods(self.inner.as_raw(), mods.bits()) }
+        expect_success(unsafe {
+            ffi::ghostty_key_event_set_consumed_mods(self.inner.as_raw(), mods.bits())
+        });
         self
     }
 
@@ -283,7 +289,9 @@ impl Event {
 
     /// Set whether the key event is part of a composition sequence.
     pub fn set_composing(&mut self, composing: bool) -> &mut Self {
-        unsafe { ffi::ghostty_key_event_set_composing(self.inner.as_raw(), composing) }
+        expect_success(unsafe {
+            ffi::ghostty_key_event_set_composing(self.inner.as_raw(), composing)
+        });
         self
     }
 
@@ -307,16 +315,18 @@ impl Event {
         self.text = text.map(Into::into);
 
         match &self.text {
-            Some(text) => unsafe {
+            Some(text) => expect_success(unsafe {
                 ffi::ghostty_key_event_set_utf8(
                     self.inner.as_raw(),
-                    text.as_ptr().cast(),
-                    text.len(),
-                );
-            },
-            None => unsafe {
-                ffi::ghostty_key_event_set_utf8(self.inner.as_raw(), std::ptr::null(), 0);
-            },
+                    ffi::String {
+                        ptr: text.as_ptr(),
+                        len: text.len(),
+                    },
+                )
+            }),
+            None => expect_success(unsafe {
+                ffi::ghostty_key_event_set_utf8(self.inner.as_raw(), ffi::String::default())
+            }),
         }
         self
     }

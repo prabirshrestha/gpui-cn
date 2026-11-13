@@ -1,15 +1,27 @@
-//! Build libghostty-vt from Ghostty's source with Zig and link it statically.
+//! Link libghostty-vt: a pinned prebuilt library where the release has one,
+//! otherwise a Zig build of the pinned source.
 //!
-//! Source lookup order:
+//! Lookup order:
 //!
-//! 1. `GHOSTTY_SOURCE_DIR`: a Ghostty checkout or extracted source tarball.
-//! 2. The `third_party/ghostty` git submodule at the repository root.
-//! 3. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
-//!    verified against the sha256 in `GHOSTTY.lock`.
+//! 1. `GHOSTTY_SOURCE_DIR`: build this Ghostty checkout or extracted source
+//!    tarball.
+//! 2. The prebuilt library of the pinned libghostty-vt release, for the Apple
+//!    targets (the XCFramework) and the Windows GNU targets (the Windows zip).
+//!    It is downloaded, or read from `GHOSTTY_RELEASE_DIR`, and verified
+//!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Apple targets
+//!    link the static archive; Windows GNU links the DLL, whose path is
+//!    exported as `DEP_GHOSTTY_VT_DLL`. `GHOSTTY_VT_FROM_SOURCE=1` skips this
+//!    step.
+//! 3. The `third_party/ghostty` git submodule at the repository root.
 //! 4. With the `pkg-config` feature, an installed `libghostty-vt-static`.
+//! 5. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
+//!    verified against the sha256 in `GHOSTTY.lock`.
 //!
-//! The source tree is copied into `$OUT_DIR/src` before Zig runs so that Zig
-//! never writes into the submodule or the registry directory.
+//! A source build of a release also downloads the release's dependency
+//! tarball and passes it to `zig build --system`, so Zig fetches nothing.
+//! `GHOSTTY_ZIG_SYSTEM_DIR` replaces that directory. The source tree is
+//! copied into `$OUT_DIR/src` before Zig runs so that Zig never writes into
+//! the submodule or the registry directory.
 //!
 //! Adapted from libghostty-vt-sys 0.2.2 (MIT OR Apache-2.0).
 
@@ -18,8 +30,15 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+
+/// A release file: its name in the release directory and its sha256.
+struct ReleaseFile {
+    name: String,
+    sha256: String,
+}
 
 /// Pinned Ghostty source, parsed from `GHOSTTY.lock`.
 struct Lock {
@@ -28,25 +47,54 @@ struct Lock {
     url: String,
     sha256: String,
     root: String,
+    /// The libghostty-vt release, present for a `vt-X.Y.Z` pin.
+    release: Option<Release>,
+}
+
+/// The files of a libghostty-vt release beside its source tarball.
+struct Release {
+    tag: String,
+    url: String,
+    deps: ReleaseFile,
+    deps_root: String,
+    xcframework: ReleaseFile,
+    windows_x86_64: ReleaseFile,
+    windows_aarch64: ReleaseFile,
 }
 
 impl Lock {
     fn read(path: &Path) -> Self {
         let text = fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        let field = |name: &str| -> String {
+        let optional = |name: &str| -> Option<String> {
             text.lines()
                 .filter_map(|line| line.split_once('='))
                 .find(|(key, _)| key.trim() == name)
                 .map(|(_, value)| value.trim().to_owned())
-                .unwrap_or_else(|| panic!("{} has no `{name}` field", path.display()))
         };
+        let field = |name: &str| -> String {
+            optional(name).unwrap_or_else(|| panic!("{} has no `{name}` field", path.display()))
+        };
+        let file = |name: &str| ReleaseFile {
+            name: field(name),
+            sha256: field(&format!("{name}_sha256")),
+        };
+        let release = optional("tag").map(|tag| Release {
+            tag,
+            url: field("release"),
+            deps: file("deps"),
+            deps_root: field("deps_root"),
+            xcframework: file("xcframework"),
+            windows_x86_64: file("windows_x86_64"),
+            windows_aarch64: file("windows_aarch64"),
+        });
         Self {
             commit: field("commit"),
             version: field("version"),
             url: field("url"),
             sha256: field("sha256"),
             root: field("root"),
+            release,
         }
     }
 }
@@ -56,10 +104,12 @@ fn main() {
     println!("cargo:rerun-if-changed=GHOSTTY.lock");
     for knob in [
         "DOCS_RS",
+        "GHOSTTY_RELEASE_DIR",
         "GHOSTTY_SOURCE_DIR",
         "GHOSTTY_SOURCE_URL",
-        "GHOSTTY_ZIG_SYSTEM_DIR",
         "GHOSTTY_VT_CPU",
+        "GHOSTTY_VT_FROM_SOURCE",
+        "GHOSTTY_ZIG_SYSTEM_DIR",
         "ZIG",
     ] {
         println!("cargo:rerun-if-env-changed={knob}");
@@ -77,11 +127,13 @@ fn main() {
     }
 
     let lock = Lock::read(&manifest_dir.join("GHOSTTY.lock"));
-    validate_package_version(&lock);
+    let build_metadata = validate_package_version(&lock);
     println!("cargo:rustc-env=GHOSTTY_VT_COMMIT={}", lock.commit);
     println!("cargo:rustc-env=GHOSTTY_VT_VERSION={}", lock.version);
     println!("cargo::metadata=COMMIT={}", lock.commit);
     println!("cargo::metadata=VERSION={}", lock.version);
+    // ghostty-vt checks that its own version carries the same metadata.
+    println!("cargo::metadata=BUILD_METADATA={build_metadata}");
 
     // docs.rs has no Zig toolchain. The committed bindings are enough to
     // build the documentation.
@@ -102,6 +154,15 @@ fn main() {
         return;
     }
 
+    let from_source = env::var("GHOSTTY_VT_FROM_SOURCE").is_ok_and(|v| !v.is_empty() && v != "0");
+    if !from_source
+        && let Some(release) = &lock.release
+        && let Some(prebuilt) = Prebuilt::for_target(release, &target)
+    {
+        link_prebuilt(release, &prebuilt);
+        return;
+    }
+
     if submodule.join("build.zig").exists() {
         build_from(&submodule, &lock, &target);
         return;
@@ -119,34 +180,48 @@ fn main() {
 }
 
 /// Check that the published crate version identifies the pinned Ghostty source.
-fn validate_package_version(lock: &Lock) {
+///
+/// A release pin carries `+ghostty-vt.X.Y.Z`, a tip pin carries
+/// `+ghostty.<ghostty-version>.<short-commit>`.
+fn validate_package_version(lock: &Lock) -> String {
     let short_commit = lock
         .commit
         .get(..7)
         .unwrap_or_else(|| panic!("GHOSTTY.lock has an invalid commit: {}", lock.commit));
-    let (ghostty_version, version_commit) = lock.version.rsplit_once('+').unwrap_or_else(|| {
-        panic!(
-            "GHOSTTY.lock version must end in the short commit: {}",
-            lock.version
+    let expected = if let Some(release) = &lock.release {
+        assert_eq!(
+            release.tag,
+            format!("vt-{}", lock.version),
+            "GHOSTTY.lock tag does not match its version"
+        );
+        format!("ghostty-vt.{}", lock.version)
+    } else {
+        let (ghostty_version, version_commit) =
+            lock.version.rsplit_once('+').unwrap_or_else(|| {
+                panic!(
+                    "GHOSTTY.lock version must end in the short commit: {}",
+                    lock.version
+                )
+            });
+        assert_eq!(
+            version_commit, short_commit,
+            "GHOSTTY.lock version does not match its commit"
+        );
+        format!(
+            "ghostty.{}.{}",
+            ghostty_version.replace('+', "."),
+            short_commit
         )
-    });
-    assert_eq!(
-        version_commit, short_commit,
-        "GHOSTTY.lock version does not match its commit"
-    );
+    };
 
     let package_version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
     let metadata = package_version.split_once('+').map(|(_, value)| value);
-    let expected = format!(
-        "ghostty.{}.{}",
-        ghostty_version.replace('+', "."),
-        short_commit
-    );
     assert_eq!(
         metadata,
         Some(expected.as_str()),
         "ghostty-vt-sys version must end in +{expected}"
     );
+    expected
 }
 
 /// Resolve the HEAD file of the submodule's git directory, if checked out.
@@ -156,6 +231,283 @@ fn submodule_head(gitlink: &Path) -> Option<PathBuf> {
     let dir = gitlink.parent()?.join(rel);
     let head = dir.join("HEAD");
     head.exists().then_some(head)
+}
+
+/// A prebuilt library of the pinned release for one Rust target.
+struct Prebuilt<'a> {
+    file: &'a ReleaseFile,
+    /// The directory inside the zip that holds the library and headers.
+    dir: String,
+    kind: PrebuiltKind,
+}
+
+enum PrebuiltKind {
+    /// An XCFramework slice: a static archive, `Headers/` beside it.
+    Apple {
+        archive: &'static str,
+        /// The architecture to take from a universal archive.
+        arch: Option<MachArch>,
+    },
+    /// The Windows install tree: `bin/ghostty-vt.dll`, its import library
+    /// `lib/ghostty-vt.lib`, and `include/`.
+    WindowsGnu,
+}
+
+#[derive(Clone, Copy)]
+enum MachArch {
+    X86_64,
+    Arm64,
+}
+
+impl MachArch {
+    /// The Mach-O CPU type of this architecture.
+    fn cpu_type(self) -> u32 {
+        const ABI64: u32 = 0x0100_0000;
+        match self {
+            Self::X86_64 => ABI64 | 7,
+            Self::Arm64 => ABI64 | 12,
+        }
+    }
+}
+
+impl<'a> Prebuilt<'a> {
+    fn for_target(release: &'a Release, target: &str) -> Option<Self> {
+        let xcframework = |slice: &str, archive, arch| Prebuilt {
+            file: &release.xcframework,
+            dir: format!("ghostty-vt.xcframework/{slice}"),
+            kind: PrebuiltKind::Apple { archive, arch },
+        };
+        let windows = |file: &'a ReleaseFile, triple: &str| Prebuilt {
+            file,
+            dir: format!("ghostty-vt-{}-{triple}", release_version(release)),
+            kind: PrebuiltKind::WindowsGnu,
+        };
+        Some(match target {
+            "x86_64-apple-darwin" => xcframework(
+                "macos-arm64_x86_64",
+                "libghostty-vt.a",
+                Some(MachArch::X86_64),
+            ),
+            "aarch64-apple-darwin" => xcframework(
+                "macos-arm64_x86_64",
+                "libghostty-vt.a",
+                Some(MachArch::Arm64),
+            ),
+            "aarch64-apple-ios" => xcframework("ios-arm64", "libghostty-vt-fat.a", None),
+            "aarch64-apple-ios-sim" => {
+                xcframework("ios-arm64-simulator", "libghostty-vt-fat.a", None)
+            }
+            "x86_64-pc-windows-gnu" | "x86_64-pc-windows-gnullvm" => {
+                windows(&release.windows_x86_64, "x86_64-windows-gnu")
+            }
+            "aarch64-pc-windows-gnullvm" => {
+                windows(&release.windows_aarch64, "aarch64-windows-gnu")
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// The libghostty-vt version of a release, from its `vt-X.Y.Z` tag.
+fn release_version(release: &Release) -> &str {
+    release.tag.strip_prefix("vt-").unwrap_or(&release.tag)
+}
+
+/// Download, verify, extract and link a prebuilt library.
+fn link_prebuilt(release: &Release, prebuilt: &Prebuilt) {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let dest = out_dir.join("prebuilt");
+    let stamp = dest.join(".ghostty-vt-sha256");
+    let stamp_value = format!("{} {}", prebuilt.file.sha256, prebuilt.dir);
+    let dir = dest.join(&prebuilt.dir);
+    if fs::read_to_string(&stamp).ok().as_deref() != Some(stamp_value.as_str()) {
+        if dest.exists() {
+            fs::remove_dir_all(&dest)
+                .unwrap_or_else(|error| panic!("failed to remove {}: {error}", dest.display()));
+        }
+        let bytes = release_bytes(release, prebuilt.file);
+        extract_zip(&bytes, &prebuilt.dir, &dest);
+        fs::write(&stamp, &stamp_value)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", stamp.display()));
+    }
+
+    match prebuilt.kind {
+        PrebuiltKind::Apple { archive, arch } => {
+            let source = dir.join(archive);
+            let lib_dir = out_dir.join("lib");
+            fs::create_dir_all(&lib_dir)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", lib_dir.display()));
+            // rustc bundles the archive into the rlib and cannot read a
+            // universal archive, so take the target's slice out of it.
+            let bytes = fs::read(&source)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
+            let thin = match arch {
+                Some(arch) => thin_archive(&bytes, arch)
+                    .unwrap_or_else(|error| panic!("{}: {error}", source.display())),
+                None => bytes.as_slice(),
+            };
+            let archive = lib_dir.join("libghostty-vt.a");
+            fs::write(&archive, thin)
+                .unwrap_or_else(|error| panic!("failed to write {}: {error}", archive.display()));
+            println!("cargo:rustc-link-search=native={}", lib_dir.display());
+            println!("cargo:rustc-link-lib=static=ghostty-vt");
+            println!("cargo:include={}", dir.join("Headers").display());
+        }
+        PrebuiltKind::WindowsGnu => {
+            // The static library does not link under rustc: GNU ld drops
+            // the default of Zig's weak `___chkstk_ms` with
+            // `--gc-sections`, which rustc always passes, and a build
+            // script cannot turn that flag off for the crates that use
+            // this one. So link the DLL through its import library.
+            let lib_dir = dir.join("lib");
+            let bin_dir = dir.join("bin");
+            let import = lib_dir.join("ghostty-vt.lib");
+            let dll = bin_dir.join("ghostty-vt.dll");
+            for file in [&import, &dll] {
+                assert!(
+                    file.exists(),
+                    "{} has no {}",
+                    prebuilt.file.name,
+                    file.display()
+                );
+            }
+            println!("cargo:rustc-link-search=native={}", lib_dir.display());
+            // Cargo puts search paths inside OUT_DIR on PATH for
+            // `cargo run` and `cargo test`, so the DLL loads there.
+            println!("cargo:rustc-link-search=native={}", bin_dir.display());
+            println!("cargo:rustc-link-lib=dylib:+verbatim=ghostty-vt.lib");
+            println!("cargo::metadata=DLL={}", dll.display());
+            println!("cargo:include={}", dir.join("include").display());
+        }
+    }
+}
+
+/// The slice of `arch` in a universal (fat) Mach-O archive, or the archive
+/// itself when it is not universal.
+fn thin_archive(bytes: &[u8], arch: MachArch) -> Result<&[u8], String> {
+    const FAT_MAGIC: u32 = 0xcafe_babe;
+    const FAT_MAGIC_64: u32 = 0xcafe_babf;
+    let be32 = |at: usize| -> Result<u32, String> {
+        bytes
+            .get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| "truncated universal header".to_owned())
+    };
+    let be64 = |at: usize| -> Result<u64, String> {
+        bytes
+            .get(at..at + 8)
+            .map(|b| u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+            .ok_or_else(|| "truncated universal header".to_owned())
+    };
+    let magic = be32(0)?;
+    let wide = match magic {
+        FAT_MAGIC => false,
+        FAT_MAGIC_64 => true,
+        _ => return Ok(bytes),
+    };
+    let count = be32(4)? as usize;
+    let entry_size = if wide { 32 } else { 20 };
+    for index in 0..count {
+        let at = 8 + index * entry_size;
+        if be32(at)? != arch.cpu_type() {
+            continue;
+        }
+        let (offset, size) = if wide {
+            (be64(at + 8)?, be64(at + 16)?)
+        } else {
+            (u64::from(be32(at + 8)?), u64::from(be32(at + 12)?))
+        };
+        let start = usize::try_from(offset).map_err(|e| e.to_string())?;
+        let end = start + usize::try_from(size).map_err(|e| e.to_string())?;
+        return bytes
+            .get(start..end)
+            .ok_or_else(|| "universal slice is out of bounds".to_owned());
+    }
+    Err("the universal archive has no slice for the target".to_owned())
+}
+
+/// Extract the entries under `prefix/` of a zip into `dest`.
+fn extract_zip(bytes: &[u8], prefix: &str, dest: &Path) {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .unwrap_or_else(|error| panic!("failed to read zip: {error}"));
+    let prefix = Path::new(prefix);
+    let mut found = false;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .unwrap_or_else(|error| panic!("failed to read zip entry: {error}"));
+        let Some(path) = entry.enclosed_name() else {
+            panic!("zip entry {:?} escapes the archive", entry.name());
+        };
+        if !path.starts_with(prefix) {
+            continue;
+        }
+        found = true;
+        let out = dest.join(&path);
+        if entry.is_dir() {
+            fs::create_dir_all(&out)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", out.display()));
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", parent.display()));
+        }
+        let mut data = Vec::new();
+        entry
+            .read_to_end(&mut data)
+            .unwrap_or_else(|error| panic!("failed to extract {}: {error}", path.display()));
+        fs::write(&out, data)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", out.display()));
+    }
+    assert!(found, "the zip has no {}", prefix.display());
+}
+
+/// Read a release file from `GHOSTTY_RELEASE_DIR` or download it, and check
+/// its sha256.
+fn release_bytes(release: &Release, file: &ReleaseFile) -> Vec<u8> {
+    let url = format!("{}/{}", release.url, file.name);
+    let (bytes, origin) = match env::var_os("GHOSTTY_RELEASE_DIR") {
+        Some(dir) => {
+            let path = PathBuf::from(dir).join(&file.name);
+            let bytes = fs::read(&path).unwrap_or_else(|error| {
+                panic!(
+                    "{}",
+                    release_failure(file, &path.display().to_string(), &error.to_string())
+                )
+            });
+            (bytes, path.display().to_string())
+        }
+        None => match fetch(&url) {
+            Ok(bytes) => (bytes, url),
+            Err(error) => panic!("{}", release_failure(file, &url, &error)),
+        },
+    };
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != file.sha256 {
+        panic!(
+            "{}",
+            release_failure(file, &origin, &format!("sha256 mismatch: got {actual}"))
+        );
+    }
+    bytes
+}
+
+fn release_failure(file: &ReleaseFile, origin: &str, error: &str) -> String {
+    format!(
+        "\n\
+         ghostty-vt-sys could not obtain the libghostty-vt release file {name}.\n\
+         \n\
+         error:    {error}\n\
+         from:     {origin}\n\
+         sha256:   {sha}\n\
+         \n\
+         Without network access, download the file and set GHOSTTY_RELEASE_DIR to\n\
+         the directory that holds it. GHOSTTY_VT_FROM_SOURCE=1 builds from source\n\
+         with Zig instead.\n",
+        name = file.name,
+        sha = file.sha256,
+    )
 }
 
 /// Copy a source tree into `$OUT_DIR/src` and build it.
@@ -219,26 +571,45 @@ fn download_and_extract(lock: &Lock, src: &Path) {
             .unwrap_or_else(|error| panic!("failed to remove {}: {error}", src.display()));
     }
 
-    let bytes = match fetch(&url) {
-        Ok(bytes) => bytes,
-        Err(error) => panic!("{}", download_failure(lock, &url, &error)),
+    let bytes = match &lock.release {
+        // A release tarball may also come from GHOSTTY_RELEASE_DIR.
+        Some(release) if env::var_os("GHOSTTY_SOURCE_URL").is_none() => release_bytes(
+            release,
+            &ReleaseFile {
+                name: lock.url.rsplit('/').next().unwrap_or_default().to_owned(),
+                sha256: lock.sha256.clone(),
+            },
+        ),
+        _ => {
+            let bytes = match fetch(&url) {
+                Ok(bytes) => bytes,
+                Err(error) => panic!("{}", download_failure(lock, &url, &error)),
+            };
+            let actual = format!("{:x}", Sha256::digest(&bytes));
+            if actual != lock.sha256 {
+                panic!(
+                    "{}",
+                    download_failure(lock, &url, &format!("sha256 mismatch: got {actual}"))
+                );
+            }
+            bytes
+        }
     };
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if actual != lock.sha256 {
-        panic!(
-            "{}",
-            download_failure(lock, &url, &format!("sha256 mismatch: got {actual}"))
-        );
-    }
 
-    let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
+    untar(&bytes, Path::new(&lock.root), src);
+    fs::write(&stamp, &lock.sha256)
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", stamp.display()));
+}
+
+/// Extract a gzip tarball whose entries are all under `root` into `dest`.
+fn untar(bytes: &[u8], root: &Path, dest: &Path) {
+    let decoder = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(decoder);
     let entries = archive
         .entries()
         .unwrap_or_else(|error| panic!("failed to read tarball: {error}"));
-    fs::create_dir_all(src)
-        .unwrap_or_else(|error| panic!("failed to create {}: {error}", src.display()));
-    let root = Path::new(&lock.root);
+    fs::create_dir_all(dest)
+        .unwrap_or_else(|error| panic!("failed to create {}: {error}", dest.display()));
     for entry in entries {
         let mut entry =
             entry.unwrap_or_else(|error| panic!("failed to read tarball entry: {error}"));
@@ -264,13 +635,31 @@ fn download_and_extract(lock: &Lock, src: &Path) {
         if rel.as_os_str().is_empty() {
             continue;
         }
-        let dest = src.join(rel);
+        let out = dest.join(rel);
         entry
-            .unpack(&dest)
-            .unwrap_or_else(|error| panic!("failed to extract {}: {error}", dest.display()));
+            .unpack(&out)
+            .unwrap_or_else(|error| panic!("failed to extract {}: {error}", out.display()));
     }
-    fs::write(&stamp, &lock.sha256)
+}
+
+/// The Zig package directory for `zig build --system`: the release's
+/// dependency tarball, extracted into `$OUT_DIR/deps`.
+fn release_deps(release: &Release) -> PathBuf {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let deps = out_dir.join("deps");
+    let stamp = deps.join(".ghostty-vt-sha256");
+    if fs::read_to_string(&stamp).is_ok_and(|s| s.trim() == release.deps.sha256) {
+        return deps;
+    }
+    if deps.exists() {
+        fs::remove_dir_all(&deps)
+            .unwrap_or_else(|error| panic!("failed to remove {}: {error}", deps.display()));
+    }
+    let bytes = release_bytes(release, &release.deps);
+    untar(&bytes, Path::new(&release.deps_root), &deps);
+    fs::write(&stamp, &release.deps.sha256)
         .unwrap_or_else(|error| panic!("failed to write {}: {error}", stamp.display()));
+    deps
 }
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
@@ -284,13 +673,19 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .tls_config(TlsConfig::builder().provider(provider).build())
+        // A stalled server must fail the build, not hang it.
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_recv_response(Some(Duration::from_secs(60)))
+        .timeout_recv_body(Some(Duration::from_secs(600)))
         .build()
         .into();
     let response = agent.get(url).call().map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
     response
         .into_body()
-        .into_reader()
+        .with_config()
+        .limit(256 * 1024 * 1024)
+        .reader()
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     Ok(bytes)
@@ -330,9 +725,11 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let zig = resolve_zig();
 
-    let version = fs::read_to_string(src.join("VERSION"))
-        .map(|v| v.trim().to_owned())
-        .unwrap_or_else(|_| lock.version.clone());
+    let read_version = |file: &str| {
+        fs::read_to_string(src.join(file))
+            .map(|v| v.trim().to_owned())
+            .unwrap_or_else(|_| lock.version.clone())
+    };
     let prefix = out_dir.join("zig-out");
     let cache = out_dir.join("zig-cache");
     let cpu = env::var("GHOSTTY_VT_CPU").unwrap_or_else(|_| "baseline".to_owned());
@@ -345,7 +742,9 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
         .arg("-Dsimd=true")
         .arg(format!("-Dtarget={}", zig_target(target)))
         .arg(format!("-Dcpu={cpu}"))
-        .arg(format!("-Dversion-string={version}"))
+        // The copy has no git metadata, and Zig must not read the version
+        // from a repository around OUT_DIR.
+        .arg(format!("-Dversion-string={}", read_version("VERSION")))
         .arg("-Demit-xcframework=false")
         .arg("-Demit-themes=false")
         .arg("--prefix")
@@ -353,28 +752,43 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
         .arg("--cache-dir")
         .arg(&cache)
         .current_dir(src);
+    if lock.release.is_some() {
+        build.arg(format!(
+            "-Dlib-version-string={}",
+            read_version("LIB_VERSION")
+        ));
+    }
 
-    if let Some(dir) = env::var_os("GHOSTTY_ZIG_SYSTEM_DIR").map(PathBuf::from) {
-        assert!(
-            dir.is_dir(),
-            "GHOSTTY_ZIG_SYSTEM_DIR is not a directory: {}",
-            dir.display()
-        );
-        build.arg("--system").arg(&dir);
+    let system = match env::var_os("GHOSTTY_ZIG_SYSTEM_DIR").map(PathBuf::from) {
+        Some(dir) => {
+            assert!(
+                dir.is_dir(),
+                "GHOSTTY_ZIG_SYSTEM_DIR is not a directory: {}",
+                dir.display()
+            );
+            Some(dir)
+        }
+        None => lock.release.as_ref().map(release_deps),
+    };
+    if let Some(dir) = system {
+        // With --system Zig fetches nothing. Its global cache must not hold
+        // package archives from other builds, so it gets its own.
+        build
+            .arg("--system")
+            .arg(&dir)
+            .env("ZIG_GLOBAL_CACHE_DIR", out_dir.join("zig-global"));
     }
 
     run(build, "zig build");
 
     let lib_dir = prefix.join("lib");
-    let lib_name = if target.ends_with("windows-msvc") {
-        "ghostty-vt-static"
+    // On Windows `ghostty-vt.lib` is the DLL's import library and the static
+    // library is `ghostty-vt-static.lib`.
+    let windows = target.contains("windows");
+    let archive = if windows {
+        lib_dir.join("ghostty-vt-static.lib")
     } else {
-        "ghostty-vt"
-    };
-    let archive = if target.contains("windows") {
-        lib_dir.join(format!("{lib_name}.lib"))
-    } else {
-        lib_dir.join(format!("lib{lib_name}.a"))
+        lib_dir.join("libghostty-vt.a")
     };
     assert!(
         archive.exists(),
@@ -389,8 +803,24 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
     );
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=static={lib_name}");
+    if windows {
+        link_windows_static(target);
+    } else {
+        println!("cargo:rustc-link-lib=static=ghostty-vt");
+    }
     println!("cargo:include={}", include_dir.display());
+}
+
+/// Link `ghostty-vt-static.lib` from the search path. The static library
+/// imports from ntdll.
+fn link_windows_static(target: &str) {
+    if target.ends_with("windows-msvc") {
+        println!("cargo:rustc-link-lib=static=ghostty-vt-static");
+    } else {
+        // The GNU linkers look for `lib<name>.a`, so name the file itself.
+        println!("cargo:rustc-link-lib=static:+verbatim=ghostty-vt-static.lib");
+    }
+    println!("cargo:rustc-link-lib=dylib=ntdll");
 }
 
 fn resolve_zig() -> PathBuf {
@@ -474,12 +904,14 @@ fn zig_target(target: &str) -> &'static str {
         "aarch64-apple-darwin" => "aarch64-macos",
         "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
         "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
+        "x86_64-pc-windows-gnu" | "x86_64-pc-windows-gnullvm" => "x86_64-windows-gnu",
+        "aarch64-pc-windows-gnullvm" => "aarch64-windows-gnu",
         "aarch64-apple-ios" => "aarch64-ios",
         "aarch64-apple-ios-sim" => "aarch64-ios-simulator",
         other => panic!(
             "ghostty-vt-sys has no Zig target for `{other}`; supported targets are \
-             x86_64 and aarch64 linux-gnu, linux-musl, macos and windows-msvc, plus \
-             aarch64-apple-ios and aarch64-apple-ios-sim"
+             x86_64 and aarch64 linux-gnu, linux-musl, macos, windows-msvc and \
+             windows-gnu, plus aarch64-apple-ios and aarch64-apple-ios-sim"
         ),
     }
 }
@@ -502,12 +934,11 @@ fn try_pkg_config(target: &str) -> bool {
     for framework in &lib.frameworks {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
-    let lib_name = if target.ends_with("windows-msvc") {
-        "ghostty-vt-static"
+    if target.contains("windows") {
+        link_windows_static(target);
     } else {
-        "ghostty-vt"
-    };
-    println!("cargo:rustc-link-lib=static={lib_name}");
+        println!("cargo:rustc-link-lib=static=ghostty-vt");
+    }
     for library in &lib.libs {
         if library != "ghostty-vt" && library != "ghostty-vt-static" {
             println!("cargo:rustc-link-lib={library}");

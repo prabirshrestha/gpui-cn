@@ -307,6 +307,38 @@ fn modes_and_options_round_trip() {
 }
 
 #[test]
+fn kitty_options_round_trip() {
+    let mut terminal = common::terminal(10, 2);
+    assert_eq!(terminal.kitty_image_storage_limit().unwrap(), 10_000_000);
+    terminal.set_kitty_image_storage_limit(0).unwrap();
+    assert_eq!(terminal.kitty_image_storage_limit().unwrap(), 0);
+
+    assert_eq!(terminal.kitty_image_temp_file_dir().unwrap(), None);
+    terminal
+        .set_kitty_image_temp_file_dir(Some("/tmp/kitty-images"))
+        .unwrap();
+    assert_eq!(
+        terminal.kitty_image_temp_file_dir().unwrap(),
+        Some("/tmp/kitty-images")
+    );
+    terminal.set_kitty_image_temp_file_dir(None).unwrap();
+    assert_eq!(terminal.kitty_image_temp_file_dir().unwrap(), None);
+}
+
+#[test]
+fn osc_parser_reads_the_window_title() {
+    let mut parser = ghostty_vt::osc::Parser::new().unwrap();
+    for byte in b"2;hello title" {
+        parser.next_byte(*byte);
+    }
+    let command = parser.end(0x07);
+    let ghostty_vt::osc::CommandType::ChangeWindowTitle { title } = command.command_type() else {
+        panic!("not a title command");
+    };
+    assert_eq!(title, "hello title");
+}
+
+#[test]
 fn key_and_mouse_encoders_follow_terminal_modes() {
     let mut terminal = common::terminal(10, 2);
     let mut encoder = key::Encoder::new().unwrap();
@@ -591,7 +623,10 @@ fn terminfo_and_shell_integration_resources_are_written_once() {
     assert!(terminfo.join("78/xterm-ghostty").is_file());
     assert!(terminfo.join("x/xterm-ghostty").is_file());
     assert!(terminfo.join("g/ghostty").is_file());
-    assert!(ghostty_vt::terminfo::SOURCE.starts_with("xterm-ghostty|ghostty|Ghostty,"));
+    assert!(
+        ghostty_vt::terminfo::SOURCE
+            .starts_with("xterm-ghostty|ghostty|Ghostty terminal emulator,")
+    );
 
     let resources = ghostty_vt::shell_integration::resources_dir().unwrap();
     for shell in ghostty_vt::shell_integration::SHELLS {

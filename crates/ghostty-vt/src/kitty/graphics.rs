@@ -12,10 +12,10 @@
 //! remains valid until the next mutating terminal call (e.g.
 //! [`Terminal::vt_write`] or [`Terminal::reset`]).
 //!
-//! Before images can be stored, Kitty graphics must be enabled on the
-//! terminal by setting a non-zero storage limit with
-//! [`Terminal::set_kitty_image_storage_limit`] and a PNG
-//! decoder must be installed via [`set_png_decoder`].
+//! Kitty graphics are on by default, with a storage limit of 10 MB. Set
+//! the limit with [`Terminal::set_kitty_image_storage_limit`]; zero turns
+//! the protocol off. PNG images also need a decoder installed with
+//! [`set_png_decoder`].
 //!
 //! ## Iterating placements
 //!
@@ -51,7 +51,7 @@ use std::{
 use crate::{
     Terminal,
     alloc::{Allocator, Bytes, Object, Ref},
-    error::{Error, Result, from_optional_result_uninit, from_result},
+    error::{Error, Result, from_optional_result, from_optional_result_uninit, from_result},
     ffi,
     selection::Selection,
 };
@@ -107,7 +107,8 @@ impl Terminal {
 
     /// The Kitty image storage limit in bytes for the active screen.
     ///
-    /// A value of zero means the Kitty graphics protocol is disabled.
+    /// A value of zero means the Kitty graphics protocol is disabled. The
+    /// default is 10 MB (10,000,000 bytes).
     pub fn kitty_image_storage_limit(&self) -> Result<u64> {
         self.get(ffi::TerminalData::KITTY_IMAGE_STORAGE_LIMIT)
     }
@@ -116,17 +117,29 @@ impl Terminal {
     pub fn is_kitty_image_from_file_allowed(&self) -> Result<bool> {
         self.get(ffi::TerminalData::KITTY_IMAGE_MEDIUM_FILE)
     }
-    /// Whether the temporary file medium is enabled for Kitty image loading
-    /// on the active screen.
-    pub fn is_kitty_image_from_temp_file_allowed(&self) -> Result<bool> {
-        self.get(ffi::TerminalData::KITTY_IMAGE_MEDIUM_TEMP_FILE)
+    /// The directory that Kitty images may load from through the temporary
+    /// file medium on the active screen, or `None` when the medium is off.
+    ///
+    /// The string is borrowed until the next mutating terminal call.
+    pub fn kitty_image_temp_file_dir(&self) -> Result<Option<&str>> {
+        let raw = self.get::<ffi::String>(ffi::TerminalData::KITTY_IMAGE_MEDIUM_TEMP_FILE)?;
+        // SAFETY: The terminal owns the bytes, and `&self` keeps it from
+        // changing while the borrow lives.
+        let bytes = unsafe { raw.to_bytes() };
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        std::str::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| crate::error::Error::InvalidValue)
     }
     /// Whether the shared memory medium is enabled for Kitty image loading
     /// on the active screen.
     pub fn is_kitty_image_from_shared_mem_allowed(&self) -> Result<bool> {
         self.get(ffi::TerminalData::KITTY_IMAGE_MEDIUM_SHARED_MEM)
     }
-    /// Set the Kitty image storage limit in bytes.
+    /// Set the Kitty image storage limit in bytes. The default is 10 MB
+    /// (10,000,000 bytes).
     ///
     /// Applied to all initialized screens (primary and alternate).
     /// A value of zero disables the Kitty graphics protocol entirely,
@@ -140,9 +153,15 @@ impl Terminal {
         self.set(ffi::TerminalOption::KITTY_IMAGE_MEDIUM_FILE, &allowed)?;
         Ok(self)
     }
-    /// Enable or disable Kitty image loading via the temporary file medium.
-    pub fn set_kitty_image_from_temp_file_allowed(&mut self, allowed: bool) -> Result<&mut Self> {
-        self.set(ffi::TerminalOption::KITTY_IMAGE_MEDIUM_TEMP_FILE, &allowed)?;
+    /// Allow Kitty image loading through the temporary file medium, only
+    /// from files in `dir`. `None` turns the medium off, which is the
+    /// default. The terminal copies the path.
+    pub fn set_kitty_image_temp_file_dir(&mut self, dir: Option<&str>) -> Result<&mut Self> {
+        let raw = dir.map(ffi::String::from);
+        self.set_optional(
+            ffi::TerminalOption::KITTY_IMAGE_MEDIUM_TEMP_FILE,
+            raw.as_ref(),
+        )?;
         Ok(self)
     }
     /// Enable or disable Kitty image loading via the shared memory medium.
@@ -265,14 +284,24 @@ impl<'t> Image<'t> {
     ///
     /// Valid as long as the underlying terminal is not mutated.
     pub fn data(&self) -> Result<&'t [u8]> {
-        let ptr = self.get::<*const u8>(ffi::KittyGraphicsImageData::DATA_PTR)?;
-        let len = self.get::<usize>(ffi::KittyGraphicsImageData::DATA_LEN)?;
-        if ptr.is_null() || len == 0 {
+        // The pixels of an image still being sent are not there yet.
+        let mut pixels = ffi::String::default();
+        let result = unsafe {
+            ffi::ghostty_kitty_graphics_image_get(
+                self.inner.as_raw(),
+                ffi::KittyGraphicsImageData::PIXELS,
+                std::ptr::from_mut(&mut pixels).cast(),
+            )
+        };
+        let Some(pixels) = from_optional_result(result, pixels)? else {
+            return Ok(&[]);
+        };
+        if pixels.ptr.is_null() || pixels.len == 0 {
             return Ok(&[]);
         }
 
         // SAFETY: We trust libghostty to return valid results
-        Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
+        Ok(unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) })
     }
 }
 
@@ -360,9 +389,9 @@ impl<'t> PlacementIteration<'t> {
 
     /// Set the z-layer filter for the iterator.
     pub fn set_layer(&self, layer: Layer) -> Result<()> {
-        self.set::<ffi::KittyPlacementLayer::Type>(
+        self.set::<u32>(
             ffi::KittyGraphicsPlacementIteratorOption::LAYER,
-            &layer.into(),
+            &layer.mask(),
         )
     }
 
@@ -598,19 +627,32 @@ pub struct SourceRect {
 }
 
 /// Z-layer classification for kitty graphics placements.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, int_enum::IntEnum)]
-#[repr(i32)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Layer {
     /// Match all placements; apply no filtering (default behavior).
     #[default]
-    All = ffi::KittyPlacementLayer::ALL,
+    All,
     /// Match placements positioned below the cell background (z < [`i32::MIN`] / 2).
-    BelowBg = ffi::KittyPlacementLayer::BELOW_BG,
+    BelowBg,
     /// Match placements positioned above the cell background and below text
     /// ([`i32::MIN`] / 2 <= z < 0).
-    BelowText = ffi::KittyPlacementLayer::BELOW_TEXT,
+    BelowText,
     /// Match placements positioned above text (z >= 0).
-    AboveText = ffi::KittyPlacementLayer::ABOVE_TEXT,
+    AboveText,
+}
+
+impl Layer {
+    /// The `GHOSTTY_IMAGE_LAYER_MASK_*` filter for this layer. A mask of zero
+    /// turns the filter off.
+    fn mask(self) -> u32 {
+        let bit = |layer: ffi::ImageLayer::Type| 1u32 << layer;
+        match self {
+            Self::All => 0,
+            Self::BelowBg => bit(ffi::ImageLayer::BELOW_BACKGROUND),
+            Self::BelowText => bit(ffi::ImageLayer::BELOW_TEXT),
+            Self::AboveText => bit(ffi::ImageLayer::ABOVE_TEXT),
+        }
+    }
 }
 
 /// Pixel format of a Kitty graphics image.

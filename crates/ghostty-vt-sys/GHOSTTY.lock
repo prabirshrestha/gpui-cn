@@ -1,6 +1,17 @@
-# Pinned Ghostty source for libghostty-vt. Written by scripts/sync.sh.
-commit = 83fb95624b0439ee660c2679b43b38c8b63769cd
-version = 1.4.0-main+83fb956
-url = https://tip.files.ghostty.org/83fb95624b0439ee660c2679b43b38c8b63769cd/libghostty-vt-source.tar.gz
-sha256 = ed57ae9b95581c88f2614e976c1d3f146c02d443a3c26139200eb9de6e645eb4
-root = libghostty-vt-1.4.0-main+83fb956
+# Pinned libghostty-vt release. Written by scripts/sync.sh.
+commit = 108cacb17ed8990840cd14abfce43d8ed8503ca1
+tag = vt-1.0.1
+version = 1.0.1
+url = https://release.files.ghostty.org/libghostty-vt/1.0.1/libghostty-vt-1.0.1.tar.gz
+sha256 = 333dfce97641ef9b536bb9e08907ad86abaaada50e8f7417b70d9284adef37aa
+root = libghostty-vt-1.0.1
+release = https://release.files.ghostty.org/libghostty-vt/1.0.1
+deps = libghostty-vt-1.0.1-deps.tar.gz
+deps_sha256 = 91a4e10960a52bf5bf4b15aa2a2cddaff8a89d6cd903d3055bda4fd17de3356d
+deps_root = libghostty-vt-1.0.1-deps
+xcframework = ghostty-vt-1.0.1.xcframework.zip
+xcframework_sha256 = c0f9631277f726154c8f521954d17cdc41aac4626fc0df8cf925a19ee58e829b
+windows_x86_64 = ghostty-vt-1.0.1-x86_64-windows-gnu.zip
+windows_x86_64_sha256 = 8e2eb9e1822e85d786b456c8beb86f49d09c318c91f0c2913f91e7ffa12cda29
+windows_aarch64 = ghostty-vt-1.0.1-aarch64-windows-gnu.zip
+windows_aarch64_sha256 = cc61da5f968ea0b08639bdf019c6b7da46bad1d985774fd8a2de57af32862892

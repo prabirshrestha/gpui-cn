@@ -138,13 +138,13 @@ impl Default for Options {
 #[non_exhaustive]
 pub enum CursorStyle {
     /// Bar cursor (DECSCUSR 5, 6).
-    Bar = ffi::TerminalCursorStyle::BAR,
+    Bar = ffi::CursorStyle::BAR,
     /// Block cursor (DECSCUSR 1, 2).
-    Block = ffi::TerminalCursorStyle::BLOCK,
+    Block = ffi::CursorStyle::BLOCK,
     /// Underline cursor (DECSCUSR 3, 4).
-    Underline = ffi::TerminalCursorStyle::UNDERLINE,
+    Underline = ffi::CursorStyle::UNDERLINE,
     /// Hollow block cursor.
-    BlockHollow = ffi::TerminalCursorStyle::BLOCK_HOLLOW,
+    BlockHollow = ffi::CursorStyle::BLOCK_HOLLOW,
 }
 
 /// A render hold callback. See [`Terminal::set_render_hold`].
@@ -328,7 +328,9 @@ impl Terminal {
 
     /// Scroll the terminal viewport.
     pub fn scroll_viewport(&mut self, scroll: ScrollViewport) {
-        unsafe { ffi::ghostty_terminal_scroll_viewport(self.inner.as_ptr(), scroll.into()) }
+        crate::error::expect_success(unsafe {
+            ffi::ghostty_terminal_scroll_viewport(self.inner.as_ptr(), scroll.into())
+        });
     }
 
     /// Resolve a point in the terminal grid to a grid reference.
@@ -345,7 +347,7 @@ impl Terminal {
     /// This function isn't meant to be used as the core of render loop.
     /// Use the [render state API](crate::render::RenderState) for that.
     pub fn grid_ref(&self, point: Point) -> Result<GridRef<'_>> {
-        let mut grid_ref = ffi::sized!(ffi::GridRef);
+        let mut grid_ref = ffi::GridRef::default();
         let result = unsafe {
             ffi::ghostty_terminal_grid_ref(self.inner.as_ptr(), point.into(), &raw mut grid_ref)
         };
@@ -566,7 +568,7 @@ impl Terminal {
     ///
     /// This is the style that will be applied to newly printed characters.
     pub fn cursor_style(&self) -> Result<style::Style> {
-        self.get::<ffi::Style>(Data::CURSOR_STYLE)
+        self.get::<ffi::Style>(Data::CURSOR_SGR_STYLE)
             .and_then(std::convert::TryInto::try_into)
     }
     /// Get the current Kitty keyboard protocol flags.
@@ -696,7 +698,7 @@ impl Terminal {
     ///
     /// Passing `None` resets to libghostty's built-in block cursor default.
     pub fn set_default_cursor_style(&mut self, v: Option<CursorStyle>) -> Result<&mut Self> {
-        let raw = v.map(|v| v as ffi::TerminalCursorStyle::Type);
+        let raw = v.map(|v| v as ffi::CursorStyle::Type);
         self.set_optional(Opt::DEFAULT_CURSOR_STYLE, raw.as_ref())?;
         Ok(self)
     }
@@ -751,7 +753,9 @@ impl Terminal {
     /// eligible complete pages. Zero disables scrollback and erases retained
     /// history. `None` removes the byte limit.
     pub fn set_scrollback_max_bytes(&mut self, max: Option<usize>) -> Result<&mut Self> {
-        self.set_optional(Opt::SCROLLBACK_MAX_BYTES, max.as_ref())?;
+        // libghostty reads SIZE_MAX as no limit; NULL would restore its
+        // default of 10,000 bytes.
+        self.set(Opt::SCROLLBACK_MAX_BYTES, &max.unwrap_or(usize::MAX))?;
         Ok(self)
     }
     /// The configured maximum scrollback allocation in bytes, or `None`

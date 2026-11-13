@@ -6,7 +6,7 @@ use std::{convert::Into, marker::PhantomData, mem::MaybeUninit};
 
 use crate::{
     alloc::Object,
-    error::{Error, Result, from_optional_result, from_result},
+    error::{Error, Result, from_optional_result, from_optional_result_uninit, from_result},
     ffi,
     screen::{Cell, Row},
     style::{RgbColor, Style},
@@ -323,10 +323,8 @@ impl Snapshot<'_> {
 
     /// Get the visual style of the cursor.
     pub fn cursor_visual_style(&self) -> Result<CursorVisualStyle> {
-        self.get::<ffi::RenderStateCursorVisualStyle::Type>(
-            ffi::RenderStateData::CURSOR_VISUAL_STYLE,
-        )
-        .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
+        self.get::<ffi::CursorStyle::Type>(ffi::RenderStateData::CURSOR_VISUAL_STYLE)
+            .and_then(|v| v.try_into().map_err(|_| Error::InvalidValue))
     }
 
     /// Get the relative position of the cursor and other information
@@ -607,6 +605,19 @@ impl CellIteration<'_> {
         from_result(result)
     }
 
+    /// Read a value that libghostty reports as `NO_VALUE` when it is absent.
+    fn get_optional<T>(&self, tag: ffi::RenderStateRowCellsData::Type) -> Result<Option<T>> {
+        let mut value = MaybeUninit::<T>::zeroed();
+        let result = unsafe {
+            ffi::ghostty_render_state_row_cells_get(
+                self.iter.0.as_raw(),
+                tag,
+                value.as_mut_ptr().cast(),
+            )
+        };
+        from_optional_result_uninit(result, value)
+    }
+
     fn get<T>(&self, tag: ffi::RenderStateRowCellsData::Type) -> Result<T> {
         let mut value = MaybeUninit::<T>::zeroed();
         let result = unsafe {
@@ -628,7 +639,7 @@ impl CellIteration<'_> {
 
     /// The style for the current cell.
     pub fn style(&self) -> Result<Style> {
-        let mut value = ffi::sized!(ffi::Style);
+        let mut value = ffi::Style::default();
         let result = unsafe {
             ffi::ghostty_render_state_row_cells_get(
                 self.iter.0.as_raw(),
@@ -649,12 +660,9 @@ impl CellIteration<'_> {
     /// case the caller should use whatever default foreground color it want
     /// (e.g. the terminal foreground).
     pub fn fg_color(&self) -> Result<Option<RgbColor>> {
-        let res = self.get::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::FG_COLOR);
-        match res {
-            Ok(o) => Ok(Some(o.into())),
-            Err(Error::InvalidValue) => Ok(None),
-            Err(e) => Err(e),
-        }
+        Ok(self
+            .get_optional::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::FG_COLOR)?
+            .map(Into::into))
     }
 
     /// The resolved background color of the cell.
@@ -667,12 +675,9 @@ impl CellIteration<'_> {
     /// caller should use whatever default background color it wants
     /// (e.g. the terminal background).
     pub fn bg_color(&self) -> Result<Option<RgbColor>> {
-        let res = self.get::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::BG_COLOR);
-        match res {
-            Ok(o) => Ok(Some(o.into())),
-            Err(Error::InvalidValue) => Ok(None),
-            Err(e) => Err(e),
-        }
+        Ok(self
+            .get_optional::<ffi::ColorRgb>(ffi::RenderStateRowCellsData::BG_COLOR)?
+            .map(Into::into))
     }
 
     /// Get the grapheme codepoints.
@@ -698,14 +703,21 @@ impl CellIteration<'_> {
     /// The buffer must be at least [`CellIteration::graphemes_len`] elements.
     /// The base codepoint is written first, followed by any extra codepoints.
     pub fn graphemes_buf(&self, buf: &mut [char]) -> Result<()> {
+        // A `char` is a valid `u32`, and the library writes only codepoints
+        // of the cell's text.
+        let mut raw = ffi::CodepointBuffer {
+            ptr: buf.as_mut_ptr().cast(),
+            cap: buf.len(),
+            len: 0,
+        };
         let result = unsafe {
             ffi::ghostty_render_state_row_cells_get(
                 self.iter.0.as_raw(),
                 ffi::RenderStateRowCellsData::GRAPHEMES_BUF,
-                buf.as_mut_ptr().cast(),
+                std::ptr::from_mut(&mut raw).cast(),
             )
         };
-        from_result(result)
+        crate::error::from_result_with_len(result, raw.len).map(|_| ())
     }
 
     /// Append the current cell's full grapheme cluster as UTF-8 to a string.
@@ -862,11 +874,11 @@ pub enum Dirty {
 #[non_exhaustive]
 pub enum CursorVisualStyle {
     /// Bar cursor (DECSCUSR 5, 6).
-    Bar = ffi::RenderStateCursorVisualStyle::BAR,
+    Bar = ffi::CursorStyle::BAR,
     /// Block cursor (DECSCUSR 1, 2).
-    Block = ffi::RenderStateCursorVisualStyle::BLOCK,
+    Block = ffi::CursorStyle::BLOCK,
     /// Underline cursor (DECSCUSR 3, 4).
-    Underline = ffi::RenderStateCursorVisualStyle::UNDERLINE,
+    Underline = ffi::CursorStyle::UNDERLINE,
     /// Hollow block cursor.
-    BlockHollow = ffi::RenderStateCursorVisualStyle::BLOCK_HOLLOW,
+    BlockHollow = ffi::CursorStyle::BLOCK_HOLLOW,
 }

@@ -162,7 +162,7 @@ impl Search {
 
     /// The selected match, or `None` when nothing is selected.
     pub fn selected_match<'t>(&self, _terminal: &'t Terminal) -> Result<Option<Selection<'t>>> {
-        let mut value = ffi::sized!(ffi::Selection);
+        let mut value = ffi::Selection::default();
         let result = unsafe {
             ffi::ghostty_search_get(
                 self.0.as_raw(),
@@ -216,7 +216,7 @@ impl Search {
         if buffer.len == 0 {
             return Ok(Vec::new());
         }
-        let mut raw = vec![ffi::sized!(ffi::Selection); buffer.len];
+        let mut raw = vec![ffi::Selection::default(); buffer.len];
         buffer = ffi::SelectionBuffer {
             ptr: raw.as_mut_ptr(),
             cap: raw.len(),
@@ -243,13 +243,7 @@ impl Search {
     ///
     /// Returns `false` when there are no matches.
     pub fn select_next(&mut self, _terminal: &Terminal) -> Result<bool> {
-        let result = unsafe {
-            ffi::ghostty_search_set(
-                self.0.as_raw(),
-                ffi::SearchOption::SELECT_NEXT,
-                std::ptr::null(),
-            )
-        };
+        let result = unsafe { ffi::ghostty_search_select_next(self.0.as_raw()) };
         crate::error::from_optional_result(result, ()).map(|v| v.is_some())
     }
 
@@ -258,13 +252,7 @@ impl Search {
     ///
     /// Returns `false` when there are no matches.
     pub fn select_prev(&mut self, _terminal: &Terminal) -> Result<bool> {
-        let result = unsafe {
-            ffi::ghostty_search_set(
-                self.0.as_raw(),
-                ffi::SearchOption::SELECT_PREV,
-                std::ptr::null(),
-            )
-        };
+        let result = unsafe { ffi::ghostty_search_select_prev(self.0.as_raw()) };
         crate::error::from_optional_result(result, ()).map(|v| v.is_some())
     }
 

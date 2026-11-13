@@ -110,7 +110,11 @@ impl<'p> Command<'p> {
         let raw_type = unsafe { ffi::ghostty_osc_command_type(self.inner.as_raw()) };
         Some(match raw_type {
             Type::CHANGE_WINDOW_TITLE => CommandType::ChangeWindowTitle {
-                title: self.get(Data::CHANGE_WINDOW_TITLE_STR)?,
+                title: {
+                    let raw = self.get::<ffi::String>(Data::CHANGE_WINDOW_TITLE_STR)?;
+                    // SAFETY: The parser owns the bytes for the lifetime 'p.
+                    std::str::from_utf8(unsafe { raw.to_bytes() }).ok()?
+                },
             },
             Type::CHANGE_WINDOW_ICON => CommandType::ChangeWindowIcon,
             Type::SEMANTIC_PROMPT => CommandType::SemanticPrompt,
@@ -151,7 +155,7 @@ impl<'p> Command<'p> {
             ffi::ghostty_osc_command_data(self.inner.as_raw(), tag, value.as_mut_ptr().cast())
         };
 
-        if result {
+        if result == ffi::Result::SUCCESS {
             // SAFETY: Value should be initialized after successful call.
             Some(unsafe { value.assume_init() })
         } else {

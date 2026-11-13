@@ -47,6 +47,9 @@ fn main() {
         // The crate links the static archive, so the headers must not
         // carry dllimport or visibility attributes.
         .clang_arg("-DGHOSTTY_STATIC")
+        // In C23 the headers give every enum `int` as its underlying type,
+        // which is the type the library uses on every target.
+        .clang_arg("-std=c23")
         .allowlist_function("[Gg]hostty.*")
         .allowlist_type("[Gg]hostty.*")
         .allowlist_var("GHOSTTY_.*")
@@ -74,10 +77,6 @@ const PREFIXES: &[(&str, &str)] = &[
     ("GhosttyOscCommandData", "GHOSTTY_OSC_DATA"),
     ("GhosttyOscCommandType", "GHOSTTY_OSC_COMMAND"),
     ("GhosttyTerminalOption", "GHOSTTY_TERMINAL_OPT"),
-    (
-        "GhosttyTerminalScrollViewportTag",
-        "GHOSTTY_SCROLL_VIEWPORT",
-    ),
     ("GhosttyStyleColorTag", "GHOSTTY_STYLE_COLOR"),
     ("GhosttyRowSemanticPrompt", "GHOSTTY_ROW_SEMANTIC"),
     ("GhosttyCellSemanticContent", "GHOSTTY_CELL_SEMANTIC"),
@@ -86,7 +85,6 @@ const PREFIXES: &[(&str, &str)] = &[
     ("GhosttyModeReportState", "GHOSTTY_MODE_REPORT"),
     ("GhosttyFocusEvent", "GHOSTTY_FOCUS"),
     ("GhosttyResult", "GHOSTTY_"),
-    ("GhosttyKittyGraphicsImageData", "GHOSTTY_KITTY_IMAGE_DATA"),
     (
         "GhosttySelectionGestureEventOption",
         "GHOSTTY_SELECTION_GESTURE_EVENT_OPT",
@@ -127,16 +125,31 @@ impl ParseCallbacks for Callbacks {
     ) -> Option<String> {
         let enum_name = enum_name?;
 
-        // Remove redundant C prefixes
-        let prefix = PREFIXES
+        // Remove the redundant C prefix: the listed one, or the enum name in
+        // SHOUTY_SNAKE_CASE, with `_OPTION` shortened to `_OPT` and a
+        // trailing `_TAG` or `_KIND` left out, whichever the variant has.
+        let shouty = enum_name.to_shouty_snake_case();
+        let mut candidates: Vec<String> = PREFIXES
             .iter()
-            .find(|(v, _)| *v == enum_name)
+            .filter(|(v, _)| *v == enum_name)
             .map(|(_, n)| n.to_string())
-            .unwrap_or(enum_name.to_shouty_snake_case());
-
-        let transformed = original_variant_name
-            .trim_start_matches(&prefix)
-            .trim_start_matches('_');
+            .collect();
+        candidates.push(shouty.clone());
+        if let Some(base) = shouty.strip_suffix("_OPTION") {
+            candidates.push(format!("{base}_OPT"));
+        }
+        for suffix in ["_TAG", "_KIND"] {
+            if let Some(base) = shouty.strip_suffix(suffix) {
+                candidates.push(base.to_string());
+            }
+        }
+        let transformed = candidates
+            .iter()
+            .find_map(|prefix| {
+                let prefix = format!("{}_", prefix.trim_end_matches('_'));
+                original_variant_name.strip_prefix(prefix.as_str())
+            })
+            .unwrap_or(original_variant_name);
 
         Some(transformed.to_string())
     }
