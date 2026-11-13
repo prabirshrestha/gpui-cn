@@ -201,6 +201,11 @@ impl Core {
             .set_clipboard_write_max_bytes(Some(options.clipboard_write_max_bytes))
             .map_err(fault)?
             .set_terminfo_name(Some(&options.terminfo_name))
+            .map_err(fault)?
+            // The element draws no Kitty images, so turn the protocol off.
+            // libghostty-vt turns it on by default with a 10 MB limit, and a
+            // program that sees it would send images that never show.
+            .set_kitty_image_storage_limit(0)
             .map_err(fault)?;
         terminal.set_xtversion(Some(format!("gpui-cn {}", env!("CARGO_PKG_VERSION"))));
         // A terminal parked in the middle of an escape sequence keeps the
