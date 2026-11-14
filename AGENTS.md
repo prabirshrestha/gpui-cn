@@ -31,7 +31,12 @@ that this repository does not name. The workspace has four crates:
   --system`). `GHOSTTY_VT_PREBUILT_MSVC=1` makes MSVC link the Windows
   zip instead; that works only with lld, so the build script stops when
   the linker is `link.exe`. `GHOSTTY_VT_FROM_SOURCE=1`
-  or `GHOSTTY_SOURCE_DIR` forces a source build. `crates/ghostty-vt` is
+  or `GHOSTTY_SOURCE_DIR` forces a source build. `GHOSTTY_VT_LIB_DIR`
+  links a static library on disk as it is, `GHOSTTY_VT_PREBUILT_URL` with
+  `GHOSTTY_VT_PREBUILT_SHA256` replaces the target's prebuilt release
+  file, and `GHOSTTY_RELEASE_URL` is a mirror of the release files.
+  `build/source.rs` chooses among them, in that order after the source
+  overrides, and its tests hold the precedence. `crates/ghostty-vt` is
   the safe API on it. They have no GPUI in them. Their SemVer core
   normally follows gpui-cn, and their build metadata records the release,
   such as `+ghostty-vt.1.0.1`. An

@@ -64,6 +64,12 @@ Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-
 | Variable | Effect |
 | --- | --- |
 | `GHOSTTY_RELEASE_DIR` | Read the release files (prebuilt archives, source and deps tarballs) from this directory instead of downloading them. Each must match its sha256 in `GHOSTTY.lock`. |
+| `GHOSTTY_RELEASE_URL` | Download the release files from this mirror instead of `https://release.files.ghostty.org/libghostty-vt/<version>`. It holds the same file names, and each must match its sha256 in `GHOSTTY.lock`. |
+| `GHOSTTY_VT_PREBUILT_URL` | Download this archive instead of the target's prebuilt release file. It has the same layout: the XCFramework zip for the Apple targets, the Windows zip (`ghostty-vt-<version>-<arch>-windows-gnu/lib/ghostty-vt-static.lib` and `include/`) for Windows. Only for a target that links a prebuilt library. Needs `GHOSTTY_VT_PREBUILT_SHA256`. |
+| `GHOSTTY_VT_PREBUILT_SHA256` | The sha256 of the `GHOSTTY_VT_PREBUILT_URL` archive. Required with it. |
+| `GHOSTTY_VT_LIB_DIR` | Link the static library in this directory, on every target, with no download and no Zig: `libghostty-vt.a`, or `ghostty-vt-static.lib` on Windows. It must match the C ABI of the pinned release; the build prints a warning that says so. A universal Apple archive and a Windows GNU library are adjusted in a copy, as for the release files. |
+| `GHOSTTY_VT_LIB_SHA256` | Check the `GHOSTTY_VT_LIB_DIR` library against this sha256. |
+| `GHOSTTY_VT_INCLUDE_DIR` | The headers of the `GHOSTTY_VT_LIB_DIR` library, for dependent build scripts. Default: `../include` beside the library, if it holds `ghostty/vt.h`. |
 | `GHOSTTY_VT_FROM_SOURCE` | Set to `1` to build from source with Zig on a target that has a prebuilt library. |
 | `GHOSTTY_VT_PREBUILT_MSVC` | Set to `1` to link the prebuilt Windows zip on `*-pc-windows-msvc` instead of building from source. Needs lld as the linker. |
 | `GHOSTTY_SOURCE_DIR` | Build from this Ghostty source tree with Zig, on every target. |
@@ -72,6 +78,12 @@ Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-
 | `GHOSTTY_VT_CPU` | Zig CPU model, default `baseline`. |
 | `ZIG` | Path to the Zig binary. |
 | `DOCS_RS` | Skip the native build. |
+
+The library comes from the first of these that is set:
+`GHOSTTY_SOURCE_DIR`, `GHOSTTY_VT_FROM_SOURCE`, `GHOSTTY_VT_LIB_DIR`,
+`GHOSTTY_VT_PREBUILT_URL`, then the pinned release. The release files come
+from `GHOSTTY_RELEASE_DIR`, then `GHOSTTY_RELEASE_URL`, then the release
+server. An override that a higher one hides gives a build warning.
 
 ## Features
 

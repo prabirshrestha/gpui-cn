@@ -1,13 +1,20 @@
 //! Link libghostty-vt: a pinned prebuilt library where the release has one,
 //! otherwise a Zig build of the pinned source.
 //!
-//! Lookup order:
+//! Lookup order (see `build/source.rs` for how the overrides are chosen):
 //!
 //! 1. `GHOSTTY_SOURCE_DIR`: build this Ghostty checkout or extracted source
-//!    tarball.
-//! 2. The prebuilt library of the pinned libghostty-vt release, for the Apple
+//!    tarball. `GHOSTTY_VT_FROM_SOURCE=1` skips steps 2 to 4.
+//! 2. `GHOSTTY_VT_LIB_DIR`: link the static library in this directory as it
+//!    is, with no download and no Zig. It must match the C ABI of the pinned
+//!    release. `GHOSTTY_VT_LIB_SHA256` checks it.
+//! 3. `GHOSTTY_VT_PREBUILT_URL`: download this archive instead of the
+//!    target's release file, and check it against
+//!    `GHOSTTY_VT_PREBUILT_SHA256`. It has the layout of the release file.
+//! 4. The prebuilt library of the pinned libghostty-vt release, for the Apple
 //!    targets (the XCFramework) and the Windows GNU targets (the Windows zip).
-//!    It is downloaded, or read from `GHOSTTY_RELEASE_DIR`, and verified
+//!    It is downloaded (from `GHOSTTY_RELEASE_URL` when set), or read from
+//!    `GHOSTTY_RELEASE_DIR`, and verified
 //!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Both link the
 //!    static library; for the Windows GNU targets symbols of Zig's
 //!    compiler_rt in it are renamed first, so GNU ld and Zig's own linker
@@ -15,10 +22,9 @@
 //!    `GHOSTTY_VT_PREBUILT_MSVC=1` the Windows MSVC targets link the
 //!    Windows zip too, unchanged; that needs lld as the linker, and the
 //!    build stops when the linker is `link.exe`.
-//!    `GHOSTTY_VT_FROM_SOURCE=1` skips this step.
-//! 3. The `third_party/ghostty` git submodule at the repository root.
-//! 4. With the `pkg-config` feature, an installed `libghostty-vt-static`.
-//! 5. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
+//! 5. The `third_party/ghostty` git submodule at the repository root.
+//! 6. With the `pkg-config` feature, an installed `libghostty-vt-static`.
+//! 7. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
 //!    verified against the sha256 in `GHOSTTY.lock`.
 //!
 //! A source build of a release also downloads the release's dependency
@@ -40,9 +46,12 @@ use sha2::{Digest, Sha256};
 
 #[path = "build/compiler_rt.rs"]
 mod compiler_rt;
+#[path = "build/source.rs"]
+mod source;
 #[path = "build/targets.rs"]
 mod targets;
 
+use source::{Library, Origin};
 use targets::{Asset, MachArch};
 
 /// A release file: its name in the release directory and its sha256.
@@ -116,11 +125,17 @@ fn main() {
     for knob in [
         "DOCS_RS",
         "GHOSTTY_RELEASE_DIR",
+        "GHOSTTY_RELEASE_URL",
         "GHOSTTY_SOURCE_DIR",
         "GHOSTTY_SOURCE_URL",
         "GHOSTTY_VT_CPU",
         "GHOSTTY_VT_FROM_SOURCE",
+        "GHOSTTY_VT_INCLUDE_DIR",
+        "GHOSTTY_VT_LIB_DIR",
+        "GHOSTTY_VT_LIB_SHA256",
         "GHOSTTY_VT_PREBUILT_MSVC",
+        "GHOSTTY_VT_PREBUILT_SHA256",
+        "GHOSTTY_VT_PREBUILT_URL",
         "GHOSTTY_ZIG_SYSTEM_DIR",
         "ZIG",
     ] {
@@ -155,29 +170,66 @@ fn main() {
 
     let target = env::var("TARGET").expect("TARGET");
 
-    if let Some(dir) = env::var_os("GHOSTTY_SOURCE_DIR") {
-        let dir = PathBuf::from(dir);
-        assert!(
-            dir.join("build.zig").exists(),
-            "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
-            dir.display()
-        );
-        build_from(&dir, &lock, &target);
-        return;
+    let (library, warnings) =
+        source::choose(&overrides()).unwrap_or_else(|error| panic!("{error}"));
+    for warning in warnings {
+        println!("cargo:warning={warning}");
     }
 
     let flag = |name| env::var(name).is_ok_and(|v| !v.is_empty() && v != "0");
-    let from_source = flag("GHOSTTY_VT_FROM_SOURCE");
     let prebuilt_msvc = flag("GHOSTTY_VT_PREBUILT_MSVC") && target.ends_with("windows-msvc");
-    if prebuilt_msvc && !from_source {
-        check_msvc_linker();
-    }
-    if !from_source
-        && let Some(release) = &lock.release
-        && let Some(prebuilt) = Prebuilt::for_target(release, &target, prebuilt_msvc)
-    {
-        link_prebuilt(release, &prebuilt, &target);
-        return;
+    match library {
+        Library::SourceDir(dir) => {
+            let dir = PathBuf::from(dir);
+            assert!(
+                dir.join("build.zig").exists(),
+                "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
+                dir.display()
+            );
+            build_from(&dir, &lock, &target);
+            return;
+        }
+        Library::LibDir { dir, sha256 } => {
+            link_lib_dir(&lock, &target, Path::new(&dir), sha256.as_deref());
+            return;
+        }
+        Library::PrebuiltUrl { url, sha256 } => {
+            let prebuilt = lock
+                .release
+                .as_ref()
+                .and_then(|release| Prebuilt::for_target(release, &target, prebuilt_msvc))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "GHOSTTY_VT_PREBUILT_URL replaces the prebuilt release file of the \
+                         target, and {target} links none (an MSVC target links the Windows \
+                         zip only with GHOSTTY_VT_PREBUILT_MSVC=1). Use GHOSTTY_VT_LIB_DIR to \
+                         link a library on disk."
+                    )
+                });
+            if prebuilt_msvc {
+                check_msvc_linker();
+            }
+            let file = ReleaseFile {
+                name: prebuilt.file.name.clone(),
+                sha256,
+            };
+            link_prebuilt(&file, Origin::Url(url), &prebuilt, &target);
+            return;
+        }
+        Library::Release => {
+            if let Some(release) = &lock.release
+                && let Some(prebuilt) = Prebuilt::for_target(release, &target, prebuilt_msvc)
+            {
+                if prebuilt_msvc {
+                    check_msvc_linker();
+                }
+                let origin =
+                    source::release_origin(&overrides(), &release.url, &prebuilt.file.name);
+                link_prebuilt(prebuilt.file, origin, &prebuilt, &target);
+                return;
+            }
+        }
+        Library::FromSource => {}
     }
 
     if submodule.join("build.zig").exists() {
@@ -319,19 +371,98 @@ fn release_version(release: &Release) -> &str {
     release.tag.strip_prefix("vt-").unwrap_or(&release.tag)
 }
 
-/// Download, verify, extract and link a prebuilt library.
-fn link_prebuilt(release: &Release, prebuilt: &Prebuilt, target: &str) {
+/// The overrides in the environment.
+fn overrides() -> source::Env {
+    source::Env::read(|name| env::var(name).ok())
+}
+
+/// Link the static library in `dir` as it is: `libghostty-vt.a`, or
+/// `ghostty-vt-static.lib` on Windows. A universal Apple archive gives the
+/// target's slice, and a Windows GNU library gets the compiler_rt renames,
+/// both in a copy in `OUT_DIR`.
+fn link_lib_dir(lock: &Lock, target: &str, dir: &Path, sha256: Option<&str>) {
+    let windows = target.contains("windows");
+    let name = if windows {
+        "ghostty-vt-static.lib"
+    } else {
+        "libghostty-vt.a"
+    };
+    let archive = dir.join(name);
+    println!("cargo:rerun-if-changed={}", archive.display());
+    println!(
+        "cargo:warning=GHOSTTY_VT_LIB_DIR links {} as it is. It must match the C ABI of \
+         libghostty-vt {} that these bindings were generated from.",
+        archive.display(),
+        lock.version
+    );
+    let bytes = fs::read(&archive).unwrap_or_else(|error| {
+        panic!(
+            "GHOSTTY_VT_LIB_DIR has no {name} (failed to read {}: {error})",
+            archive.display()
+        )
+    });
+    if let Some(expected) = sha256 {
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            actual,
+            expected,
+            "{} does not match GHOSTTY_VT_LIB_SHA256",
+            archive.display()
+        );
+    }
+
+    if windows {
+        link_windows_static(target, dir);
+    } else {
+        let arch = match targets::asset(target, false) {
+            Some(Asset::Apple { arch, .. }) => arch,
+            _ => None,
+        };
+        let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+        let lib_dir = out_dir.join("lib");
+        fs::create_dir_all(&lib_dir)
+            .unwrap_or_else(|error| panic!("failed to create {}: {error}", lib_dir.display()));
+        let thin = match arch {
+            Some(arch) => thin_archive(&bytes, arch)
+                .unwrap_or_else(|error| panic!("{}: {error}", archive.display())),
+            None => bytes.as_slice(),
+        };
+        let copy = lib_dir.join(name);
+        fs::write(&copy, thin)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", copy.display()));
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        println!("cargo:rustc-link-lib=static=ghostty-vt");
+    }
+
+    let include = env::var_os("GHOSTTY_VT_INCLUDE_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let beside = dir.join("..").join("include");
+            beside
+                .join("ghostty")
+                .join("vt.h")
+                .exists()
+                .then_some(beside)
+        });
+    if let Some(include) = include {
+        println!("cargo:include={}", include.display());
+    }
+}
+
+/// Fetch `file` from `origin`, verify, extract and link a prebuilt library.
+fn link_prebuilt(file: &ReleaseFile, origin: Origin, prebuilt: &Prebuilt, target: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let dest = out_dir.join("prebuilt");
     let stamp = dest.join(".ghostty-vt-sha256");
-    let stamp_value = format!("{} {}", prebuilt.file.sha256, prebuilt.dir);
+    let stamp_value = format!("{} {}", file.sha256, prebuilt.dir);
     let dir = dest.join(&prebuilt.dir);
     if fs::read_to_string(&stamp).ok().as_deref() != Some(stamp_value.as_str()) {
         if dest.exists() {
             fs::remove_dir_all(&dest)
                 .unwrap_or_else(|error| panic!("failed to remove {}: {error}", dest.display()));
         }
-        let bytes = release_bytes(release, prebuilt.file);
+        let bytes = verified_bytes(file, origin);
         extract_zip(&bytes, &prebuilt.dir, &dest);
         fs::write(&stamp, &stamp_value)
             .unwrap_or_else(|error| panic!("failed to write {}: {error}", stamp.display()));
@@ -447,22 +578,23 @@ fn extract_zip(bytes: &[u8], prefix: &str, dest: &Path) {
     assert!(found, "the zip has no {}", prefix.display());
 }
 
-/// Read a release file from `GHOSTTY_RELEASE_DIR` or download it, and check
-/// its sha256.
+/// Read a release file from `GHOSTTY_RELEASE_DIR`, or download it from
+/// `GHOSTTY_RELEASE_URL` or the release URL, and check its sha256.
 fn release_bytes(release: &Release, file: &ReleaseFile) -> Vec<u8> {
-    let url = format!("{}/{}", release.url, file.name);
-    let (bytes, origin) = match env::var_os("GHOSTTY_RELEASE_DIR") {
-        Some(dir) => {
-            let path = PathBuf::from(dir).join(&file.name);
-            let bytes = fs::read(&path).unwrap_or_else(|error| {
-                panic!(
-                    "{}",
-                    release_failure(file, &path.display().to_string(), &error.to_string())
-                )
-            });
-            (bytes, path.display().to_string())
-        }
-        None => match fetch(&url) {
+    verified_bytes(
+        file,
+        source::release_origin(&overrides(), &release.url, &file.name),
+    )
+}
+
+/// Read or download `file` from `origin`, and check its sha256.
+fn verified_bytes(file: &ReleaseFile, origin: Origin) -> Vec<u8> {
+    let (bytes, origin) = match origin {
+        Origin::Path(path) => match fs::read(&path) {
+            Ok(bytes) => (bytes, path),
+            Err(error) => panic!("{}", release_failure(file, &path, &error.to_string())),
+        },
+        Origin::Url(url) => match fetch(&url) {
             Ok(bytes) => (bytes, url),
             Err(error) => panic!("{}", release_failure(file, &url, &error)),
         },
@@ -487,8 +619,8 @@ fn release_failure(file: &ReleaseFile, origin: &str, error: &str) -> String {
          sha256:   {sha}\n\
          \n\
          Without network access, download the file and set GHOSTTY_RELEASE_DIR to\n\
-         the directory that holds it. GHOSTTY_VT_FROM_SOURCE=1 builds from source\n\
-         with Zig instead.\n",
+         the directory that holds it, or set GHOSTTY_RELEASE_URL to a mirror of the\n\
+         release. GHOSTTY_VT_FROM_SOURCE=1 builds from source with Zig instead.\n",
         name = file.name,
         sha = file.sha256,
     )
