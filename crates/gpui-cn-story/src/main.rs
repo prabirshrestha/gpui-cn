@@ -30,7 +30,7 @@ fn main() {
             );
         }
     };
-    let app = gpui_kit::application().with_assets(gpui_cn::ComposerAssets);
+    let app = gpui_kit::application().with_assets(gpui_cn_story::StoryAssets);
     mark("application built");
     app.run(move |cx| {
         mark("run callback");

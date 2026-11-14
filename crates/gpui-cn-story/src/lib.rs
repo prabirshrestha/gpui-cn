@@ -4,6 +4,7 @@
 //! the gallery is also the first consumer of the library.
 
 pub mod agents;
+mod assets;
 pub mod remote;
 pub mod settings;
 pub mod stories;
@@ -24,6 +25,7 @@ use gpui_kit::{
     px,
 };
 
+pub use assets::StoryAssets;
 pub use settings::{SettingsPage, SettingsSection};
 
 /// The width a story or settings column grows to before it stops, so
@@ -177,6 +179,7 @@ pub fn stories() -> Vec<StoryEntry> {
         StoryEntry::of::<stories::InputStory>(StorySection::Inputs),
         StoryEntry::of::<stories::TextareaStory>(StorySection::Inputs),
         StoryEntry::of::<stories::SelectStory>(StorySection::Inputs),
+        StoryEntry::of::<stories::RuleBuilderStory>(StorySection::Inputs),
         StoryEntry::of::<stories::MenuStory>(StorySection::Actions),
         StoryEntry::of::<stories::CommandStory>(StorySection::Actions),
         StoryEntry::of::<stories::PopoverStory>(StorySection::Overlays),
@@ -1024,7 +1027,7 @@ mod tests {
             usize::from(cfg!(feature = "terminal")) + usize::from(cfg!(feature = "webview"));
         assert_eq!(
             count,
-            30 + terminal,
+            31 + terminal,
             "a story was dropped or added without this count"
         );
         for section in super::StorySection::ALL {

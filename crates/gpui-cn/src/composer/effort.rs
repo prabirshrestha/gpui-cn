@@ -35,7 +35,7 @@ use crate::{
 ///
 /// The default icons (the mic, the shield, the file kinds, the git branch) are
 /// not in the default `gpui_kit::assets::Assets`: register
-/// [`ComposerAssets`](crate::ComposerAssets).
+/// [`CnAssets`](crate::CnAssets).
 #[derive(IntoElement)]
 #[non_exhaustive]
 pub struct EffortMenu {

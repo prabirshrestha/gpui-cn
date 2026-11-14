@@ -64,9 +64,9 @@ fn main() {
 ```
 
 `with_assets` registers the Lucide icons that gpui-kit bundles, which the
-components draw with. The composer family (`Composer`, `PermissionMenu`,
-`AttachmentTile`, `EffortMenu`, `StatusSelect`) also draws icons the default
-set lacks, so register `gpui_cn::ComposerAssets` in its place. Call `gpui_kit::init` first. It sets up `gpui-base`.
+components draw with. Some components, such as the composer family and the
+rule builder, also draw icons the default set lacks, so register
+`gpui_cn::CnAssets` in its place. Call `gpui_kit::init` first. It sets up `gpui-base`.
 Then call `gpui_cn::init`, which installs the theme and adds gpui-cn to
 the `Root` that `gpui_kit::open_window` puts at the top of each window.
 gpui-base's root moves focus on Tab and Shift-Tab and copies the selected

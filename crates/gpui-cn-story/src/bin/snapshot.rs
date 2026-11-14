@@ -23,7 +23,7 @@ fn main() {
 mod macos {
     use std::{path::PathBuf, sync::Arc};
 
-    use gpui_cn::{ComposerAssets, ReduceMotion, Theme, ThemeMode};
+    use gpui_cn::{ReduceMotion, Theme, ThemeMode};
     use gpui_cn_story::Gallery;
     use gpui_kit::{
         AppContext as _, Entity, HeadlessAppContext, px, size, test::TestWindowExt as _,
@@ -43,7 +43,7 @@ mod macos {
             .unwrap_or_else(|| f32::from(gpui_cn_story::WINDOW_SIZE.height));
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(ComposerAssets),
+            Arc::new(gpui_cn_story::StoryAssets),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(|cx| {
@@ -254,6 +254,7 @@ mod macos {
                 "Input",
                 "Textarea",
                 "Select",
+                "Rule builder",
                 "Menu",
                 "Command",
                 "Popover",
