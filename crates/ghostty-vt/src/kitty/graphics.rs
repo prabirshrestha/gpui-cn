@@ -170,6 +170,21 @@ impl Terminal {
         Ok(self)
     }
 
+    /// Advance playing Kitty graphics animations to the frame due at
+    /// `now_ms`, and return when the next frame is due, or `None` when
+    /// nothing plays.
+    ///
+    /// Times are milliseconds on one clock that only moves forward, the
+    /// same for the life of the terminal. An animation moves at most one
+    /// frame per call. Call this once each time a frame is prepared.
+    pub fn tick_kitty_animations(&mut self, now_ms: u64) -> Result<Option<u64>> {
+        let graphics = self.get::<ffi::KittyGraphics>(ffi::TerminalData::KITTY_GRAPHICS)?;
+        let mut next = 0u64;
+        let result =
+            unsafe { ffi::ghostty_kitty_graphics_animation_tick(graphics, now_ms, &raw mut next) };
+        from_optional_result(result, next)
+    }
+
     /// Set the maximum bytes the APC handler will buffer for Kitty graphics
     /// protocol data.
     ///

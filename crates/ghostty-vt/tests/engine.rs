@@ -326,6 +326,30 @@ fn kitty_options_round_trip() {
 }
 
 #[test]
+fn the_render_state_lists_kitty_image_placements() {
+    use ghostty_vt::render::{ImageIterator, ImageLayer, KittyPlacementKind};
+    let mut terminal = common::terminal(10, 4);
+    terminal.resize(10, 4, 8, 16).unwrap();
+    // A 2x2 RGBA image placed at column 2, two columns by one row.
+    terminal
+        .vt_write(b"ab\x1b_Ga=T,q=2,i=9,f=32,s=2,v=2,c=2,r=1,z=-1;/wAA/wD/AP8AAP//////gA==\x1b\\");
+    let mut state = RenderState::new().unwrap();
+    let mut images = ImageIterator::new().unwrap();
+    let snapshot = state.update(&terminal).unwrap();
+    assert_ne!(snapshot.image_placements_generation().unwrap(), 0);
+    let mut iteration = images.update(&snapshot).unwrap();
+    let placement = iteration.next().unwrap().unwrap();
+    assert!(iteration.next().is_none());
+    assert_eq!(placement.image_id, 9);
+    assert_eq!(placement.kind, KittyPlacementKind::Fixed);
+    assert_eq!(placement.layer, ImageLayer::BelowText);
+    assert_eq!((placement.viewport_col, placement.viewport_row), (2, 0));
+    assert_eq!((placement.grid_cols, placement.grid_rows), (2, 1));
+    assert_eq!((placement.pixel_width, placement.pixel_height), (16, 16));
+    assert_eq!((placement.source_width, placement.source_height), (2, 2));
+}
+
+#[test]
 fn osc_parser_reads_the_window_title() {
     let mut parser = ghostty_vt::osc::Parser::new().unwrap();
     for byte in b"2;hello title" {
