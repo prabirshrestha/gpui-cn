@@ -1,8 +1,8 @@
 //! Runs the unit tests of the build script's modules.
 
-#[path = "../build/stack_probes.rs"]
+#[path = "../build/compiler_rt.rs"]
 #[allow(dead_code)]
-mod stack_probes;
+mod compiler_rt;
 
 #[path = "../build/targets.rs"]
 #[allow(dead_code)]

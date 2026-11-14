@@ -30,10 +30,13 @@ Zig's compiler_rt in the static library exports `___chkstk_ms` and the
 other stack probes as COFF weak externals. GNU ld takes them as
 definitions, so it does not pull the probe from libgcc, and with
 `--gc-sections`, which rustc always passes, it then drops the weak
-default. For `x86_64-pc-windows-gnu` the build script links a copy of
-the library with these weak probes renamed, so the toolchain's own probe
-is used. lld, which the `gnullvm` targets use, needs no change. No DLL is
-linked, and an application needs no extra link flags.
+default. Zig's own linker (`zig cc`, as cargo-zigbuild uses) adds a
+second Zig compiler_rt, whose `.weak.<name>.default` symbols clash with
+the ones in the library. So the build script links a copy of the library
+with these symbols renamed: the weak defaults on every GNU-ABI target,
+and the weak stack probes for `x86_64-pc-windows-gnu`, so the
+toolchain's own probe is used. It links with GNU ld (MinGW GCC), lld and
+`zig cc`. No DLL is linked, and an application needs no extra link flags.
 
 The Windows zip is a GNU-ABI build. Microsoft `link.exe` rejects its
 COMDAT sections (LNK1143), so the MSVC targets build from source by

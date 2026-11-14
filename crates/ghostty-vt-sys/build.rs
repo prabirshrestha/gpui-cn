@@ -9,8 +9,9 @@
 //!    targets (the XCFramework) and the Windows GNU targets (the Windows zip).
 //!    It is downloaded, or read from `GHOSTTY_RELEASE_DIR`, and verified
 //!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Both link the
-//!    static library; for `*-windows-gnu` the weak Zig stack probes in it
-//!    are hidden first (see `build/stack_probes.rs`). With
+//!    static library; for the Windows GNU targets symbols of Zig's
+//!    compiler_rt in it are renamed first, so GNU ld and Zig's own linker
+//!    take it (see `build/compiler_rt.rs`). With
 //!    `GHOSTTY_VT_PREBUILT_MSVC=1` the Windows MSVC targets link the
 //!    Windows zip too, unchanged; that needs lld as the linker, and the
 //!    build stops when the linker is `link.exe`.
@@ -37,8 +38,8 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-#[path = "build/stack_probes.rs"]
-mod stack_probes;
+#[path = "build/compiler_rt.rs"]
+mod compiler_rt;
 #[path = "build/targets.rs"]
 mod targets;
 
@@ -797,33 +798,30 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
 /// Link `ghostty-vt-static.lib` from `lib_dir`. The static library imports
 /// from ntdll.
 ///
-/// For `*-windows-gnu`, which links with GNU ld, a copy with the weak Zig
-/// stack probes hidden is linked instead; see `build/stack_probes.rs`. lld
-/// (`*-windows-gnullvm`) and link.exe resolve weak externals correctly.
+/// The GNU-ABI targets link a copy with symbols of Zig's compiler_rt
+/// renamed (see `build/compiler_rt.rs`): its weak defaults, which clash
+/// with the compiler_rt Zig's own linker adds, and for `*-windows-gnu`,
+/// which links with GNU ld, its weak stack probes. lld-link and link.exe
+/// take the library unchanged.
 fn link_windows_static(target: &str, lib_dir: &Path) {
     const ARCHIVE: &str = "ghostty-vt-static.lib";
     if target.ends_with("windows-msvc") {
         println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");
     } else {
-        let search = if target.ends_with("windows-gnu") {
-            let source = lib_dir.join(ARCHIVE);
-            let mut bytes = fs::read(&source)
-                .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
-            stack_probes::hide_weak_stack_probes(&mut bytes)
-                .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
-            let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-            let dir = out_dir.join("windows-gnu");
-            fs::create_dir_all(&dir)
-                .unwrap_or_else(|error| panic!("failed to create {}: {error}", dir.display()));
-            let patched = dir.join(ARCHIVE);
-            fs::write(&patched, &bytes)
-                .unwrap_or_else(|error| panic!("failed to write {}: {error}", patched.display()));
-            dir
-        } else {
-            lib_dir.to_path_buf()
-        };
-        println!("cargo:rustc-link-search=native={}", search.display());
+        let source = lib_dir.join(ARCHIVE);
+        let mut bytes = fs::read(&source)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
+        compiler_rt::patch(&mut bytes, target.ends_with("windows-gnu"))
+            .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+        let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+        let dir = out_dir.join("windows-gnu");
+        fs::create_dir_all(&dir)
+            .unwrap_or_else(|error| panic!("failed to create {}: {error}", dir.display()));
+        let patched = dir.join(ARCHIVE);
+        fs::write(&patched, &bytes)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", patched.display()));
+        println!("cargo:rustc-link-search=native={}", dir.display());
         // The GNU linkers look for `lib<name>.a`, so name the file itself.
         println!("cargo:rustc-link-lib=static:+verbatim={ARCHIVE}");
     }
