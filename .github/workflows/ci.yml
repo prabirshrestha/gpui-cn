@@ -103,7 +103,7 @@ jobs:
       - run: cargo check -p ghostty-vt-sys -p ghostty-vt --all-features --locked --target aarch64-apple-ios-sim
 
   windows-gnu:
-    name: Test the engine (x86_64-pc-windows-gnu, prebuilt DLL)
+    name: Test the engine (x86_64-pc-windows-gnu, prebuilt static)
     runs-on: windows-latest
     defaults:
       run:

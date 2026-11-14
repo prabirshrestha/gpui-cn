@@ -13,6 +13,7 @@ links = "ghostty-vt"
 build = "build.rs"
 include = [
     "build.rs",
+    "build/**",
     "src/**",
     "tools/**",
     "README.md",

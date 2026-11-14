@@ -118,13 +118,12 @@ cargo add gpui-cn --features ghostty
 ```
 
 On macOS, iOS and Windows GNU, the first build downloads the prebuilt
-libghostty-vt of the pinned release, about 16 MB, and needs no Zig. On
-Windows GNU the terminal links `ghostty-vt.dll`, which an application ships
-next to its executable. Linux and Windows MSVC build it from source, which
-needs [Zig](https://ziglang.org/download/) 0.17 on `PATH` (or in `ZIG`) and
-downloads the release source and its Zig packages, about 10 MB. For an
-offline build, set `GHOSTTY_RELEASE_DIR` to a directory with the release
-files; `ghostty-vt-sys` describes it.
+libghostty-vt of the pinned release, about 16 MB, and needs no Zig. It is
+linked statically, so no DLL ships with an application. Linux and Windows
+MSVC build it from source, which needs [Zig](https://ziglang.org/download/)
+0.17 on `PATH` (or in `ZIG`) and downloads the release source and its Zig
+packages, about 10 MB. For an offline build, set `GHOSTTY_RELEASE_DIR` to a
+directory with the release files; `ghostty-vt-sys` describes it.
 
 Programs can show images through the Kitty graphics protocol, as
 `kitten icat`, yazi or chafa do.

@@ -22,8 +22,10 @@ that this repository does not name. The workspace has four crates:
 - `crates/ghostty-vt-sys` links the pinned libghostty-vt release and
   holds its raw bindings, which are generated and committed. On macOS,
   iOS and Windows GNU it downloads the release's prebuilt library and
-  checks its sha256, with no Zig; Windows GNU links the DLL, because the
-  static library does not link under rustc's `--gc-sections`. Linux and
+  checks its sha256, with no Zig, and links it statically. For
+  `*-windows-gnu` it first renames the weak Zig stack probes in the
+  archive (`build/stack_probes.rs`), because GNU ld with `--gc-sections`
+  does not resolve them. Linux and
   Windows MSVC build the release source tarball with Zig 0.17 and the
   release deps tarball (`zig build --system`). `GHOSTTY_VT_FROM_SOURCE=1`
   or `GHOSTTY_SOURCE_DIR` forces a source build. `crates/ghostty-vt` is

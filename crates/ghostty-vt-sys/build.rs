@@ -8,10 +8,10 @@
 //! 2. The prebuilt library of the pinned libghostty-vt release, for the Apple
 //!    targets (the XCFramework) and the Windows GNU targets (the Windows zip).
 //!    It is downloaded, or read from `GHOSTTY_RELEASE_DIR`, and verified
-//!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Apple targets
-//!    link the static archive; Windows GNU links the DLL, whose path is
-//!    exported as `DEP_GHOSTTY_VT_DLL`. `GHOSTTY_VT_FROM_SOURCE=1` skips this
-//!    step.
+//!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Both link the
+//!    static library; for `*-windows-gnu` the weak Zig stack probes in it
+//!    are hidden first (see `build/stack_probes.rs`).
+//!    `GHOSTTY_VT_FROM_SOURCE=1` skips this step.
 //! 3. The `third_party/ghostty` git submodule at the repository root.
 //! 4. With the `pkg-config` feature, an installed `libghostty-vt-static`.
 //! 5. A download of `GHOSTTY_SOURCE_URL` (default: the URL in `GHOSTTY.lock`)
@@ -33,6 +33,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+
+#[path = "build/stack_probes.rs"]
+mod stack_probes;
 
 /// A release file: its name in the release directory and its sha256.
 struct ReleaseFile {
@@ -159,7 +162,7 @@ fn main() {
         && let Some(release) = &lock.release
         && let Some(prebuilt) = Prebuilt::for_target(release, &target)
     {
-        link_prebuilt(release, &prebuilt);
+        link_prebuilt(release, &prebuilt, &target);
         return;
     }
 
@@ -248,8 +251,8 @@ enum PrebuiltKind {
         /// The architecture to take from a universal archive.
         arch: Option<MachArch>,
     },
-    /// The Windows install tree: `bin/ghostty-vt.dll`, its import library
-    /// `lib/ghostty-vt.lib`, and `include/`.
+    /// The Windows install tree: the static library
+    /// `lib/ghostty-vt-static.lib` and `include/`.
     WindowsGnu,
 }
 
@@ -314,7 +317,7 @@ fn release_version(release: &Release) -> &str {
 }
 
 /// Download, verify, extract and link a prebuilt library.
-fn link_prebuilt(release: &Release, prebuilt: &Prebuilt) {
+fn link_prebuilt(release: &Release, prebuilt: &Prebuilt, target: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let dest = out_dir.join("prebuilt");
     let stamp = dest.join(".ghostty-vt-sha256");
@@ -354,29 +357,7 @@ fn link_prebuilt(release: &Release, prebuilt: &Prebuilt) {
             println!("cargo:include={}", dir.join("Headers").display());
         }
         PrebuiltKind::WindowsGnu => {
-            // The static library does not link under rustc: GNU ld drops
-            // the default of Zig's weak `___chkstk_ms` with
-            // `--gc-sections`, which rustc always passes, and a build
-            // script cannot turn that flag off for the crates that use
-            // this one. So link the DLL through its import library.
-            let lib_dir = dir.join("lib");
-            let bin_dir = dir.join("bin");
-            let import = lib_dir.join("ghostty-vt.lib");
-            let dll = bin_dir.join("ghostty-vt.dll");
-            for file in [&import, &dll] {
-                assert!(
-                    file.exists(),
-                    "{} has no {}",
-                    prebuilt.file.name,
-                    file.display()
-                );
-            }
-            println!("cargo:rustc-link-search=native={}", lib_dir.display());
-            // Cargo puts search paths inside OUT_DIR on PATH for
-            // `cargo run` and `cargo test`, so the DLL loads there.
-            println!("cargo:rustc-link-search=native={}", bin_dir.display());
-            println!("cargo:rustc-link-lib=dylib:+verbatim=ghostty-vt.lib");
-            println!("cargo::metadata=DLL={}", dll.display());
+            link_windows_static(target, &dir.join("lib"));
             println!("cargo:include={}", dir.join("include").display());
         }
     }
@@ -802,23 +783,47 @@ fn build_tree(src: &Path, lock: &Lock, target: &str) {
         include_dir.display()
     );
 
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     if windows {
-        link_windows_static(target);
+        link_windows_static(target, &lib_dir);
     } else {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=ghostty-vt");
     }
     println!("cargo:include={}", include_dir.display());
 }
 
-/// Link `ghostty-vt-static.lib` from the search path. The static library
-/// imports from ntdll.
-fn link_windows_static(target: &str) {
+/// Link `ghostty-vt-static.lib` from `lib_dir`. The static library imports
+/// from ntdll.
+///
+/// For `*-windows-gnu`, which links with GNU ld, a copy with the weak Zig
+/// stack probes hidden is linked instead; see `build/stack_probes.rs`. lld
+/// (`*-windows-gnullvm`) and link.exe resolve weak externals correctly.
+fn link_windows_static(target: &str, lib_dir: &Path) {
+    const ARCHIVE: &str = "ghostty-vt-static.lib";
     if target.ends_with("windows-msvc") {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");
     } else {
+        let search = if target.ends_with("windows-gnu") {
+            let source = lib_dir.join(ARCHIVE);
+            let mut bytes = fs::read(&source)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
+            stack_probes::hide_weak_stack_probes(&mut bytes)
+                .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+            let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+            let dir = out_dir.join("windows-gnu");
+            fs::create_dir_all(&dir)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", dir.display()));
+            let patched = dir.join(ARCHIVE);
+            fs::write(&patched, &bytes)
+                .unwrap_or_else(|error| panic!("failed to write {}: {error}", patched.display()));
+            dir
+        } else {
+            lib_dir.to_path_buf()
+        };
+        println!("cargo:rustc-link-search=native={}", search.display());
         // The GNU linkers look for `lib<name>.a`, so name the file itself.
-        println!("cargo:rustc-link-lib=static:+verbatim=ghostty-vt-static.lib");
+        println!("cargo:rustc-link-lib=static:+verbatim={ARCHIVE}");
     }
     println!("cargo:rustc-link-lib=dylib=ntdll");
 }
@@ -935,7 +940,12 @@ fn try_pkg_config(target: &str) -> bool {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     if target.contains("windows") {
-        link_windows_static(target);
+        let lib_dir = lib
+            .link_paths
+            .iter()
+            .find(|dir| dir.join("ghostty-vt-static.lib").exists())
+            .expect("pkg-config gave no directory with ghostty-vt-static.lib");
+        link_windows_static(target, lib_dir);
     } else {
         println!("cargo:rustc-link-lib=static=ghostty-vt");
     }

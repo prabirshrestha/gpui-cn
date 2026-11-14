@@ -18,7 +18,7 @@ compiled into libghostty-vt is invisible to it and is listed here.
 ## Linked into the library
 
 `ghostty-vt-sys` links an official libghostty-vt release: the prebuilt
-library on macOS, iOS and Windows GNU (a DLL there), or one built from the
+library on macOS, iOS and Windows GNU, or one built from the
 release source tarball and its deps tarball elsewhere. The library
 contains Ghostty's own Zig code (MIT) and these libraries, from the sources
 named in Ghostty's `build.zig.zon` files and verified against the hashes

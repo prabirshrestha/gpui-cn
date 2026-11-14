@@ -22,15 +22,17 @@ and committed, so the crate needs no bindgen or Clang to build.
 | --- | --- |
 | `x86_64-apple-darwin`, `aarch64-apple-darwin` | Prebuilt static, from the XCFramework. |
 | `aarch64-apple-ios`, `aarch64-apple-ios-sim` | Prebuilt static, from the XCFramework. |
-| `x86_64-pc-windows-gnu`, `*-pc-windows-gnullvm` | Prebuilt DLL, through its import library. |
+| `x86_64-pc-windows-gnu`, `*-pc-windows-gnullvm` | Prebuilt static, from the Windows zip. |
 | Linux, Windows MSVC | Built from source with Zig, linked statically. |
 
-On Windows GNU the static library does not link under rustc: GNU ld drops
-the default of Zig's weak `___chkstk_ms` with `--gc-sections`, which rustc
-always passes. So these targets link `ghostty-vt.dll`. The build script
-exposes its path as `DEP_GHOSTTY_VT_DLL` to the build scripts of crates
-that depend on this one, and `cargo run` and `cargo test` find it on
-`PATH`. An application ships the DLL next to its executable.
+Zig's compiler_rt in the static library exports `___chkstk_ms` and the
+other stack probes as COFF weak externals. GNU ld takes them as
+definitions, so it does not pull the probe from libgcc, and with
+`--gc-sections`, which rustc always passes, it then drops the weak
+default. For `x86_64-pc-windows-gnu` the build script links a copy of
+the library with these weak probes renamed, so the toolchain's own probe
+is used. lld, which the `gnullvm` targets use, needs no change. No DLL is
+linked, and an application needs no extra link flags.
 
 Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-vt).
 
