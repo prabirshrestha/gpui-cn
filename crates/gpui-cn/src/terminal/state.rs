@@ -122,6 +122,7 @@ pub struct TerminalState {
     pub(crate) marked_text: Option<String>,
     /// Rows prepared in the last frame, for the element to reuse.
     pub(crate) row_cache: crate::terminal::element::RowCache,
+    pub(crate) image_cache: crate::terminal::images::ImageCache,
     pressed_keys: HashSet<String>,
     right_click_passthrough: bool,
     hovered_link: Option<(u16, Link)>,
@@ -165,6 +166,7 @@ impl TerminalState {
             selection: None,
             marked_text: None,
             row_cache: crate::terminal::element::RowCache::default(),
+            image_cache: crate::terminal::images::ImageCache::default(),
             pressed_keys: HashSet::new(),
             right_click_passthrough: true,
             hovered_link: None,

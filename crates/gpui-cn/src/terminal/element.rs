@@ -12,12 +12,12 @@ use std::sync::Arc;
 use gpui_kit::base::{StyledExt as _, TestSupportExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, BorderStyle, Bounds, ContentMask, DispatchPhase, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler as _, Font, FontStyle, FontWeight, HitboxBehavior, Hsla, InteractiveElement,
-    IntoElement, LineLayout, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, RenderOnce, ScrollEvent, ShapedLine, Size,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, TextRun, Window, canvas,
-    div, fill, outline, point, px, size,
+    App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler as _, Font, FontStyle, FontWeight, HitboxBehavior, Hsla,
+    InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent, MouseButton,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, ScrollEvent,
+    ShapedLine, Size, StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, TextRun,
+    Window, canvas, div, fill, outline, point, px, size,
 };
 
 use crate::theme::ActiveTheme as _;
@@ -29,8 +29,10 @@ use crate::terminal::actions::{
 use crate::terminal::block;
 use crate::terminal::colors::Palette;
 use crate::terminal::decoration;
+use crate::terminal::frame::ImageLayer;
 use crate::terminal::frame::{CursorShape, StyleRun, TerminalColors, TerminalFrame, TerminalRow};
 use crate::terminal::geometry::Geometry;
+use crate::terminal::images::PaintedImage;
 use crate::terminal::input::ScrollRequest;
 use crate::terminal::selection::Selection;
 use crate::terminal::state::TerminalState;
@@ -219,6 +221,9 @@ struct Painting {
     decorations: Vec<(Bounds<Pixels>, Hsla)>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<(Bounds<Pixels>, Hsla, CursorShape)>,
+    /// The Kitty graphics images in drawing order, clipped to `grid`.
+    images: Vec<PaintedImage>,
+    grid: Bounds<Pixels>,
     cell_height: Pixels,
     selection: Hsla,
     cursor_thickness: Pixels,
@@ -370,6 +375,10 @@ fn grid(state: Entity<TerminalState>, focused: bool) -> impl IntoElement {
                 }
             }
             state.update(cx, |s, _| s.row_cache = rows);
+            let mut images = state.update(cx, |s, _| std::mem::take(&mut s.image_cache));
+            painting.images = images.prepare(&frame, geometry, window);
+            painting.grid = geometry.grid_bounds();
+            state.update(cx, |s, _| s.image_cache = images);
             let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
             (painting, geometry, hitbox)
         },
@@ -805,12 +814,27 @@ fn merge_quad(quads: &mut Vec<(Bounds<Pixels>, Hsla)>, bounds: Bounds<Pixels>, c
 }
 
 fn paint(painting: Painting, window: &mut Window, cx: &mut App) {
+    let grid = painting.grid;
+    let images = |layer: ImageLayer, window: &mut Window| {
+        for image in painting.images.iter().filter(|image| image.layer == layer) {
+            let _ = window.paint_image(
+                grid,
+                image.bounds,
+                Corners::default(),
+                Arc::clone(&image.image),
+                0,
+                false,
+            );
+        }
+    };
+    images(ImageLayer::BelowBackground, window);
     for (bounds, color) in painting.backgrounds {
         window.paint_quad(fill(bounds, color));
     }
     for bounds in painting.selections {
         window.paint_quad(fill(bounds, painting.selection));
     }
+    images(ImageLayer::BelowText, window);
     for (bounds, color) in painting.decorations {
         window.paint_quad(fill(bounds, color));
     }
@@ -827,6 +851,7 @@ fn paint(painting: Painting, window: &mut Window, cx: &mut App) {
             cx,
         );
     }
+    images(ImageLayer::AboveText, window);
     if let Some((bounds, color, shape)) = painting.cursor {
         let thickness = painting.cursor_thickness;
         match shape {

@@ -1,14 +1,15 @@
 //! Immutable frames the engine publishes to the UI.
 //!
 //! A frame is everything a renderer needs to draw one viewport: the rows as
-//! text with cell spans and style runs, the cursor, the colors, the scroll
-//! metrics and the input modes. Rows are `Arc`s so a frame that changes one
+//! text with cell spans and style runs, the Kitty graphics images, the
+//! cursor, the colors, the scroll metrics and the input modes. Rows are `Arc`s so a frame that changes one
 //! row shares the rest with the previous frame.
 //!
 //! Derived from Herdr (Apache-2.0).
 
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use ghostty_vt::render::RowId;
 use ghostty_vt::style::Palette;
@@ -405,6 +406,155 @@ impl Viewport {
     }
 }
 
+/// The pixels of one image a program sent, 8-bit RGBA with straight alpha,
+/// row by row.
+///
+/// Two images are equal when they are the same image: each one gets its
+/// own key, so a renderer can cache a texture on it.
+#[derive(Clone, Debug)]
+pub struct TerminalImage {
+    key: u64,
+    width: u32,
+    height: u32,
+    rgba: Arc<[u8]>,
+}
+
+impl TerminalImage {
+    /// An image of `width` by `height` pixels, or `None` when `rgba` is not
+    /// `width * height * 4` bytes or the image is empty.
+    #[must_use]
+    pub fn new(width: u32, height: u32, rgba: impl Into<Arc<[u8]>>) -> Option<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let rgba = rgba.into();
+        let len = usize::try_from(u64::from(width) * u64::from(height) * 4).ok()?;
+        if width == 0 || height == 0 || rgba.len() != len {
+            return None;
+        }
+        Some(Self {
+            key: NEXT.fetch_add(1, Ordering::Relaxed),
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    /// The key that identifies this image.
+    #[must_use]
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// Width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// The RGBA bytes.
+    #[must_use]
+    pub fn rgba(&self) -> &[u8] {
+        &self.rgba
+    }
+}
+
+impl PartialEq for TerminalImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for TerminalImage {}
+
+/// Where an image is drawn relative to the text, in drawing order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ImageLayer {
+    /// Under the cell backgrounds, over the terminal background.
+    BelowBackground,
+    /// Over the cell backgrounds and under the text.
+    BelowText,
+    /// Over the text.
+    #[default]
+    AboveText,
+}
+
+/// One image placed on the grid.
+///
+/// The position is the top-left cell, which can be outside the grid when
+/// the image is partly scrolled out; a renderer clips the image to the
+/// grid. Offsets and sizes are in device pixels of the frame's
+/// [`Viewport`] cell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ImagePlacement {
+    /// The pixels to draw, already cut to the part the program placed.
+    pub image: Arc<TerminalImage>,
+    /// The layer to draw in.
+    pub layer: ImageLayer,
+    /// Orders placements within a layer; lower draws first.
+    pub z: i32,
+    /// The column of the top-left cell.
+    pub column: i32,
+    /// The row of the top-left cell.
+    pub row: i32,
+    /// Device pixels from the left edge of the top-left cell to the image.
+    pub offset_x: u32,
+    /// Device pixels from the top edge of the top-left cell to the image.
+    pub offset_y: u32,
+    /// The drawn width in device pixels.
+    pub width: u32,
+    /// The drawn height in device pixels.
+    pub height: u32,
+}
+
+impl ImagePlacement {
+    /// `image` at the top-left of cell (`column`, `row`), drawn at its own
+    /// size above the text.
+    #[must_use]
+    pub fn new(image: Arc<TerminalImage>, column: i32, row: i32) -> Self {
+        Self {
+            layer: ImageLayer::AboveText,
+            z: 0,
+            column,
+            row,
+            offset_x: 0,
+            offset_y: 0,
+            width: image.width(),
+            height: image.height(),
+            image,
+        }
+    }
+
+    /// Set the layer and the z-index within it.
+    #[must_use]
+    pub fn with_layer(mut self, layer: ImageLayer, z: i32) -> Self {
+        self.layer = layer;
+        self.z = z;
+        self
+    }
+
+    /// Set the offset into the top-left cell, in device pixels.
+    #[must_use]
+    pub fn with_offset(mut self, x: u32, y: u32) -> Self {
+        self.offset_x = x;
+        self.offset_y = y;
+        self
+    }
+
+    /// Set the drawn size in device pixels.
+    #[must_use]
+    pub fn with_size(mut self, width: u32, height: u32) -> Self {
+        self.width = width;
+        self.height = height;
+        self
+    }
+}
+
 /// One rendered viewport.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -418,6 +568,8 @@ pub struct TerminalFrame {
     pub viewport: Viewport,
     /// The viewport rows, top to bottom.
     pub rows: Arc<[Arc<TerminalRow>]>,
+    /// The images on the grid, in drawing order: by layer, then by z.
+    pub images: Arc<[ImagePlacement]>,
     /// The cursor.
     pub cursor: Cursor,
     /// The colors.
@@ -442,6 +594,7 @@ impl TerminalFrame {
             content_revision: 1,
             viewport,
             rows,
+            images: Arc::new([]),
             cursor: Cursor::default(),
             colors: TerminalColors::default(),
             scroll: ScrollMetrics::new(count, 0, count),
@@ -463,6 +616,15 @@ impl TerminalFrame {
     #[must_use]
     pub fn with_content_revision(mut self, revision: u64) -> Self {
         self.content_revision = revision;
+        self
+    }
+
+    /// Set the images. They are sorted into drawing order.
+    #[must_use]
+    pub fn with_images(mut self, images: impl IntoIterator<Item = ImagePlacement>) -> Self {
+        let mut images: Vec<_> = images.into_iter().collect();
+        images.sort_by_key(|image| (image.layer, image.z));
+        self.images = images.into();
         self
     }
 

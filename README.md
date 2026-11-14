@@ -126,6 +126,9 @@ downloads the release source and its Zig packages, about 10 MB. For an
 offline build, set `GHOSTTY_RELEASE_DIR` to a directory with the release
 files; `ghostty-vt-sys` describes it.
 
+Programs can show images through the Kitty graphics protocol, as
+`kitten icat`, yazi or chafa do.
+
 Everything else is decided at runtime: a local shell in a pty
 (`TerminalState::local`, on desktop targets), a remote session or any
 other byte stream (`StreamSource`), and parking of idle terminals, which

@@ -80,7 +80,34 @@ const LEADER: &str = "ctrl-a";
 const FIXTURE: &str = "\x1b[1;32m~/gpui-cn\x1b[0m $ ls\r\n\
     \x1b[1;34mcrates\x1b[0m  \x1b[1;34mscripts\x1b[0m  \x1b[1;34mvendor\x1b[0m  \
     AGENTS.md  Cargo.toml  README.md\r\n\
-    \x1b[1;32m~/gpui-cn\x1b[0m $ ";
+    \x1b[1;32m~/gpui-cn\x1b[0m $ icat gradient.png\r\n";
+
+/// The canned output: a listing, then a Kitty graphics image, as
+/// `kitten icat` sends one, and a prompt.
+fn fixture() -> Vec<u8> {
+    use base64::Engine as _;
+    // A 96x48 gradient, drawn over 12 columns and 3 rows.
+    let (width, height) = (96u32, 48u32);
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            #[allow(clippy::cast_possible_truncation)]
+            rgba.extend_from_slice(&[
+                (x * 255 / (width - 1)) as u8,
+                (y * 255 / (height - 1)) as u8,
+                200,
+                255,
+            ]);
+        }
+    }
+    let payload = base64::engine::general_purpose::STANDARD.encode(rgba);
+    let mut bytes = FIXTURE.as_bytes().to_vec();
+    bytes.extend_from_slice(
+        format!("\x1b_Ga=T,q=2,f=32,s={width},v={height},c=12,r=3;{payload}\x1b\\").as_bytes(),
+    );
+    bytes.extend_from_slice(b"\r\n\x1b[1;32m~/gpui-cn\x1b[0m $ ");
+    bytes
+}
 
 /// Marks that the story's key bindings are in.
 struct Bindings;
@@ -612,7 +639,7 @@ impl TerminalStory {
         let config = TerminalConfig::default().with_colors(self.colors.clone());
         let terminal = cx.new(|cx| {
             if fixtures {
-                TerminalState::new(FixtureSource::new(FIXTURE), config, window, cx)
+                TerminalState::new(FixtureSource::new(fixture()), config, window, cx)
             } else {
                 TerminalState::local(
                     LocalTerminalOptions::default().with_cwd(cwd),

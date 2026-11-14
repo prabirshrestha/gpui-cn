@@ -18,6 +18,9 @@ pub struct EngineOptions {
     pub(crate) terminfo_name: String,
     /// Maximum decoded bytes per Kitty clipboard write.
     pub(crate) clipboard_write_max_bytes: usize,
+    /// Bytes of Kitty graphics images each screen may hold. Zero turns the
+    /// protocol off.
+    pub(crate) image_storage_bytes: u64,
     pub(crate) park: crate::terminal::park::ParkOptions,
 }
 
@@ -28,6 +31,8 @@ impl Default for EngineOptions {
             scrollback_lines: None,
             terminfo_name: ghostty_vt::terminfo::TERM.to_owned(),
             clipboard_write_max_bytes: 64 << 20,
+            // libghostty-vt's default.
+            image_storage_bytes: 10_000_000,
             park: crate::terminal::park::ParkOptions::default(),
         }
     }
@@ -45,6 +50,15 @@ impl EngineOptions {
     #[must_use]
     pub fn with_scrollback_lines(mut self, lines: Option<usize>) -> Self {
         self.scrollback_lines = lines;
+        self
+    }
+
+    /// Set how many bytes of Kitty graphics images each screen may hold.
+    /// The default is 10 MB, libghostty-vt's default; zero turns the Kitty
+    /// graphics protocol off.
+    #[must_use]
+    pub fn with_image_storage_bytes(mut self, bytes: u64) -> Self {
+        self.image_storage_bytes = bytes;
         self
     }
 

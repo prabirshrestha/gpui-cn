@@ -26,9 +26,23 @@
 //! gpui-cn = { version = "0.5", features = ["ghostty", "jetbrains-mono"] }
 //! ```
 //!
-//! Building it needs Zig 0.16 on `PATH`; the first build downloads
-//! Ghostty's pinned source. Whether a terminal runs a local shell or another
-//! source, and whether idle terminals park, are runtime choices.
+//! On macOS, iOS and Windows GNU the first build downloads the prebuilt
+//! libghostty-vt; Linux and Windows MSVC build it with Zig 0.17. Whether a
+//! terminal runs a local shell or another source, and whether idle terminals
+//! park, are runtime choices.
+//!
+//! # Images
+//!
+//! Programs can show images through the Kitty graphics protocol, as
+//! `kitten icat`, yazi or chafa do: raw RGB, RGBA and gray pixels, PNG,
+//! zlib-compressed payloads, source rectangles, scaling to cells, the three
+//! layers (below the cell backgrounds, below the text and above it) and
+//! Unicode placeholders. Images scroll with the text, stay in the
+//! scrollback and survive parking. Animations play while the terminal is
+//! shown and stop while it is hidden. Each frame carries its placements as
+//! [`ImagePlacement`]s, and the element draws them clipped to the grid.
+//! [`EngineOptions::with_image_storage_bytes`] sets how much image data a
+//! screen may hold, 10 MB by default; zero turns the protocol off.
 //! After `gpui_cn::init`, a view holds a [`TerminalState`] and renders a
 //! [`Terminal`] for it:
 //!
@@ -172,6 +186,7 @@ mod element;
 mod engine;
 pub mod frame;
 mod geometry;
+mod images;
 mod ime;
 pub mod input;
 mod keys;
@@ -198,7 +213,9 @@ pub use engine::{
     ByteHandle, ByteSink, ByteSource, Engine, ExitStatus, ForegroundProcess, InputRejected,
     TerminalSnapshot, TerminalStatus,
 };
-pub use frame::{RowId, TerminalColors, TerminalFrame, Viewport};
+pub use frame::{
+    ImageLayer, ImagePlacement, RowId, TerminalColors, TerminalFrame, TerminalImage, Viewport,
+};
 pub use geometry::Geometry;
 pub use input::TerminalInput;
 pub use options::{EngineOptions, LocalTerminalOptions, ShellIntegration, WorkingDirectory};

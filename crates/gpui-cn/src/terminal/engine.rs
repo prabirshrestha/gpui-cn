@@ -793,6 +793,8 @@ struct Owner {
     compression_deadline: Option<Instant>,
     /// When to ask the source for the foreground process again.
     foreground_due: Option<Instant>,
+    /// When the next frame of a playing Kitty graphics animation is due.
+    animation_due: Option<Instant>,
     dirty: bool,
     force: bool,
     effects: Effects,
@@ -841,6 +843,7 @@ impl Owner {
             started: Instant::now(),
             abnormal_exit_runtime: config.abnormal_exit_runtime,
             compression_deadline: None,
+            animation_due: None,
             foreground_due: Some(Instant::now() + FOREGROUND_CHECK),
             dirty: true,
             force: false,
@@ -1024,6 +1027,13 @@ impl Owner {
         }
         let exited = self.exit.is_some();
         let held = self.core.held();
+        // Animations advance only for a terminal that is shown and keeps
+        // up with its frames, so a hidden one does no work for them.
+        let animation_due = self.animation_due.is_some_and(|due| Instant::now() >= due);
+        if visible && credit && !held && (self.dirty || animation_due) {
+            self.animation_due = self.core.animate()?;
+            self.dirty |= animation_due;
+        }
         if self.dirty && ((visible && credit && !held) || (exited && self.force)) {
             if let Some(frame) = self.core.frame(self.force)? {
                 self.snapshot.frame = frame;
@@ -1057,6 +1067,13 @@ impl Owner {
                 None
             };
             let delay = match self.foreground_due {
+                Some(due) => {
+                    let until = due.saturating_duration_since(Instant::now());
+                    Some(delay.map_or(until, |delay| delay.min(until)))
+                }
+                None => delay,
+            };
+            let delay = match self.animation_due.filter(|_| visible && credit) {
                 Some(due) => {
                     let until = due.saturating_duration_since(Instant::now());
                     Some(delay.map_or(until, |delay| delay.min(until)))
@@ -1125,6 +1142,7 @@ impl Owner {
                 self.core.live = None;
                 self.core.parked = Some(parked);
                 self.compression_deadline = None;
+                self.animation_due = None;
                 true
             }
             // Try again after another idle period rather than at once.

@@ -183,3 +183,46 @@ fn a_terminal_that_is_not_painted_builds_no_more_frames() {
     assert!(shown.frame.text().contains("line 19999"));
     handle.close();
 }
+
+/// A 2x2 Kitty graphics animation of two frames, 50 ms each, that loops:
+/// frame 1 is red, frame 2 is black.
+fn animation() -> Vec<u8> {
+    let mut bytes = b"\x1b_Ga=T,q=2,i=3,f=32,s=1,v=1;/wAA/w==\x1b\\".to_vec();
+    bytes.extend_from_slice(b"\x1b_Ga=f,q=2,i=3,f=32,s=1,v=1,z=50;AAAA/w==\x1b\\");
+    bytes.extend_from_slice(b"\x1b_Ga=a,q=2,i=3,r=1,z=50\x1b\\");
+    bytes.extend_from_slice(b"\x1b_Ga=a,q=2,i=3,s=3,v=1\x1b\\");
+    bytes
+}
+
+/// The first pixel of the first image of a snapshot.
+fn first_pixel(snapshot: &TerminalSnapshot) -> Option<[u8; 4]> {
+    let image = &snapshot.frame.images.first()?.image;
+    image.rgba()[..4].try_into().ok()
+}
+
+#[test]
+fn a_kitty_animation_plays_while_shown_and_stops_while_hidden() {
+    let (peer, sink, handle) = started(Viewport::new(20, 4, 8, 16).unwrap());
+    peer.output(&animation());
+    // Both frames show without more output.
+    wait_for(&sink, handle.as_ref(), |s| {
+        first_pixel(s) == Some([255, 0, 0, 255])
+    });
+    wait_for(&sink, handle.as_ref(), |s| {
+        first_pixel(s) == Some([0, 0, 0, 255])
+    });
+    wait_for(&sink, handle.as_ref(), |s| {
+        first_pixel(s) == Some([255, 0, 0, 255])
+    });
+    handle.set_visible(false);
+    // A frame already on its way may still arrive.
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = sink.take();
+    handle.request_frame();
+    assert_no_frame(
+        &sink,
+        Duration::from_millis(300),
+        "a hidden terminal does not animate",
+    );
+    handle.close();
+}

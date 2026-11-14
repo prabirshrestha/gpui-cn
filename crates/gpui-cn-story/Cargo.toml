@@ -16,8 +16,8 @@ default = ["gpui-fast", "terminal", "webview"]
 # GPUI Fast as the backend, for the gallery and the FPS HUD.
 gpui-fast = ["gpui-cn/gpui-fast", "gpui-fps?/gpui-fast"]
 # The Terminal story: a shell in a pty through `gpui_cn::terminal`.
-# Building it needs Zig 0.17.
-terminal = ["gpui-cn/ghostty"]
+# On Linux and Windows MSVC, building it needs Zig 0.17.
+terminal = ["gpui-cn/ghostty", "dep:base64"]
 # The Browser story: native web views through `gpui_cn::BrowserState`. It
 # needs a real window, so the snapshot binary does not list it.
 webview = ["gpui-cn/webview"]
@@ -29,6 +29,8 @@ fps = ["dep:gpui-fps"]
 [dependencies]
 gpui-cn = { workspace = true, features = ["jetbrains-mono"] }
 gpui-kit = { workspace = true, features = ["assets"] }
+# Encodes the Kitty graphics image in the Terminal story's fixture.
+base64 = { version = "0.22", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 gpui-fps = { version = "0.8.1", optional = true }
 # The benchmark reads this process' CPU time.

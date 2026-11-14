@@ -2655,6 +2655,7 @@ dependencies = [
  "gpui-cn",
  "gpui-kit",
  "gpui-webview",
+ "image",
  "lb-wry",
  "libc",
  "nucleo-matcher",
@@ -2667,6 +2668,7 @@ dependencies = [
 name = "gpui-cn-story"
 version = "0.8.0"
 dependencies = [
+ "base64 0.22.1",
  "gpui-cn",
  "gpui-fps",
  "gpui-kit",

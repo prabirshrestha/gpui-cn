@@ -7,6 +7,7 @@
 //! Derived from Herdr (Apache-2.0).
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,7 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ghostty_vt as vt;
-use ghostty_vt::render::{CellIterator, Dirty, RenderState, RowIterator};
+use ghostty_vt::kitty::graphics::{ImageFormat, RustPngDecoder};
+use ghostty_vt::render::{CellIterator, Dirty, ImageIterator, RenderState, RowIterator, Snapshot};
 use ghostty_vt::screen::{CellContentTag, CellWide, Screen};
 use ghostty_vt::selection::{FormatOptions, Selection};
 use ghostty_vt::style::StyleColor;
@@ -22,8 +24,9 @@ use ghostty_vt::terminal::{Event, Mode, Point, PointCoordinate, ScrollViewport};
 use ghostty_vt::{key, mouse};
 
 use crate::terminal::frame::{
-    CellSelection, CellSpan, Color, Cursor, CursorShape, InputModes, Rgb, ScrollMetrics, Style,
-    StyleRun, TerminalColors, TerminalFrame, TerminalRow, Underline, Viewport,
+    CellSelection, CellSpan, Color, Cursor, CursorShape, ImageLayer, ImagePlacement, InputModes,
+    Rgb, ScrollMetrics, Style, StyleRun, TerminalColors, TerminalFrame, TerminalImage, TerminalRow,
+    Underline, Viewport,
 };
 use crate::terminal::input::{
     KeyAction, Modifiers, MouseAction, MouseButton, ScrollRequest, TerminalInput,
@@ -59,6 +62,13 @@ pub(crate) struct Core {
     hold_started: Option<Instant>,
     rows: RowIterator,
     cells: CellIterator,
+    images: ImageIterator,
+    /// The pixels of the images the last frame placed, cut to each
+    /// placement's source rectangle, so an image is converted once.
+    image_cache: HashMap<ImageKey, Arc<TerminalImage>>,
+    /// The render state's placement generation the last frame's images
+    /// were read at.
+    image_generation: Option<u64>,
     key_encoder: key::Encoder,
     mouse_encoder: mouse::Encoder,
     held_buttons: Vec<MouseButton>,
@@ -73,6 +83,18 @@ pub(crate) struct Core {
     title: String,
     cwd: Option<PathBuf>,
     scratch: String,
+}
+
+/// The Kitty graphics Unicode placeholder, U+10EEEE.
+const PLACEHOLDER: char = '\u{10EEEE}';
+
+/// One image's pixels, cut to one source rectangle. The generation is
+/// unique to the pixels, process-wide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ImageKey {
+    id: u32,
+    generation: u64,
+    source: [u32; 4],
 }
 
 /// The largest unfinished escape sequence a parked snapshot keeps: 64 KiB,
@@ -202,10 +224,11 @@ impl Core {
             .map_err(fault)?
             .set_terminfo_name(Some(&options.terminfo_name))
             .map_err(fault)?
-            // The element draws no Kitty images, so turn the protocol off.
-            // libghostty-vt turns it on by default with a 10 MB limit, and a
-            // program that sees it would send images that never show.
-            .set_kitty_image_storage_limit(0)
+            .set_kitty_image_storage_limit(options.image_storage_bytes)
+            .map_err(fault)?;
+        // libghostty-vt decodes PNG images through a decoder kept per
+        // thread, on the thread that writes to the terminal.
+        vt::kitty::graphics::set_png_decoder(Some(Box::new(RustPngDecoder::new())))
             .map_err(fault)?;
         terminal.set_xtversion(Some(format!("gpui-cn {}", env!("CARGO_PKG_VERSION"))));
         // A terminal parked in the middle of an escape sequence keeps the
@@ -231,6 +254,9 @@ impl Core {
             hold_started: None,
             rows: RowIterator::new().map_err(fault)?,
             cells: CellIterator::new().map_err(fault)?,
+            images: ImageIterator::new().map_err(fault)?,
+            image_cache: HashMap::new(),
+            image_generation: None,
             key_encoder: key::Encoder::new().map_err(fault)?,
             mouse_encoder: mouse::Encoder::new().map_err(fault)?,
             held_buttons: Vec::new(),
@@ -608,6 +634,32 @@ impl Core {
         )
     }
 
+    /// Advance playing Kitty graphics animations and return when the next
+    /// frame is due, or `None` when nothing plays. The next frame carries
+    /// the new pixels.
+    pub(crate) fn animate(&mut self) -> io::Result<Option<Instant>> {
+        self.animate_at(Instant::now())
+    }
+
+    fn animate_at(&mut self, now: Instant) -> io::Result<Option<Instant>> {
+        // One clock for every terminal, so a restored terminal keeps the
+        // clock its animations started on.
+        static CLOCK: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let clock = *CLOCK.get_or_init(Instant::now);
+        let millis =
+            |at: Instant| u64::try_from(at.duration_since(clock).as_millis()).unwrap_or(u64::MAX);
+        let next = match self.terminal.tick_kitty_animations(millis(now)) {
+            Ok(next) => next,
+            Err(vt::Error::Unsupported) => None,
+            Err(error) => return Err(fault(error)),
+        };
+        Ok(next.map(|next| {
+            // A frame moved or will move, so read the placements again.
+            self.image_generation = None;
+            clock + Duration::from_millis(next)
+        }))
+    }
+
     /// Build a frame when something changed, or always when `force` is set.
     ///
     /// During a render hold the frame captured when the hold began is used.
@@ -652,8 +704,23 @@ impl Core {
             focus_reporting,
             alternate_scroll,
         };
+        let image_generation = snapshot.image_placements_generation().map_err(fault)?;
+        let images = match &self.last {
+            Some(last) if self.image_generation == Some(image_generation) => last.images.clone(),
+            _ => collect_images(
+                &mut self.images,
+                &snapshot,
+                &self.terminal,
+                &mut self.image_cache,
+            )?,
+        };
+        self.image_generation = Some(image_generation);
         let unchanged_state = self.last.as_ref().is_some_and(|f| {
-            f.cursor == cursor && f.colors == colors && f.scroll == scroll && f.modes == modes
+            f.cursor == cursor
+                && f.colors == colors
+                && f.scroll == scroll
+                && f.modes == modes
+                && f.images == images
         });
         if !force && dirty == Dirty::Clean && unchanged_state {
             return Ok(None);
@@ -698,7 +765,9 @@ impl Core {
                     if !spacer {
                         self.scratch.clear();
                         cell.graphemes_utf8(&mut self.scratch).map_err(fault)?;
-                        if self.scratch.is_empty() {
+                        // A Kitty Unicode placeholder cell shows its
+                        // image, which the frame carries, not a glyph.
+                        if self.scratch.is_empty() || self.scratch.starts_with(PLACEHOLDER) {
                             text.push(' ');
                         } else {
                             text.push_str(&self.scratch);
@@ -793,6 +862,7 @@ impl Core {
             content_revision: self.content_revision,
             viewport: self.viewport,
             rows: rows.into(),
+            images,
             cursor,
             colors,
             scroll,
@@ -801,6 +871,111 @@ impl Core {
         self.last = Some(frame.clone());
         Ok(Some(frame))
     }
+}
+
+/// The image placements of `snapshot` in drawing order, with their pixels
+/// from `cache` or converted from the terminal's image storage. The cache
+/// keeps only the images these placements use.
+fn collect_images(
+    iterator: &mut ImageIterator,
+    snapshot: &Snapshot<'_>,
+    terminal: &vt::Terminal,
+    cache: &mut HashMap<ImageKey, Arc<TerminalImage>>,
+) -> io::Result<Arc<[ImagePlacement]>> {
+    let mut placements = Vec::new();
+    let mut used = HashMap::new();
+    let mut iteration = iterator.update(snapshot).map_err(fault)?;
+    while let Some(placement) = iteration.next() {
+        let placement = placement.map_err(fault)?;
+        let key = ImageKey {
+            id: placement.image_id,
+            generation: placement.image_generation,
+            source: [
+                placement.source_x,
+                placement.source_y,
+                placement.source_width,
+                placement.source_height,
+            ],
+        };
+        let image = match used.get(&key).or_else(|| cache.get(&key)) {
+            Some(image) => Arc::clone(image),
+            None => {
+                let Some(image) = image_pixels(terminal, key) else {
+                    continue;
+                };
+                Arc::new(image)
+            }
+        };
+        used.insert(key, Arc::clone(&image));
+        placements.push(ImagePlacement {
+            image,
+            layer: match placement.layer {
+                vt::render::ImageLayer::BelowBackground => ImageLayer::BelowBackground,
+                vt::render::ImageLayer::BelowText => ImageLayer::BelowText,
+                vt::render::ImageLayer::AboveText => ImageLayer::AboveText,
+            },
+            z: placement.z,
+            column: placement.viewport_col,
+            row: placement.viewport_row,
+            offset_x: placement.cell_offset_x,
+            offset_y: placement.cell_offset_y,
+            width: placement.pixel_width,
+            height: placement.pixel_height,
+        });
+    }
+    placements.sort_by_key(|placement| (placement.layer, placement.z));
+    *cache = used;
+    Ok(placements.into())
+}
+
+/// The pixels of image `key.id` cut to `key.source`, as RGBA, or `None`
+/// when the image is gone or its pixels have not arrived.
+fn image_pixels(terminal: &vt::Terminal, key: ImageKey) -> Option<TerminalImage> {
+    let graphics = terminal.kitty_graphics().ok()?;
+    let image = graphics.image(key.id)?;
+    let width = image.width().ok()?;
+    let height = image.height().ok()?;
+    let channels = match image.format().ok()? {
+        ImageFormat::Gray => 1,
+        ImageFormat::GrayAlpha => 2,
+        ImageFormat::Rgb => 3,
+        ImageFormat::Rgba => 4,
+        // libghostty-vt decodes PNG before it stores the image.
+        _ => return None,
+    };
+    let data = image.data().ok()?;
+    let stride = usize::try_from(width).ok()? * channels;
+    if data.len() < stride * usize::try_from(height).ok()? {
+        return None;
+    }
+    let [x, y, source_width, source_height] = key.source;
+    if source_width == 0
+        || source_height == 0
+        || x.checked_add(source_width)? > width
+        || y.checked_add(source_height)? > height
+    {
+        return None;
+    }
+    let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
+    let (cut_width, cut_height) = (
+        usize::try_from(source_width).ok()?,
+        usize::try_from(source_height).ok()?,
+    );
+    let mut rgba = Vec::with_capacity(cut_width * cut_height * 4);
+    for row in y..y + cut_height {
+        let start = row * stride + x * channels;
+        for pixel in data[start..start + cut_width * channels].chunks_exact(channels) {
+            let [r, g, b, a] = match *pixel {
+                [v] => [v, v, v, 255],
+                [v, a] => [v, v, v, a],
+                [r, g, b] => [r, g, b, 255],
+                [r, g, b, a] => [r, g, b, a],
+                _ => return None,
+            };
+            rgba.extend_from_slice(&[r, g, b, a]);
+        }
+    }
+    TerminalImage::new(source_width, source_height, rgba)
 }
 
 fn hyperlink(terminal: &vt::Terminal, column: u16, row: usize) -> Option<Arc<str>> {
@@ -923,6 +1098,199 @@ mod tests {
             TerminalColors::default(),
         )
         .unwrap()
+    }
+
+    /// A 2x2 RGBA image: red, green, blue, half-transparent white.
+    const RGBA: &str = "/wAA/wD/AP8AAP//////gA==";
+    const RGBA_PIXELS: [u8; 16] = [
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 128,
+    ];
+    /// A 3x2 RGB PNG; pixel (x, y) is (10 * (x + 1), 20 * (y + 1), 30).
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAHElEQVR4nGPgEpETEZGTE5Fj4NKQE9GQk9OQAwAQ9AHhpoz4SQAAAABJRU5ErkJggg==";
+
+    /// A Kitty graphics command that transmits and places an image, with
+    /// replies off.
+    fn kitty(control: &str, payload: &str) -> Vec<u8> {
+        format!("\x1b_Ga=T,q=2,{control};{payload}\x1b\\").into_bytes()
+    }
+
+    fn placed(core: &mut Core) -> Arc<[ImagePlacement]> {
+        core.frame(true).unwrap().unwrap().images.clone()
+    }
+
+    #[test]
+    fn an_rgba_image_is_placed_at_the_cursor() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        core.write(b"ab", &mut effects);
+        core.write(&kitty("f=32,s=2,v=2", RGBA), &mut effects);
+        let images = placed(&mut core);
+        assert_eq!(images.len(), 1);
+        let image = &images[0];
+        assert_eq!((image.column, image.row), (2, 0));
+        assert_eq!((image.width, image.height), (2, 2));
+        assert_eq!(image.layer, ImageLayer::AboveText);
+        assert_eq!(image.image.rgba(), RGBA_PIXELS);
+        assert!(effects.replies.is_empty());
+    }
+
+    #[test]
+    fn a_png_image_is_decoded_and_scaled_to_its_cells() {
+        let mut core = core();
+        core.write(&kitty("f=100,c=3,r=2", PNG), &mut Effects::default());
+        let images = placed(&mut core);
+        assert_eq!(images.len(), 1);
+        let image = &images[0];
+        assert_eq!((image.image.width(), image.image.height()), (3, 2));
+        // Three 8px columns and two 16px rows.
+        assert_eq!((image.width, image.height), (24, 32));
+        let rgba = image.image.rgba();
+        assert_eq!(&rgba[..4], &[10, 20, 30, 255]);
+        assert_eq!(&rgba[rgba.len() - 4..], &[30, 40, 30, 255]);
+    }
+
+    #[test]
+    fn a_source_rectangle_cuts_the_pixels() {
+        let mut core = core();
+        core.write(
+            &kitty("f=32,s=2,v=2,x=1,w=1", RGBA),
+            &mut Effects::default(),
+        );
+        let images = placed(&mut core);
+        let image = &images[0].image;
+        assert_eq!((image.width(), image.height()), (1, 2));
+        assert_eq!(
+            image.rgba(),
+            [0, 255, 0, 255, 255, 255, 255, 128].as_slice()
+        );
+    }
+
+    #[test]
+    fn images_are_in_drawing_order_by_layer_and_z() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        core.write(&kitty("f=32,s=2,v=2,i=1,z=5", RGBA), &mut effects);
+        core.write(&kitty("f=32,s=2,v=2,i=2,z=-1", RGBA), &mut effects);
+        core.write(&kitty("f=32,s=2,v=2,i=3,z=-1073741825", RGBA), &mut effects);
+        core.write(&kitty("f=32,s=2,v=2,i=4,z=1", RGBA), &mut effects);
+        let order: Vec<_> = placed(&mut core)
+            .iter()
+            .map(|image| (image.layer, image.z))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (ImageLayer::BelowBackground, -1_073_741_825),
+                (ImageLayer::BelowText, -1),
+                (ImageLayer::AboveText, 1),
+                (ImageLayer::AboveText, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_image_scrolls_with_the_text_and_comes_back_from_scrollback() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        core.write(&kitty("f=32,s=2,v=2,c=2,r=3,C=1", RGBA), &mut effects);
+        core.frame(true).unwrap();
+        core.write(b"\r\n\r\n\r\n\r\n", &mut effects);
+        let images = placed(&mut core);
+        assert_eq!(images.len(), 1, "two of its rows are still on screen");
+        assert_eq!(images[0].row, -1);
+        core.write(b"\r\n\r\n\r\n", &mut effects);
+        assert!(placed(&mut core).is_empty(), "it scrolled out of the grid");
+        core.input(TerminalInput::Scroll(ScrollRequest::Lines(-4)))
+            .unwrap();
+        let images = placed(&mut core);
+        assert_eq!(images.len(), 1, "scrolling back shows it again");
+        assert_eq!(images[0].row, 0);
+    }
+
+    #[test]
+    fn unicode_placeholders_place_a_virtual_image_and_show_no_text() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        core.write(&kitty("f=32,s=2,v=2,U=1,i=7,c=2,r=1", RGBA), &mut effects);
+        // The foreground color carries the image id; the diacritics give
+        // the row and the column.
+        core.write(
+            "\x1b[38;5;7m\u{10EEEE}\u{0305}\u{0305}\u{10EEEE}\u{0305}\u{030D}\x1b[m".as_bytes(),
+            &mut effects,
+        );
+        let frame = core.frame(true).unwrap().unwrap();
+        assert!(!frame.images.is_empty());
+        assert!(frame.images.iter().all(|image| image.row == 0));
+        assert_eq!(frame.rows[0].text.trim_end(), "");
+    }
+
+    #[test]
+    fn an_animation_shows_its_next_frame_when_it_is_due() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        // Frame 1 is the image; frame 2 is all black. Each shows 100 ms.
+        core.write(&kitty("f=32,s=2,v=2,i=5", RGBA), &mut effects);
+        core.write(
+            b"\x1b_Ga=f,q=2,i=5,f=32,s=2,v=2,z=100;AAAA/wAAAP8AAAD/AAAA/w==\x1b\\",
+            &mut effects,
+        );
+        core.write(b"\x1b_Ga=a,q=2,i=5,r=1,z=100\x1b\\", &mut effects);
+        core.write(b"\x1b_Ga=a,q=2,i=5,s=3,v=1\x1b\\", &mut effects);
+        let start = Instant::now();
+        let due = core
+            .animate_at(start)
+            .unwrap()
+            .expect("the animation plays");
+        assert_eq!(placed(&mut core)[0].image.rgba(), RGBA_PIXELS);
+        let due = core.animate_at(due).unwrap().expect("it loops");
+        assert_eq!(placed(&mut core)[0].image.rgba(), [0, 0, 0, 255].repeat(4));
+        core.animate_at(due).unwrap();
+        assert_eq!(placed(&mut core)[0].image.rgba(), RGBA_PIXELS);
+    }
+
+    #[test]
+    fn nothing_animates_without_an_animation() {
+        let mut core = core();
+        core.write(&kitty("f=32,s=2,v=2", RGBA), &mut Effects::default());
+        assert_eq!(core.animate().unwrap(), None);
+    }
+
+    #[test]
+    fn an_image_survives_park_and_restore() {
+        let mut core = core();
+        core.write(b"ab", &mut Effects::default());
+        core.write(&kitty("f=32,s=2,v=2", RGBA), &mut Effects::default());
+        core.frame(true).unwrap();
+        let (bytes, parked) = core.park().unwrap();
+        drop(core);
+        let mut core = Core::restore(&bytes, parked, &EngineOptions::default()).unwrap();
+        let images = placed(&mut core);
+        assert_eq!(images.len(), 1);
+        assert_eq!((images[0].column, images[0].row), (2, 0));
+        assert_eq!(images[0].image.rgba(), RGBA_PIXELS);
+    }
+
+    #[test]
+    fn a_zero_storage_limit_turns_images_off() {
+        let mut core = Core::new(
+            Viewport::new(20, 4, 8, 16).unwrap(),
+            &EngineOptions::default().with_image_storage_bytes(0),
+            TerminalColors::default(),
+        )
+        .unwrap();
+        core.write(&kitty("f=32,s=2,v=2", RGBA), &mut Effects::default());
+        assert!(placed(&mut core).is_empty());
+    }
+
+    #[test]
+    fn an_unchanged_image_keeps_its_pixels_across_frames() {
+        let mut core = core();
+        let mut effects = Effects::default();
+        core.write(&kitty("f=32,s=2,v=2", RGBA), &mut effects);
+        let first = placed(&mut core);
+        core.write(b"x", &mut effects);
+        let second = placed(&mut core);
+        assert!(Arc::ptr_eq(&first[0].image, &second[0].image));
     }
 
     #[test]
