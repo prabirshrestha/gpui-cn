@@ -123,7 +123,10 @@ linked statically, so no DLL ships with an application. Linux and Windows
 MSVC build it from source, which needs [Zig](https://ziglang.org/download/)
 0.17 on `PATH` (or in `ZIG`) and downloads the release source and its Zig
 packages, about 10 MB. For an offline build, set `GHOSTTY_RELEASE_DIR` to a
-directory with the release files; `ghostty-vt-sys` describes it.
+directory with the release files; `ghostty-vt-sys` describes it. To
+cross-compile for Windows MSVC without Zig, set
+`GHOSTTY_VT_PREBUILT_MSVC=1` and link with lld, for example through
+cargo-xwin.
 
 Programs can show images through the Kitty graphics protocol, as
 `kitten icat`, yazi or chafa do.

@@ -117,6 +117,26 @@ jobs:
           target: x86_64-pc-windows-gnu
       - run: cargo test -p ghostty-vt-sys -p ghostty-vt --all-features --locked --target x86_64-pc-windows-gnu
 
+  windows-msvc-prebuilt:
+    name: Test the engine (x86_64-pc-windows-msvc, prebuilt static, rust-lld)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      GHOSTTY_VT_PREBUILT_MSVC: "1"
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      # Puts the MSVC and Windows SDK library directories in LIB for lld.
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-msvc
+      - run: cargo test -p ghostty-vt-sys -p ghostty-vt --all-features --locked --target x86_64-pc-windows-msvc
+
   macos-source:
     name: Build the engine from source on macOS (GHOSTTY_VT_FROM_SOURCE)
     runs-on: macos-latest

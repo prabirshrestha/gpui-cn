@@ -23,6 +23,7 @@ and committed, so the crate needs no bindgen or Clang to build.
 | `x86_64-apple-darwin`, `aarch64-apple-darwin` | Prebuilt static, from the XCFramework. |
 | `aarch64-apple-ios`, `aarch64-apple-ios-sim` | Prebuilt static, from the XCFramework. |
 | `x86_64-pc-windows-gnu`, `*-pc-windows-gnullvm` | Prebuilt static, from the Windows zip. |
+| `*-pc-windows-msvc` with `GHOSTTY_VT_PREBUILT_MSVC=1` | Prebuilt static, from the Windows zip. Needs lld. |
 | Linux, Windows MSVC | Built from source with Zig, linked statically. |
 
 Zig's compiler_rt in the static library exports `___chkstk_ms` and the
@@ -33,6 +34,17 @@ default. For `x86_64-pc-windows-gnu` the build script links a copy of
 the library with these weak probes renamed, so the toolchain's own probe
 is used. lld, which the `gnullvm` targets use, needs no change. No DLL is
 linked, and an application needs no extra link flags.
+
+The Windows zip is a GNU-ABI build. Microsoft `link.exe` rejects its
+COMDAT sections (LNK1143), so the MSVC targets build from source by
+default, which needs Zig and the Windows SDK on a Windows host. lld
+(`lld-link`) links the zip into an MSVC program with no change. To use it,
+for example to cross-compile from macOS or Linux, set
+`GHOSTTY_VT_PREBUILT_MSVC=1` and link with lld: use
+[cargo-xwin](https://github.com/rust-cross/cargo-xwin), or set
+`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld` (or `lld-link`).
+The build stops with an error when the linker is `link.exe`, which is
+rustc's default for these targets.
 
 Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-vt).
 
@@ -50,6 +62,7 @@ Most users want the safe crate, [`ghostty-vt`](https://crates.io/crates/ghostty-
 | --- | --- |
 | `GHOSTTY_RELEASE_DIR` | Read the release files (prebuilt archives, source and deps tarballs) from this directory instead of downloading them. Each must match its sha256 in `GHOSTTY.lock`. |
 | `GHOSTTY_VT_FROM_SOURCE` | Set to `1` to build from source with Zig on a target that has a prebuilt library. |
+| `GHOSTTY_VT_PREBUILT_MSVC` | Set to `1` to link the prebuilt Windows zip on `*-pc-windows-msvc` instead of building from source. Needs lld as the linker. |
 | `GHOSTTY_SOURCE_DIR` | Build from this Ghostty source tree with Zig, on every target. |
 | `GHOSTTY_SOURCE_URL` | Download the source tarball from this mirror. It must match the pinned sha256 in `GHOSTTY.lock`. |
 | `GHOSTTY_ZIG_SYSTEM_DIR` | Resolve Zig packages from this directory (`zig build --system`) instead of the release deps tarball. |

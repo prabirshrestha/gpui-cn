@@ -10,7 +10,10 @@
 //!    It is downloaded, or read from `GHOSTTY_RELEASE_DIR`, and verified
 //!    against the sha256 in `GHOSTTY.lock`. No Zig is needed. Both link the
 //!    static library; for `*-windows-gnu` the weak Zig stack probes in it
-//!    are hidden first (see `build/stack_probes.rs`).
+//!    are hidden first (see `build/stack_probes.rs`). With
+//!    `GHOSTTY_VT_PREBUILT_MSVC=1` the Windows MSVC targets link the
+//!    Windows zip too, unchanged; that needs lld as the linker, and the
+//!    build stops when the linker is `link.exe`.
 //!    `GHOSTTY_VT_FROM_SOURCE=1` skips this step.
 //! 3. The `third_party/ghostty` git submodule at the repository root.
 //! 4. With the `pkg-config` feature, an installed `libghostty-vt-static`.
@@ -36,6 +39,10 @@ use sha2::{Digest, Sha256};
 
 #[path = "build/stack_probes.rs"]
 mod stack_probes;
+#[path = "build/targets.rs"]
+mod targets;
+
+use targets::{Asset, MachArch};
 
 /// A release file: its name in the release directory and its sha256.
 struct ReleaseFile {
@@ -112,6 +119,7 @@ fn main() {
         "GHOSTTY_SOURCE_URL",
         "GHOSTTY_VT_CPU",
         "GHOSTTY_VT_FROM_SOURCE",
+        "GHOSTTY_VT_PREBUILT_MSVC",
         "GHOSTTY_ZIG_SYSTEM_DIR",
         "ZIG",
     ] {
@@ -157,10 +165,15 @@ fn main() {
         return;
     }
 
-    let from_source = env::var("GHOSTTY_VT_FROM_SOURCE").is_ok_and(|v| !v.is_empty() && v != "0");
+    let flag = |name| env::var(name).is_ok_and(|v| !v.is_empty() && v != "0");
+    let from_source = flag("GHOSTTY_VT_FROM_SOURCE");
+    let prebuilt_msvc = flag("GHOSTTY_VT_PREBUILT_MSVC") && target.ends_with("windows-msvc");
+    if prebuilt_msvc && !from_source {
+        check_msvc_linker();
+    }
     if !from_source
         && let Some(release) = &lock.release
-        && let Some(prebuilt) = Prebuilt::for_target(release, &target)
+        && let Some(prebuilt) = Prebuilt::for_target(release, &target, prebuilt_msvc)
     {
         link_prebuilt(release, &prebuilt, &target);
         return;
@@ -251,64 +264,53 @@ enum PrebuiltKind {
         /// The architecture to take from a universal archive.
         arch: Option<MachArch>,
     },
-    /// The Windows install tree: the static library
+    /// The Windows install tree, a GNU-ABI build: the static library
     /// `lib/ghostty-vt-static.lib` and `include/`.
-    WindowsGnu,
-}
-
-#[derive(Clone, Copy)]
-enum MachArch {
-    X86_64,
-    Arm64,
-}
-
-impl MachArch {
-    /// The Mach-O CPU type of this architecture.
-    fn cpu_type(self) -> u32 {
-        const ABI64: u32 = 0x0100_0000;
-        match self {
-            Self::X86_64 => ABI64 | 7,
-            Self::Arm64 => ABI64 | 12,
-        }
-    }
+    Windows,
 }
 
 impl<'a> Prebuilt<'a> {
-    fn for_target(release: &'a Release, target: &str) -> Option<Self> {
-        let xcframework = |slice: &str, archive, arch| Prebuilt {
-            file: &release.xcframework,
-            dir: format!("ghostty-vt.xcframework/{slice}"),
-            kind: PrebuiltKind::Apple { archive, arch },
-        };
-        let windows = |file: &'a ReleaseFile, triple: &str| Prebuilt {
-            file,
-            dir: format!("ghostty-vt-{}-{triple}", release_version(release)),
-            kind: PrebuiltKind::WindowsGnu,
-        };
-        Some(match target {
-            "x86_64-apple-darwin" => xcframework(
-                "macos-arm64_x86_64",
-                "libghostty-vt.a",
-                Some(MachArch::X86_64),
-            ),
-            "aarch64-apple-darwin" => xcframework(
-                "macos-arm64_x86_64",
-                "libghostty-vt.a",
-                Some(MachArch::Arm64),
-            ),
-            "aarch64-apple-ios" => xcframework("ios-arm64", "libghostty-vt-fat.a", None),
-            "aarch64-apple-ios-sim" => {
-                xcframework("ios-arm64-simulator", "libghostty-vt-fat.a", None)
-            }
-            "x86_64-pc-windows-gnu" | "x86_64-pc-windows-gnullvm" => {
-                windows(&release.windows_x86_64, "x86_64-windows-gnu")
-            }
-            "aarch64-pc-windows-gnullvm" => {
-                windows(&release.windows_aarch64, "aarch64-windows-gnu")
-            }
-            _ => return None,
+    fn for_target(release: &'a Release, target: &str, prebuilt_msvc: bool) -> Option<Self> {
+        Some(match targets::asset(target, prebuilt_msvc)? {
+            Asset::Apple {
+                slice,
+                archive,
+                arch,
+            } => Prebuilt {
+                file: &release.xcframework,
+                dir: format!("ghostty-vt.xcframework/{slice}"),
+                kind: PrebuiltKind::Apple { archive, arch },
+            },
+            Asset::Windows(arch) => Prebuilt {
+                file: match arch {
+                    targets::WindowsArch::X86_64 => &release.windows_x86_64,
+                    targets::WindowsArch::Aarch64 => &release.windows_aarch64,
+                },
+                dir: format!(
+                    "ghostty-vt-{}-{}",
+                    release_version(release),
+                    arch.zig_triple()
+                ),
+                kind: PrebuiltKind::Windows,
+            },
         })
     }
+}
+
+/// Stop before a link that cannot work: Microsoft `link.exe` rejects the
+/// COMDAT sections of the GNU-ABI objects in the Windows zip (LNK1143).
+fn check_msvc_linker() {
+    let rustc_linker = env::var("RUSTC_LINKER").ok();
+    let rustflags = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let linker = targets::linker(rustc_linker.as_deref(), &rustflags);
+    assert!(
+        !targets::is_link_exe(linker),
+        "GHOSTTY_VT_PREBUILT_MSVC=1 links the prebuilt GNU-ABI static library, which \
+         Microsoft link.exe rejects (LNK1143), and the linker here is {}. Link with lld: \
+         use cargo-xwin, or set CARGO_TARGET_<TRIPLE>_LINKER=rust-lld (or lld-link). \
+         Or unset GHOSTTY_VT_PREBUILT_MSVC to build from source with Zig.",
+        linker.unwrap_or("rustc's default, link.exe")
+    );
 }
 
 /// The libghostty-vt version of a release, from its `vt-X.Y.Z` tag.
@@ -356,7 +358,7 @@ fn link_prebuilt(release: &Release, prebuilt: &Prebuilt, target: &str) {
             println!("cargo:rustc-link-lib=static=ghostty-vt");
             println!("cargo:include={}", dir.join("Headers").display());
         }
-        PrebuiltKind::WindowsGnu => {
+        PrebuiltKind::Windows => {
             link_windows_static(target, &dir.join("lib"));
             println!("cargo:include={}", dir.join("include").display());
         }

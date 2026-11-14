@@ -25,9 +25,11 @@ that this repository does not name. The workspace has four crates:
   checks its sha256, with no Zig, and links it statically. For
   `*-windows-gnu` it first renames the weak Zig stack probes in the
   archive (`build/stack_probes.rs`), because GNU ld with `--gc-sections`
-  does not resolve them. Linux and
-  Windows MSVC build the release source tarball with Zig 0.17 and the
-  release deps tarball (`zig build --system`). `GHOSTTY_VT_FROM_SOURCE=1`
+  does not resolve them. Linux and Windows MSVC build the release source
+  tarball with Zig 0.17 and the release deps tarball (`zig build
+  --system`). `GHOSTTY_VT_PREBUILT_MSVC=1` makes MSVC link the Windows
+  zip instead; that works only with lld, so the build script stops when
+  the linker is `link.exe`. `GHOSTTY_VT_FROM_SOURCE=1`
   or `GHOSTTY_SOURCE_DIR` forces a source build. `crates/ghostty-vt` is
   the safe API on it. They have no GPUI in them. Their SemVer core
   normally follows gpui-cn, and their build metadata records the release,
