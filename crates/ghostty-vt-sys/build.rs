@@ -779,16 +779,21 @@ fn release_deps(release: &Release) -> PathBuf {
 }
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
-    use ureq::tls::{TlsConfig, TlsProvider};
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     // Cargo.toml picks the TLS backend per build host: the OS stack on macOS
     // and Windows, rustls elsewhere. ureq still has to be told which one.
-    let provider = if cfg!(any(target_os = "macos", windows)) {
-        TlsProvider::NativeTls
+    // The OS stack also trusts the OS roots: ureq's default puts Mozilla's
+    // roots in their place, and Windows schannel cannot anchor a chain in
+    // roots added that way ("unable to find any user-specified roots").
+    let tls = if cfg!(any(target_os = "macos", windows)) {
+        TlsConfig::builder()
+            .provider(TlsProvider::NativeTls)
+            .root_certs(RootCerts::PlatformVerifier)
     } else {
-        TlsProvider::Rustls
+        TlsConfig::builder().provider(TlsProvider::Rustls)
     };
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(TlsConfig::builder().provider(provider).build())
+        .tls_config(tls.build())
         // A stalled server must fail the build, not hang it.
         .timeout_connect(Some(Duration::from_secs(30)))
         .timeout_recv_response(Some(Duration::from_secs(60)))
